@@ -2,7 +2,7 @@
 
 2026-10-11。使用内置 imagegen 图片生成工具制作四个独立候选；用户已选定 **1 号黑金牌面**。应用名称为「记牌器」，图标内无需再放完整名称。
 
-选定图稿保存为 [launcher-selected.png](launcher-selected.png)，当前为设计源图。正式 Android 自适应图标的前景/背景、安全区、单色图标及各密度资源在应用实现阶段制作并验证；尚未生成可安装 App。
+选定图稿保存为 [launcher-selected.png](launcher-selected.png)。基础开发版已将原图作为 Android 自适应图标的前景来源，使用代码定义的边距和背景，并添加单色图标；没有修改生成源图。资源已构建进开发 APK，启动器不同遮罩的实际效果仍需真机检查，见 [开发记录](../../development/foundation.md)。
 
 ![选定黑金图标](launcher-selected.png)
 

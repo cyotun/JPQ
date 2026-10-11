@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-11",
+  "scope": "Foundation debug APK, not validated card recognition",
+  "packageName": "com.cyotun.jpq.dev",
+  "versionName": "0.1.0-dev+debug",
+  "versionCode": 1,
+  "minSdk": 28,
+  "targetSdk": 36,
+  "coreTests": 10,
+  "testFailures": 0,
+  "testErrors": 0,
+  "lintErrors": 0,
+  "lintWarnings": 21,
+  "apkSizeBytes": 11047335,
+  "apkSha256": "cf945a16c0b9c5f4e6980ab82666f6c260c1b5d71c387a7a7c7f89538fb39826",
+  "signatureVerified": true,
+  "signatureKind": "Android debug",
+  "phoneTested": false,
+  "recognitionValidated": false,
+  "updateInstallValidated": false,
+  "publicReleasePublished": false
+}

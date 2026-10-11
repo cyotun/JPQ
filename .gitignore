@@ -1,5 +1,6 @@
 # Android / IDE / local configuration
 .gradle/
+.kotlin/
 .idea/
 *.iml
 local.properties
@@ -35,4 +36,9 @@ tmp/
 node_modules/
 .npm-cache/
 .wrangler/
+.android-tools/
+.gradle-home/
+artifacts/
+app/src/main/assets/overlay.ttf
+app/src/main/assets/overlay-font-license.txt
 coverage/

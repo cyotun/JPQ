@@ -1,8 +1,8 @@
 # JPQ 技术设计 · 提议版本
 
-状态：设计待确认，未开始应用实现。应用名「记牌器」，工程代号 JPQ。目标是复现参考 APK 在大掼蛋中的相关行为，做到全自动准确记牌，并用完整回放验证。用户已取消全部手动纠错，保留 App 自动更新。
+状态：设计已确认，基础 Android 工程已实现并构建；自动识别尚未接通。应用名「记牌器」，工程代号 JPQ。目标仍是复现参考 APK 在大掼蛋中的相关行为，做到全自动准确记牌并用完整回放验证。用户已取消全部手动纠错，保留 App 自动更新。
 
-交互基线见 [设计确认稿 v4](PRD.md)。重置按钮开关、双击隐藏和适中基础宽度/超长自动扩展已由用户指定；工具/拖动入口与自动复核/更新时机的其余提议以 D1–D4 审阅结果为准。
+交互基线见 [设计稿 v4](PRD.md)。用户已整体批准 D1–D4 和开始开发；原触摸对照、识别与更新验收仍需执行。
 
 ## 1. 架构与扩展
 
@@ -17,7 +17,7 @@ flowchart LR
   Events --> Validation[自动交叉校验与短时帧复核]
 ```
 
-拟采用：Kotlin、Jetpack Compose、WindowManager 原生悬浮窗、MediaProjection/ImageReader、协程、DataStore 设置、Room 事件记录。OpenCV 与 NCNN 属于待样本评测的候选依赖，不提前堆叠多个推理后端。
+当前基础工程采用 Kotlin、原生 View 页面、WindowManager/Canvas 悬浮窗、MediaProjection/ImageReader、AndroidX Activity；使用同一绘制器做正式视图与调整预览。配置当前由 SharedPreferences 持久化，事件账本仍在内存；DataStore/Room 和诊断回放持久化属于后续工作。OpenCV/NCNN 尚未加入，仍按样本评测选择后端，不用未接通的识别适配器生成假事件。
 
 逻辑划分：
 
@@ -166,4 +166,4 @@ U[r] = D[r] - H0_self[r] - P_previous[r] - P_opposite[r] - P_next[r]
 
 研究设计在独立文档分支保存。确认后按功能创建开发分支，提交可解释的变化及验证记录，持续推送指定 origin；避免未经要求覆写远端历史。
 
-构建工具、SDK 和依赖在实现开始时核实并固定版本。当前仅检测到系统 Git/Python，未确认 Android SDK、JDK 和 ADB 可用；设计阶段没有安装完整开发环境。实际签名密钥留在本机，不进入 Git。交付 APK、源码提交版本、安装说明及两部真机测试结果。
+已建立项目内 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、Android SDK 36 与 build-tools 35.0.0 环境。基础开发包采用独立 `.dev` 包名和调试签名；正式包的持续签名身份在正式发布前固定，私钥不进入 Git。构建脚本与实际结果见 [Android 工程](../../app/README.md) 和 [开发记录](../development/foundation.md)，两部真机测试仍未进行。

@@ -2,13 +2,15 @@
 
 面向个人使用的 Android 本地记牌工具。首版完整适配腾讯独立应用「大掼蛋」，通过用户授权的屏幕采集识别已显示的牌面，使用悬浮窗显示手牌外剩余牌和三家出牌记录。
 
-**当前阶段：Android App 仍在设计确认阶段；独立 Cloudflare 更新服务已部署成功。当前尚无可安装的自研 APK。**
+**当前阶段：设计已确认，Android 开发已开始。基础开发 APK 已构建，自动牌面识别尚未接通，不能用于实战记牌；独立 Cloudflare 更新服务基础已部署。**
+
+工程与构建说明见 [Android 工程](app/README.md)，本轮验证见 [基础开发记录](docs/development/foundation.md)。开发包仅用于权限、采集与悬浮操作验证，不作为稳定记牌版本发布。
 
 更新服务：[jpq.240438457.workers.dev](https://jpq.240438457.workers.dev/)。健康检查已通过，未发布安装包时版本接口返回 204。部署与验证记录见 [Cloudflare 状态](docs/deployment/cloudflare-status.md)。
 
 ## 设计资料
 
-当前确认入口：[设计确认稿 v4](docs/design/PRD.md) 与 [六张页面设计图](docs/design/review/README.md)。应用名「记牌器」。最新加入 [记录宽度对照](docs/design/review/history-width.png)：右侧基础 320dp，超长记录才自动扩展，左侧/字体保持原样。保留 [按钮开关与双击隐藏](docs/design/review/visibility-controls.png)、全自动零错漏验收、原 APK 外观和 Cloudflare 应用自动更新；手机 App 尚未开发。
+设计基线：[已确认的设计稿 v4](docs/design/PRD.md) 与 [六张静态设计图](docs/design/review/README.md)。应用名「记牌器」。右侧基础 320dp，超长记录才自动扩展，左侧/字体保持原样。保留按钮开关与双击隐藏、全自动零错漏验收、原 APK 外观和 Cloudflare 应用自动更新。用户已整体确认 D1–D4，无需再次申请开发许可。
 
 用户已选定 [1 号黑金图标](docs/design/icons/README.md)；设计源图与其余候选已保存。
 

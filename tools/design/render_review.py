@@ -42,7 +42,7 @@ class Canvas:
         self.d = ImageDraw.Draw(self.im)
         self.text(64, 40, title, 46, bold=True)
         self.text(66, 106, subtitle, 25, MUTED)
-        self.text(66, h - 54, "设计确认稿 v4 · 2026-10-11 · 自绘静态示意，手机端尚未开发", 22, MUTED)
+        self.text(66, h - 54, "设计基线 v4 · 2026-10-11 · 自绘静态示意，手机端开发中", 22, MUTED)
         self.text(1650, h - 54, number, 24, MUTED)
 
     def rect(self, box, fill, radius=18, outline=None, width=1):
