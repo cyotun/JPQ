@@ -1,0 +1,28 @@
+{
+  "tool": "built-in image_gen.imagegen",
+  "useCase": "logo-brand",
+  "appName": "记牌器",
+  "selectedOption": 1,
+  "concepts": [
+    {
+      "n": 1,
+      "name": "黑金牌面",
+      "prompt": "Use case: logo-brand. Asset type: original Android launcher icon concept for a personal offline playing-card counter app named 记牌器. Generate ONE square 1024x1024 icon artwork, not a contact sheet, not a phone mockup. Full-bleed solid background to all four edges; do not bake in rounded outer corners, because Android will mask them. Central graphic stays within the middle 68% safe area and remains clear at 48 pixels. Elegant, polished, simple geometry, crisp edges, restrained visual detail. Original brand, no Tencent or DingTalk logo, no copied commercial app logo, no watermarks, no promotional text. The app name will be below the launcher icon, do not write the full app name inside the image. Direction 1 — dark charcoal and warm gold, matching a dark card-counter overlay UI. Background matte charcoal #262626. Center a compact pair of slightly overlapping upright playing cards, warm pale gold #FFE395, with softened card corners. Front card has a bold charcoal spade suit, rear card visible as a clean offset silhouette. Beside the lower edge of the cards, three tiny gold counting bars or dots form a subtle secondary counting motif, integrated and uncluttered. Contemporary flat vector-like illustration, modest tactile edge depth only, no gold chrome, no crown, no casino chips, no visual noise. No text or numbers."
+    },
+    {
+      "n": 2,
+      "name": "米白红黑",
+      "prompt": "Use case: logo-brand. Asset type: original Android launcher icon concept for a personal offline playing-card counter app named 记牌器. Generate ONE square 1024x1024 icon artwork, not a contact sheet, not a phone mockup. Full-bleed solid background to all four edges; do not bake in rounded outer corners, because Android will mask them. Central graphic stays within the middle 68% safe area and remains clear at 48 pixels. Elegant, polished, simple geometry, crisp edges, restrained visual detail. Original brand, no Tencent or DingTalk logo, no copied commercial app logo, no watermarks, no promotional text. The app name will be below the launcher icon, do not write the full app name inside the image. Direction 2 — warm ivory background #F6F1E7. Center two overlapping compact playing cards with fine charcoal borders and soft corners. Front card ivory with a bold red heart #D94343; rear card tilted slightly, with a visible charcoal spade corner. A slim charcoal tally strip with three short warm-gold strokes subtly integrated at the base suggests accurate counting. Balanced minimal flat graphic, precise high-contrast suit shapes, clean modern personal-tool feeling. No text or numbers. Avoid tiny repeated pips and ornamental patterns."
+    },
+    {
+      "n": 3,
+      "name": "墨绿金牌",
+      "prompt": "Use case: logo-brand. Asset type: original Android launcher icon concept for a personal offline playing-card counter app named 记牌器. Generate ONE square 1024x1024 icon artwork, not a contact sheet, not a phone mockup. Full-bleed solid background to all four edges; do not bake in rounded outer corners, because Android will mask them. Central graphic stays within the middle 68% safe area and remains clear at 48 pixels. Elegant, polished, simple geometry, crisp edges, restrained visual detail. Original brand, no Tencent or DingTalk logo, no copied commercial app logo, no watermarks, no promotional text. The app name will be below the launcher icon, do not write the full app name inside the image. Direction 3 — deep emerald card-table theme. Full background dark emerald #0B4B45. Center a simple fan of three warm ivory playing cards with a subtle gold outline, front card bearing one strong deep-emerald spade. Three small pale-gold counting dots sit in a short horizontal row below the fan, visually part of the emblem. Beautiful understated vector-like flat composition, warm gold #FFE395 highlights, precise shape language and spacious margin. No text, numbers, felt textures, chips or crowns."
+    },
+    {
+      "n": 4,
+      "name": "金色记字",
+      "prompt": "Use case: logo-brand. Asset type: original Android launcher icon concept for a personal offline playing-card counter app named 记牌器. Generate ONE square 1024x1024 icon artwork, not a contact sheet, not a phone mockup. Full-bleed solid background to all four edges; do not bake in rounded outer corners, because Android will mask them. Central graphic stays within the middle 68% safe area and remains clear at 48 pixels. Elegant, polished, simple geometry, crisp edges, restrained visual detail. Original brand, no Tencent or DingTalk logo, no copied commercial app logo, no watermarks, no promotional text. The app name will be below the launcher icon, do not write the full app name inside the image. Direction 4 — warm pale-gold background #FFE395. Center ONE large charcoal Chinese character exactly “记”, highly legible, bold simplified Chinese lettering, a distinctive compact mark. A thin charcoal outline of a single playing card sits behind and around the character with rounded card corners, like a personal scorekeeping stamp. One tiny charcoal spade suit in the upper corner of that card reinforces playing-card counting, but the Chinese character dominates. Clean geometric vector-like icon, flat colors, quiet confident aesthetic, charcoal #262626. No other Chinese characters, English letters, numerals or text. Do not use a seal-script illegible glyph."
+    }
+  ]
+}

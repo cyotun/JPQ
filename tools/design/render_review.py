@@ -1,6 +1,7 @@
 """Render original static JPQ design drawings; does not edit supplied images.
 
-Run with Pillow and a CJK font. These are review artifacts, not App screenshots.
+Run with Pillow and a locally obtained official DingTalk JinBuTi font.
+These are review artifacts, not App screenshots. Font binaries are not published.
 """
 from pathlib import Path
 import json
@@ -12,13 +13,14 @@ OUT = ROOT / "docs/design/review"
 OUT.mkdir(parents=True, exist_ok=True)
 FONT = Path(os.environ.get("JPQ_DESIGN_FONT", "C:/Windows/Fonts/msyh.ttc"))
 BOLD = Path(os.environ.get("JPQ_DESIGN_BOLD_FONT", "C:/Windows/Fonts/msyhbd.ttc"))
+OVERLAY_FONT = Path(os.environ.get("JPQ_OVERLAY_FONT", str(ROOT / "research-private/dingtalk-official.ttf")))
 PAPER = "#F5F4F0"
 INK = "#222824"
 MUTED = "#68726B"
 DARK = "#131413"
-PANEL = "#252725"
-GOLD = "#FFE493"
-WHITE = "#F4F5EF"
+PANEL = "#262626"
+GOLD = "#FFE395"
+WHITE = "#FFFFFF"
 DIM = "#7B827D"
 TEAL = "#167D73"
 LABELS = ["大", "小", "A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"]
@@ -37,7 +39,7 @@ class Canvas:
         self.d = ImageDraw.Draw(self.im)
         self.text(64, 40, title, 46, bold=True)
         self.text(66, 106, subtitle, 25, MUTED)
-        self.text(66, h - 54, "设计确认稿 v1 · 2026-10-11 · 静态示意，手机端尚未开发", 22, MUTED)
+        self.text(66, h - 54, "设计确认稿 v2 · 2026-10-11 · 自绘静态示意，手机端尚未开发", 22, MUTED)
         self.text(1650, h - 54, number, 24, MUTED)
 
     def rect(self, box, fill, radius=18, outline=None, width=1):
@@ -76,7 +78,7 @@ class Canvas:
         return y + len(lines) * (step or size + 12)
 
     def pill(self, box, value, active=True, size=25):
-        self.rect(box, GOLD if active else PANEL, 22)
+        self.rect(box, GOLD if active else "#434343", 22)
         self.center(box, value, size, DARK if active else WHITE, bold=active)
 
     def toggle(self, x, y, active=True):
@@ -108,36 +110,101 @@ class Canvas:
         self.im.save(OUT / name, optimize=True)
 
 
-def overlay(c, x, y, gridw=560, rightw=925, full=True):
-    h, button, gap = 90, 84, 8
-    total = button*2 + gap*2 + gridw + (rightw if full else 0)
-    c.rect((x, y, x+total, y+h), "#202220", 26, outline="#0B100D", width=3)
-    c.d.ellipse((x,y+3,x+button,y+button+3), fill=GOLD, outline="#222824", width=3)
-    c.center((x,y+3,x+button,y+button+3),"隐藏",27,bold=True)
-    gx = x+button+gap
-    cw=gridw/15
+def jpq_text(im, box, value, size, color, align="center"):
+    """Use the actual reference typeface; never silently substitute a UI font."""
+    d = ImageDraw.Draw(im)
+    f = ImageFont.truetype(str(OVERLAY_FONT), max(1, round(size)))
+    x, y, r, b = box
+    bbox = d.textbbox((0, 0), value, font=f)
+    tx = (x+r-bbox[2]-bbox[0])/2 if align == "center" else x-bbox[0]
+    ty = (y+b-bbox[3]-bbox[1])/2
+    d.text((round(tx), round(ty)), value, font=f, fill=color)
+
+
+def circle(im, x, y, scale, value):
+    w = 44*scale
+    d = ImageDraw.Draw(im)
+    d.ellipse((round(x),round(y),round(x+w),round(y+w)), fill=GOLD, outline=PANEL, width=round(2*scale))
+    jpq_text(im,(x,y,x+w,y+w),value,16*scale,"#000000")
+
+
+def overlay(c, x, y, full=True, scale=2.18):
+    # The reference dp constants and adjustment floats drive the same geometry
+    # in both full and count-only previews. This is not a crop of the APK UI.
+    a = DEFAULTS["twoDeckAdjustment"]
+    base = DEFAULTS["standardBase"]
+    g = base["grid"]
+    rec = base["record"]
+    win = base["window"]
+    grid_base = g["columnCount"]*g["cellWidthDp"] + (g["columnCount"]-1)*g["cellSpacingDp"]
+    content_base = grid_base + win["rightRecordWidthDp"] + win["sectionSpacingDp"] + 2*win["edgeInsetDp"]
+    inner = content_base*a["contentWidthScale"] - 2*win["edgeInsetDp"] - win["sectionSpacingDp"]
+    gridw = inner*a["gridSectionRatio"]*scale
+    rightw = inner*(1-a["gridSectionRatio"])*scale if full else 0
+    edge, seam = scale, scale
+    ch = g["cellHeightDp"]*a["gridCellHeightScale"]*scale
+    h = ch*2 + seam + edge*2
+    contentw = gridw + (seam+rightw if full else 0) + edge*2
+    button, gap = 44*scale, 4*scale
+    gx = button+gap+edge
+    total = button*2+gap*2+contentw
+    # Antialias edges and glyphs at 3x, then draw on the review sheet.
+    aa = 3
+    patch = Image.new("RGBA",(round(total*aa),round(max(h,button)*aa)),(0,0,0,0))
+    d = ImageDraw.Draw(patch)
+    ss = scale*aa
+    cb = (round((button+gap)*aa),0,round((button+gap+contentw)*aa)-1,round(h*aa)-1)
+    d.rounded_rectangle(cb,radius=12*ss,fill="#000000")
+    inner_patch = Image.new("RGBA",patch.size,PANEL)
+    pd = ImageDraw.Draw(inner_patch)
+    cw = (gridw-14*seam)/15
+    pd.rectangle((round(gx*aa),round(edge*aa),round((gx+gridw)*aa),round((h-edge)*aa)),fill="#000000")
     for i,(label,value) in enumerate(zip(LABELS,VALUES)):
-        left=gx+i*cw
-        c.rect((left,y+3,left+cw-1,y+44),"#4B4D4B",0)
-        c.rect((left,y+46,left+cw-1,y+87),"#434343",0)
-        c.center((left,y+3,left+cw-1,y+44),label,29,WHITE)
-        threshold=2 if label in ["大","小"] else 4
-        color = "#FFFF3140" if value>=threshold else ("#FFFFFF" if value else "#5F5F5F")
-        # PIL RGB uses the actual red channel; source ARGB is kept in defaults JSON.
-        if color=="#FFFF3140": color="#FF3140"
-        c.center((left,y+44,left+cw-1,y+87),str(value),30,color,bold=True)
+        left = (gx+i*(cw+seam))*aa
+        top = edge*aa
+        for j in range(round(ch*aa)):
+            t=j/max(1,round(ch*aa)-1)
+            rgb=tuple(round(v*(1-t)+67*t) for v in (109,110,110))
+            pd.line((round(left),round(top+j),round(left+cw*aa),round(top+j)),fill=rgb)
+        vb = (left,(edge+ch+seam)*aa,left+cw*aa,(edge+ch*2+seam)*aa)
+        pd.rectangle(tuple(map(round,vb)),fill="#434343")
+        jpq_text(inner_patch,(left,top,left+cw*aa,top+ch*aa),label,16*a["gridHeaderTextScale"]*ss,WHITE)
+        threshold = 2 if label in ("大","小") else 4
+        # #26FFFFFF composited over #434343, exactly the reference zero alpha.
+        color = "#FF3140" if value >= threshold else (WHITE if value else "#5F5F5F")
+        jpq_text(inner_patch,vb,str(value),16*a["gridValueTextScale"]*ss,color)
     if full:
-        rx=gx+gridw+5
+        rx = (gx+gridw+seam)*aa
+        rh = rec["rowHeightDp"]*a["recordRowHeightScale"]*ss
         for i,(seat,count,history) in enumerate(zip("上对下",[13,14,14],HISTORY)):
-            ry=y+3+i*28
-            c.text(rx,ry-2,seat,24,WHITE)
-            c.rect((rx+28,ry,rx+67,ry+27),GOLD,0)
-            c.center((rx+28,ry,rx+67,ry+27),str(count),25,bold=True)
-            c.text(rx+75,ry-1,history,25,WHITE,maxw=rightw-86)
-    bx=x+total-button
-    c.d.ellipse((bx,y+3,bx+button,y+button+3),fill=GOLD,outline="#222824",width=3)
-    c.center((bx,y+3,bx+button,y+button+3),"重置",27,bold=True)
+            ry=edge*aa+i*(rh+ss)
+            lb=(rx,ry,rx+14*ss,ry+rh)
+            pd.rectangle(tuple(map(round,lb)),fill="#434343")
+            jpq_text(inner_patch,lb,seat,12*ss,WHITE)
+            nb=(rx+16*ss,ry,rx+30*ss,ry+rh)
+            pd.rectangle(tuple(map(round,nb)),fill=GOLD)
+            jpq_text(inner_patch,nb,str(count),12*a["recordCounterTextScale"]*ss,"#000000")
+            hb=(rx+32*ss,ry,(gx+gridw+seam+rightw)*aa,ry+rh)
+            jpq_text(inner_patch,hb,history,14*a["recordDetailTextScale"]*ss,WHITE,"left")
+    mask=Image.new("L",patch.size,0)
+    md=ImageDraw.Draw(mask)
+    inset=win["borderWidthDp"]*ss
+    md.rounded_rectangle((cb[0]+inset,cb[1]+inset,cb[2]-inset,cb[3]-inset),radius=11*ss,fill=255)
+    patch.paste(inner_patch,(0,0),mask)
+    circle(patch,0,0,ss,"隐藏")
+    circle(patch,(total-button)*aa,0,ss,"重置")
+    patch=patch.resize((round(total),round(max(h,button))),Image.Resampling.LANCZOS)
+    c.im.paste(patch,(round(x),round(y)),patch)
     return total
+
+
+def waiting(c, x, y, scale=2.18):
+    circle(c.im,x,y,scale,"隐藏")
+    lx=x+48*scale
+    box=(lx,y,lx+370*scale,y+46*scale)
+    c.rect(box,GOLD,round(12*scale),outline="#000000",width=round(scale))
+    jpq_text(c.im,(lx+9*scale,y+3*scale,box[2]-9*scale,y+25*scale),"进入游戏房间后，会自动开始记牌",18*scale,"#000000")
+    jpq_text(c.im,(lx+9*scale,y+27*scale,box[2]-9*scale,y+43*scale),"牌局已开始仍未显示？请检查权限或重新开始记牌",10.5*scale,"#000000")
 
 
 def table(c, box):
@@ -149,8 +216,8 @@ def table(c, box):
 
 
 def start_settings():
-    c=Canvas(1410,"JPQ · 启动与设置","保留原纵向配置顺序和黑金样式，移除会员与营销区域。首页简化属于本次提议 D1。","01 / 05")
-    for x,title,nav in [(70,"大掼蛋记牌器","记牌"),(655,"权限设置",None),(1240,"设置","设置")]:
+    c=Canvas(1410,"记牌器 · 启动与设置","保留原纵向配置顺序和黑金样式，移除会员与营销区域。首页简化属于本次提议 D1。","01 / 04")
+    for x,title,nav in [(70,"记牌器","记牌"),(655,"权限设置",None),(1240,"设置","设置")]:
         c.phone(x,180,title=title,nav=nav)
     x=70
     c.text(x+35,325,"本地运行 · 个人使用",23,DIM)
@@ -184,20 +251,16 @@ def start_settings():
     c.row(x+28,739,434,"权限设置","›")
     c.row(x+28,829,434,"应用更新","检查更新")
     c.row(x+28,919,434,"配置备份","›")
-    c.row(x+28,1009,434,"关于 JPQ","›")
-    c.wrap(76,1234,"开始 → 系统共享授权 → 返回大掼蛋 → 等待有效牌局 → 自动记牌。正常初始化不强制核对。",1640,26,INK)
+    c.row(x+28,1009,434,"关于记牌器","›")
+    c.wrap(76,1234,"开始 → 系统共享授权 → 返回大掼蛋 → 等待有效牌局 → 自动记牌。无需手动核对或修正。",1640,26,INK)
     c.save("start-settings.png")
 
 
 def overlay_states():
-    c=Canvas(1510,"JPQ · 等待与记牌悬浮窗","沿用原两圆钮、顶部细条和混合计数配色；下方桌面为自绘示意。","02 / 05")
+    c=Canvas(1510,"记牌器 · 原 APK 风格悬浮窗","实际字体：钉钉进步体；原色值、细边框与紧凑牌格。底下桌面为自绘示意。","02 / 04")
     c.text(70,184,"开始后 · 等待有效牌局",29,bold=True)
     table(c,(70,237,1730,475))
-    c.d.ellipse((86,255,174,343),fill=GOLD,outline=INK,width=4)
-    c.center((86,255,174,343),"隐藏",29,bold=True)
-    c.rect((187,252,1100,350),GOLD,24,outline=INK,width=4)
-    c.center((220,261,1070,312),"进入牌局后，自动开始记牌",36,bold=True)
-    c.center((216,307,1071,344),"若牌局已开始仍未显示，请检查权限或重新开始记牌",24)
+    waiting(c,86,252)
     c.text(1210,272,"发牌 / 贡牌期间继续等待",25,WHITE)
     c.text(1210,320,"初始化通过后自动切换",25,WHITE)
     c.text(70,519,"正常记牌 · 三家区域默认开启",29,bold=True)
@@ -220,8 +283,9 @@ def overlay_states():
     table(c,(70,997,1730,1224))
     overlay(c,84,1015,full=False)
     c.wrap(920,1023,"保留左侧列宽和字号，条宽缩短。三家识别、扣牌和历史仍继续。再次开启恢复完整记录。",730,27,WHITE)
-    c.text(75,1272,"隐藏后只留「显示」圆钮；恢复时显示当前状态，不停止识别。",25,INK)
-    c.text(75,1314,"新增入口提议 D2：长按「隐藏」打开工具，拖动条内空白处移动；待你确认。",25,MUTED)
+    circle(c.im,85,1260,1.65,"显示")
+    c.text(176,1272,"隐藏后只留「显示」圆钮；恢复时显示当前状态，不停止识别。",25,INK)
+    c.text(75,1368,"新增入口提议 D2：长按「隐藏」打开调整与停止工具；拖动条内空白处移动。",25,MUTED)
     c.save("overlay-states.png")
 
 
@@ -240,7 +304,7 @@ def adjust_header(c, y, order=False):
 
 
 def adjustment():
-    c=Canvas(1900,"JPQ · 两页调整，沿用原默认值","尺寸和牌序保持两个标签；重置恢复当前草稿，保存并退出后正式应用。","03 / 05")
+    c=Canvas(1900,"记牌器 · 复现原来的两页调整","保留宽轨道、竖条滑块、金色按钮、八项默认值和 8 + 7 两行牌序。","03 / 04")
     adjust_header(c,245)
     groups=[("窗口",[("总宽度","115%",(1.1578497-.8)/.55),("左右比例","37:63",(.3703267-.3)/.3)]),
             ("行高",[("牌格高度","94%",(.94622684-.85)/.45),("记录行高","98%",(.98167837-.85)/.45)]),
@@ -253,9 +317,11 @@ def adjustment():
             y=709+j*112
             c.text(x,y,label,25,WHITE)
             c.text(x+268,y,value,25,GOLD)
-            c.rect((x,y+54,x+356,y+70),"#8A8055",8)
-            c.rect((x,y+54,x+356*pct,y+70),GOLD,8)
-            c.d.ellipse((x+356*pct-12,y+49,x+356*pct+12,y+75),fill=GOLD)
+            knob=x+10+336*pct
+            c.rect((x,y+52,max(x+13,knob-15),y+82),GOLD,15)
+            c.rect((min(x+343,knob+15),y+52,x+356,y+82),"#887D54",15)
+            c.rect((knob-4,y+39,knob+4,y+95),GOLD,4)
+            c.d.ellipse((x+339,y+64,x+346,y+71),fill=GOLD)
     c.text(82,956,"显示值截断，存储保留原浮点精度；关闭右侧时相关滑块置灰且保留设置。",24,MUTED)
     adjust_header(c,1091,True)
     c.text(107,1480,"拖动牌面调整顺序",27,WHITE)
@@ -264,97 +330,52 @@ def adjustment():
         row,col=divmod(i,8)
         x=106+col*198
         y=1537+row*105
-        c.rect((x,y,x+181,y+86),PANEL,15,outline="#4B504B",width=2)
+        c.rect((x,y,x+181,y+86),PANEL,15,outline="#434343",width=2)
         c.center((x,y,x+181,y+86),label,31,WHITE,bold=True)
     c.text(82,1805,"掼蛋默认 2 在最后。未来斗地主预设将 2 放在 A 前；拖动只改变显示顺序。",24,MUTED)
     c.save("adjustment-pages.png")
 
 
-def correction_update():
-    c=Canvas(1570,"JPQ · 新增交互提议","D3：核对与出牌纠错。D4：自动检查、空闲下载、记牌结束后安装提示。","04 / 05")
-    c.text(70,187,"出牌纠错 · 横屏下半屏面板",29,bold=True)
-    table(c,(70,241,1060,1000))
-    overlay(c,84,255,gridw=370,rightw=425)
-    c.rect((72,483,1058,998),PANEL,26)
-    for i,(seat,active) in enumerate([("上家",True),("对家",False),("下家",False)]):
-        c.pill((99+i*163,505,247+i*163,561),seat,active)
-    c.text(693,517,"取消",27,WHITE)
-    c.pill((802,501,1030,567),"保存并重算",size=26)
-    c.text(101,596,"编辑第 4 手：AAA99",26,WHITE)
-    c.text(101,640,"实际牌面",24,DIM)
-    for i,(label,value) in enumerate([("A","2"),("9","2")]):
-        x=100+i*252
-        c.rect((x,685,x+223,763),"#363A36",15)
-        c.text(x+17,700,label,31,WHITE,bold=True)
-        c.text(x+70,705,"−",31,GOLD)
-        c.text(x+123,705,value,28,WHITE)
-        c.text(x+175,705,"+",28,GOLD)
-    c.text(619,697,"删除误记",27,GOLD)
-    c.text(811,697,"补记一手",27,GOLD)
-    c.rect((101,802,1028,876),"#343A30",16)
-    c.text(122,822,"修改预览：上家已出 13 → 12；A 剩余 4 → 5",25,GOLD)
-    c.wrap(101,905,"核对时可能遮挡牌面，建议空闲时操作。关闭后存在观测缺口会提示待核对。",918,23,DIM)
-    c.rect((70,1041,1060,1406),"#E8EAE1",24)
-    c.text(99,1068,"纠错原则",29,bold=True)
-    c.wrap(101,1130,"修改出牌事件，历史与统计统一重算。不会只改一个剩余数字。初始手牌核对单独显示总数 / 27。争议项显示待核对，可撤销修订。",902,27,INK,43)
-    c.text(101,1318,"示例数据：AAA99 修正为 AA99。",25,MUTED)
-    c.phone(1180,184,w=550,h=1250,title="应用更新")
-    c.text(1215,342,"以下版本和大小为设计示例",23,DIM)
-    c.row(1208,397,494,"自动更新",switch=True)
-    c.row(1208,489,494,"仅 Wi-Fi 自动下载",switch=True)
-    c.rect((1208,615,1702,1012),PANEL,22)
-    c.text(1232,643,"发现新版本",29,GOLD,bold=True)
-    c.text(1232,698,"1.0.0 → 1.0.1",31,WHITE)
-    c.text(1232,754,"安装包：36 MB（示例）",24,DIM)
-    c.wrap(1232,811,"优化大掼蛋记牌稳定性，完善悬浮窗显示。",440,26,WHITE)
-    c.pill((1232,926,1678,986),"下载更新",size=29)
-    c.wrap(1218,1052,"自动检查每日一次。Wi-Fi 下空闲时下载，对局期间不弹安装提示。",472,25,DIM)
-    c.wrap(1218,1186,"校验通过后提示安装；系统可能要求确认。断网继续使用旧版记牌。",472,25,DIM)
-    c.save("correction-update.png")
-
-
-def tools_hand():
-    c=Canvas(1380,"JPQ · 工具入口与初始手牌核对","D2 / D3 新增提议；正常牌局直接开始，只在需要时打开核对。","05 / 05")
-    c.text(70,183,"长按隐藏圆钮 → 记牌工具",29,bold=True)
-    c.rect((70,241,590,1139),PANEL,25)
-    c.text(104,271,"记牌工具",33,GOLD,bold=True)
-    for i,text in enumerate(["初始手牌核对","出牌纠错","尺寸调整","牌序调整"]):
-        c.row(101,349+i*98,457,text,"›")
-    c.row(101,753,457,"显示三家出牌记录",switch=True)
-    c.pill((101,873,558,940),"重置本局",False,28)
-    c.pill((101,962,558,1029),"停止记牌",False,28)
-    c.text(212,1075,"关闭面板",27,GOLD)
-    c.text(667,183,"核对自己本局初始手牌",29,bold=True)
-    c.rect((666,241,1730,1139),PANEL,25)
-    c.text(699,274,"初始手牌",33,GOLD,bold=True)
-    c.text(1425,282,"总数 27 / 27",26,WHITE)
-    c.wrap(700,344,"这里只修改本局开始时的手牌。中途缺失的出牌记录还需要补记，不能只改当前手牌。",980,25,DIM)
-    counts=[1,1,3,2,2,2,2,2,2,2,2,2,1,1,2]
-    assert sum(counts)==27
-    for i,(label,value) in enumerate(zip(LABELS,counts)):
-        row,col=divmod(i,5)
-        x=701+col*197
-        y=460+row*153
-        c.rect((x,y,x+180,y+126),"#383B37",15)
-        c.center((x,y+7,x+180,y+60),label,30,WHITE,bold=True)
-        c.text(x+22,y+74,"−",28,GOLD)
-        c.text(x+83,y+72,str(value),28,WHITE)
-        c.text(x+140,y+75,"+",27,GOLD)
-    c.text(701,937,"取消",28,WHITE)
-    c.pill((1270,923,1695,991),"保存并重算",size=30)
-    c.wrap(700,1041,"总数或牌库校验不通过时不能保存，并显示具体需要修正的牌面。",987,24,DIM)
-    c.rect((70,1180,1730,1260),"#E7E9DF",22)
-    c.text(98,1205,"待核对：保留已确认数据，不确定项显示 —。查看问题 / 核对，不悄悄把错误显示成 0。",26,INK)
-    c.save("tools-hand.png")
+def tools_update():
+    c=Canvas(1470,"记牌器 · 工具与应用更新","已删除手动核对、纠错、补记和撤销；更新沿用此前要求，当前没有发布 APK。","04 / 04")
+    c.text(70,183,"工具入口提议 D2",29,bold=True)
+    c.rect((70,241,650,1080),PANEL,25)
+    c.text(106,275,"记牌工具",33,GOLD,bold=True)
+    for i,label in enumerate(["尺寸调整","牌序调整"]):
+        c.row(103,355+i*108,512,label,"›")
+    c.row(103,583,512,"显示三家出牌记录",switch=True)
+    c.pill((103,718,615,787),"重置本局",False,29)
+    c.pill((103,818,615,887),"停止记牌",False,29)
+    c.text(277,982,"关闭",29,GOLD)
+    c.wrap(81,1126,"正常记牌条维持原两圆钮。工具只承载显示调整与会话操作，不提供手动改牌。",551,25,INK,41)
+    c.phone(760,184,w=550,h=1130,title="应用更新")
+    c.text(797,337,"版本、大小仅为设计示例",23,DIM)
+    c.row(788,397,494,"自动更新",switch=True)
+    c.row(788,488,494,"仅 Wi-Fi 自动下载",switch=True)
+    c.rect((788,611,1282,975),PANEL,22)
+    c.text(811,641,"发现新版本",29,GOLD,bold=True)
+    c.text(811,701,"1.0.0 → 1.0.1",30,WHITE)
+    c.text(811,757,"安装包：36 MB（示例）",24,DIM)
+    c.wrap(811,809,"优化记牌稳定性，完善显示效果。",440,25,WHITE)
+    c.pill((811,892,1258,952),"下载更新",size=29)
+    c.wrap(798,1013,"空闲时下载，记牌期间不弹安装提示。系统需要确认时显示安装界面。",467,25,DIM)
+    c.wrap(798,1157,"断网继续记牌；当前服务尚无安装包。",467,24,DIM)
+    c.rect((1364,241,1730,1302),"#E8EAE1",23)
+    c.text(1395,275,"准确性要求",30,bold=True)
+    y=c.wrap(1395,351,"自动识别、确定归属和去重后统一提交。临时画面冲突先自动复核。",305,26,INK,43)
+    y=c.wrap(1395,y+40,"无法恢复时停止精确数字显示，提示等待下一局；不猜牌、不让用户补记。",305,26,INK,43)
+    c.wrap(1395,y+40,"交付门槛：完整对局逐手零错漏。无法确认或意外中断也计为失败。",305,26,INK,43)
+    c.save("tools-update.png")
 
 
 if __name__ == "__main__":
+    if not OVERLAY_FONT.is_file():
+        raise SystemExit("Set JPQ_OVERLAY_FONT to the official DingTalk JinBuTi font obtained locally.")
     assert len(set(LABELS)) == 15
     assert sum(VALUES) + 13 + 14 + 14 == 81
     assert DEFAULTS["twoDeckAdjustment"]["contentWidthScale"] == 1.1578497
     start_settings()
     overlay_states()
     adjustment()
-    correction_update()
-    tools_hand()
-    print("Created 5 static design drawings in docs/design/review")
+    tools_update()
+    print("Created 4 static design drawings in docs/design/review")

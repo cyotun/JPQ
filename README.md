@@ -1,4 +1,4 @@
-# JPQ · 大掼蛋记牌器
+# 记牌器 · JPQ
 
 面向个人使用的 Android 本地记牌工具。首版完整适配腾讯独立应用「大掼蛋」，通过用户授权的屏幕采集识别已显示的牌面，使用悬浮窗显示手牌外剩余牌和三家出牌记录。
 
@@ -8,13 +8,16 @@
 
 ## 设计资料
 
-当前确认入口：[设计确认稿 v1](docs/design/PRD.md) 与 [五张页面设计图](docs/design/review/README.md)。已补齐使用流程、页面行为、异常恢复、两页调整、手动纠错、模式覆盖与 App 更新交互；新增设计待用户确认，手机 App 尚未开发。
+当前确认入口：[设计确认稿 v2](docs/design/PRD.md) 与 [四张页面设计图](docs/design/review/README.md)。应用名已确定为「记牌器」。本次删除全部手动纠错，以整局自动零错漏作为交付门槛；悬浮窗使用原 APK 的字体、颜色和默认布局。保留 Cloudflare 应用自动更新；新增设计待确认，手机 App 尚未开发。
+
+用户已选定 [1 号黑金图标](docs/design/icons/README.md)；设计源图与其余候选已保存。
 
 - [产品方案与待确认设计](docs/brief.md)
 - [界面汇总示意（旧稿留档）](docs/design/design-preview.png)
 - [参考 APK 的静态研究](docs/research/apk-analysis.md)
 - [反混淆后的方法研究](docs/research/method-analysis.md)
 - [原 APK 默认显示参数](docs/research/reference-display-defaults.json)
+- [原字体与配色证据](docs/research/display-style.md)
 - [开始后的等待提示示意](docs/design/waiting-preview.png)
 - [GitHub 类似项目调查](docs/research/github-survey.md)
 - [技术实现方案](docs/design/technical-plan.md)
@@ -27,7 +30,7 @@
 
 - 首版支持腾讯「大掼蛋」独立 App；保留多平台、多玩法扩展结构。
 - 使用设备：小米 17 Pro Max、小米 17 Ultra 徕卡版；用户报告系统为澎湃 OS 3/4。
-- 以稳定记牌为首要目标：自动识别、剩余统计、三家出牌记录、手动纠错。
+- 以稳定准确记牌为交付门槛：自动识别、剩余统计和三家出牌记录；不设置手动纠错、补记或改初始手牌。
 - 炸弹潜力计数标红，普通计数白色，0 张淡化；牌序按玩法可拖动，尺寸/字号可调，右侧三家记录可关闭。
 - 配色、默认尺寸和整体交互沿用原 APK；普通点数阈值 4，大小王各自阈值 2。开始后保留左上角等待提示。
 - 其他交互改进先沟通、确认后实现。
