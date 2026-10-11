@@ -39,7 +39,7 @@ class Canvas:
         self.d = ImageDraw.Draw(self.im)
         self.text(64, 40, title, 46, bold=True)
         self.text(66, 106, subtitle, 25, MUTED)
-        self.text(66, h - 54, "设计确认稿 v2 · 2026-10-11 · 自绘静态示意，手机端尚未开发", 22, MUTED)
+        self.text(66, h - 54, "设计确认稿 v3 · 2026-10-11 · 自绘静态示意，手机端尚未开发", 22, MUTED)
         self.text(1650, h - 54, number, 24, MUTED)
 
     def rect(self, box, fill, radius=18, outline=None, width=1):
@@ -128,7 +128,7 @@ def circle(im, x, y, scale, value):
     jpq_text(im,(x,y,x+w,y+w),value,16*scale,"#000000")
 
 
-def overlay(c, x, y, full=True, scale=2.18):
+def overlay(c, x, y, full=True, scale=2.18, double_tap_hide=False, show_reset=True):
     # The reference dp constants and adjustment floats drive the same geometry
     # in both full and count-only previews. This is not a crop of the APK UI.
     a = DEFAULTS["twoDeckAdjustment"]
@@ -146,14 +146,16 @@ def overlay(c, x, y, full=True, scale=2.18):
     h = ch*2 + seam + edge*2
     contentw = gridw + (seam+rightw if full else 0) + edge*2
     button, gap = 44*scale, 4*scale
-    gx = button+gap+edge
-    total = button*2+gap*2+contentw
+    left_controls = 0 if double_tap_hide else button+gap
+    right_controls = button+gap if show_reset else 0
+    gx = left_controls+edge
+    total = left_controls+contentw+right_controls
     # Antialias edges and glyphs at 3x, then draw on the review sheet.
     aa = 3
     patch = Image.new("RGBA",(round(total*aa),round(max(h,button)*aa)),(0,0,0,0))
     d = ImageDraw.Draw(patch)
     ss = scale*aa
-    cb = (round((button+gap)*aa),0,round((button+gap+contentw)*aa)-1,round(h*aa)-1)
+    cb = (round(left_controls*aa),0,round((left_controls+contentw)*aa)-1,round(h*aa)-1)
     d.rounded_rectangle(cb,radius=12*ss,fill="#000000")
     inner_patch = Image.new("RGBA",patch.size,PANEL)
     pd = ImageDraw.Draw(inner_patch)
@@ -191,32 +193,37 @@ def overlay(c, x, y, full=True, scale=2.18):
     inset=win["borderWidthDp"]*ss
     md.rounded_rectangle((cb[0]+inset,cb[1]+inset,cb[2]-inset,cb[3]-inset),radius=11*ss,fill=255)
     patch.paste(inner_patch,(0,0),mask)
-    circle(patch,0,0,ss,"隐藏")
-    circle(patch,(total-button)*aa,0,ss,"重置")
+    if not double_tap_hide:
+        circle(patch,0,0,ss,"隐藏")
+    if show_reset:
+        circle(patch,(total-button)*aa,0,ss,"重置")
     patch=patch.resize((round(total),round(max(h,button))),Image.Resampling.LANCZOS)
     c.im.paste(patch,(round(x),round(y)),patch)
     return total
 
 
-def waiting(c, x, y, scale=2.18):
-    circle(c.im,x,y,scale,"隐藏")
-    lx=x+48*scale
+def waiting(c, x, y, scale=2.18, double_tap_hide=False):
+    if not double_tap_hide:
+        circle(c.im,x,y,scale,"隐藏")
+    lx=x+(0 if double_tap_hide else 48*scale)
     box=(lx,y,lx+370*scale,y+46*scale)
     c.rect(box,GOLD,round(12*scale),outline="#000000",width=round(scale))
     jpq_text(c.im,(lx+9*scale,y+3*scale,box[2]-9*scale,y+25*scale),"进入游戏房间后，会自动开始记牌",18*scale,"#000000")
     jpq_text(c.im,(lx+9*scale,y+27*scale,box[2]-9*scale,y+43*scale),"牌局已开始仍未显示？请检查权限或重新开始记牌",10.5*scale,"#000000")
 
 
-def table(c, box):
+def table(c, box, seats=True):
     x,y,r,b=box
     c.rect(box,TEAL,26)
+    if not seats:
+        return
     c.text(x+35,y+155,"上家",23,"#82B8AE")
     c.text((x+r)/2-50,y+126,"对家 · 队友",23,"#82B8AE")
     c.text(r-125,y+155,"下家",23,"#82B8AE")
 
 
 def start_settings():
-    c=Canvas(1410,"记牌器 · 启动与设置","保留原纵向配置顺序和黑金样式，移除会员与营销区域。首页简化属于本次提议 D1。","01 / 04")
+    c=Canvas(1410,"记牌器 · 启动与设置","保留原纵向配置顺序；新增重置按钮显示开关和可选的双击隐藏。","01 / 05")
     for x,title,nav in [(70,"记牌器","记牌"),(655,"权限设置",None),(1240,"设置","设置")]:
         c.phone(x,180,title=title,nav=nav)
     x=70
@@ -244,20 +251,22 @@ def start_settings():
     c.wrap(x+35,1006,"屏幕共享在每次开始时由系统授权。不能自动检测的后台项标为需手动设置。",410,23,DIM)
     x=1240
     c.text(x+35,339,"显示设置",25,DIM)
-    c.row(x+28,390,434,"显示三家出牌记录",switch=True)
-    c.row(x+28,480,434,"尺寸调整","›")
-    c.row(x+28,570,434,"牌序调整","›")
-    c.text(x+35,690,"应用设置",25,DIM)
-    c.row(x+28,739,434,"权限设置","›")
-    c.row(x+28,829,434,"应用更新","检查更新")
-    c.row(x+28,919,434,"配置备份","›")
-    c.row(x+28,1009,434,"关于记牌器","›")
+    c.row(x+28,390,434,"显示三家出牌记录",switch=True,h=66)
+    c.row(x+28,462,434,"显示重置按钮",switch=True,h=66)
+    c.row(x+28,534,434,"双击记牌条隐藏",switch=False,h=66)
+    c.row(x+28,606,434,"尺寸调整","›",h=66)
+    c.row(x+28,678,434,"牌序调整","›",h=66)
+    c.text(x+35,772,"应用设置",25,DIM)
+    c.row(x+28,824,434,"权限设置","›",h=66)
+    c.row(x+28,896,434,"应用更新","检查更新",h=66)
+    c.row(x+28,968,434,"配置备份","›",h=66)
+    c.row(x+28,1040,434,"关于记牌器","›",h=66)
     c.wrap(76,1234,"开始 → 系统共享授权 → 返回大掼蛋 → 等待有效牌局 → 自动记牌。无需手动核对或修正。",1640,26,INK)
     c.save("start-settings.png")
 
 
 def overlay_states():
-    c=Canvas(1510,"记牌器 · 原 APK 风格悬浮窗","实际字体：钉钉进步体；原色值、细边框与紧凑牌格。底下桌面为自绘示意。","02 / 04")
+    c=Canvas(1510,"记牌器 · 原 APK 风格悬浮窗","默认保留原两圆钮；按钮可见性及双击隐藏另见第 5 张设计图。","02 / 05")
     c.text(70,184,"开始后 · 等待有效牌局",29,bold=True)
     table(c,(70,237,1730,475))
     waiting(c,86,252)
@@ -285,7 +294,7 @@ def overlay_states():
     c.wrap(920,1023,"保留左侧列宽和字号，条宽缩短。三家识别、扣牌和历史仍继续。再次开启恢复完整记录。",730,27,WHITE)
     circle(c.im,85,1260,1.65,"显示")
     c.text(176,1272,"隐藏后只留「显示」圆钮；恢复时显示当前状态，不停止识别。",25,INK)
-    c.text(75,1368,"新增入口提议 D2：长按「隐藏」打开调整与停止工具；拖动条内空白处移动。",25,MUTED)
+    c.text(75,1368,"工具入口提议 D2：长按记牌条或「隐藏」按钮；拖动内容区移动，不触发双击隐藏。",25,MUTED)
     c.save("overlay-states.png")
 
 
@@ -304,7 +313,7 @@ def adjust_header(c, y, order=False):
 
 
 def adjustment():
-    c=Canvas(1900,"记牌器 · 复现原来的两页调整","保留宽轨道、竖条滑块、金色按钮、八项默认值和 8 + 7 两行牌序。","03 / 04")
+    c=Canvas(1900,"记牌器 · 复现原来的两页调整","默认布局示例；按钮可见性随设置预览，调整页不会响应双击隐藏。","03 / 05")
     adjust_header(c,245)
     groups=[("窗口",[("总宽度","115%",(1.1578497-.8)/.55),("左右比例","37:63",(.3703267-.3)/.3)]),
             ("行高",[("牌格高度","94%",(.94622684-.85)/.45),("记录行高","98%",(.98167837-.85)/.45)]),
@@ -337,8 +346,8 @@ def adjustment():
 
 
 def tools_update():
-    c=Canvas(1470,"记牌器 · 工具与应用更新","已删除手动核对、纠错、补记和撤销；更新沿用此前要求，当前没有发布 APK。","04 / 04")
-    c.text(70,183,"工具入口提议 D2",29,bold=True)
+    c=Canvas(1470,"记牌器 · 工具与应用更新","按钮可隐藏，重置与停止仍可从工具进入；保留应用自动更新。","04 / 05")
+    c.text(70,183,"长按记牌条 / 隐藏按钮（D2）",29,bold=True)
     c.rect((70,241,650,1080),PANEL,25)
     c.text(106,275,"记牌工具",33,GOLD,bold=True)
     for i,label in enumerate(["尺寸调整","牌序调整"]):
@@ -347,7 +356,7 @@ def tools_update():
     c.pill((103,718,615,787),"重置本局",False,29)
     c.pill((103,818,615,887),"停止记牌",False,29)
     c.text(277,982,"关闭",29,GOLD)
-    c.wrap(81,1126,"正常记牌条维持原两圆钮。工具只承载显示调整与会话操作，不提供手动改牌。",551,25,INK,41)
+    c.wrap(81,1126,"隐藏按钮或重置按钮不显示时，长按记牌条仍可打开工具。重置本局、停止记牌继续可用。",551,25,INK,41)
     c.phone(760,184,w=550,h=1130,title="应用更新")
     c.text(797,337,"版本、大小仅为设计示例",23,DIM)
     c.row(788,397,494,"自动更新",switch=True)
@@ -368,6 +377,35 @@ def tools_update():
     c.save("tools-update.png")
 
 
+def visibility_controls():
+    c=Canvas(1960,"记牌器 · 按钮与双击隐藏","两个设置独立保存：默认显示重置按钮，默认关闭双击隐藏。所有牌格保持原尺寸。","05 / 05")
+    rows=[
+        ("默认：两个按钮均显示",False,True,"点击「隐藏」隐藏；未开启双击时，双击内容区不会隐藏。"),
+        ("只关闭重置按钮：保留隐藏按钮",False,False,"右端圆钮及占位移除；重置本局仍可从工具进入。"),
+        ("只开启双击隐藏：保留重置按钮",True,True,"左端「隐藏」按钮移除；双击牌面 / 记录区域隐藏。"),
+        ("开启双击隐藏，并关闭重置按钮",True,False,"只显示记牌内容；两个按钮及占位都移除。")
+    ]
+    for i,(title,double_tap,reset,note) in enumerate(rows):
+        y=184+i*277
+        c.text(70,y,title,29,bold=True)
+        table(c,(70,y+51,1730,y+234),seats=False)
+        overlay(c,84,y+70,double_tap_hide=double_tap,show_reset=reset)
+        c.text(99,y+183,note,25,WHITE)
+    y=1292
+    c.text(70,y,"双击后：仅出现「显示」按钮，记牌继续",29,bold=True)
+    table(c,(70,y+51,1730,y+234),seats=False)
+    circle(c.im,84,y+70,2.18,"显示")
+    c.text(211,y+98,"点击「显示」恢复记牌条",29,WHITE)
+    c.text(99,y+183,"隐藏期间完成新局初始化或新增出牌，恢复时显示最新状态。",25,WHITE)
+    y=1569
+    c.text(70,y,"点击显示后：恢复当前设置，「显示」按钮消失",29,bold=True)
+    table(c,(70,y+51,1730,y+234),seats=False)
+    overlay(c,84,y+70,double_tap_hide=True,show_reset=False)
+    c.text(99,y+183,"此例沿用「双击开 / 重置隐藏」。恢复操作不会重置牌局或改动设置。",25,WHITE)
+    c.text(78,1847,"等待条、仅计数及异常提示同样遵从设置；调整页预览不触发隐藏。",25,MUTED)
+    c.save("visibility-controls.png")
+
+
 if __name__ == "__main__":
     if not OVERLAY_FONT.is_file():
         raise SystemExit("Set JPQ_OVERLAY_FONT to the official DingTalk JinBuTi font obtained locally.")
@@ -378,4 +416,5 @@ if __name__ == "__main__":
     overlay_states()
     adjustment()
     tools_update()
-    print("Created 4 static design drawings in docs/design/review")
+    visibility_controls()
+    print("Created 5 static design drawings in docs/design/review")
