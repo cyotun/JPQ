@@ -2,7 +2,7 @@
 
 面向个人使用的 Android 本地记牌工具。首版完整适配腾讯独立应用「大掼蛋」，通过用户授权的屏幕采集识别已显示的牌面，使用悬浮窗显示手牌外剩余牌和三家出牌记录。
 
-**当前阶段：APK 研究与设计，等待用户确认后开始应用开发。当前仓库尚无可安装的自研 APK。**
+**当前阶段：Android App 仍在设计确认阶段；按用户新增授权，独立 Cloudflare 更新服务已实现并进行部署修复。当前尚无可安装的自研 APK。**
 
 ## 设计资料
 
@@ -16,6 +16,7 @@
 - [技术实现方案](docs/design/technical-plan.md)
 - [验收与开发里程碑](docs/design/acceptance-plan.md)
 - [独立 Cloudflare 自动更新方案](docs/design/cloudflare-update-plan.md)
+- [更新服务源码与接口](services/updates/README.md)
 
 ## 已确认的方向
 

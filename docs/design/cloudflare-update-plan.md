@@ -1,10 +1,12 @@
-# Cloudflare 自动更新方案 · 待账户信息与交互确认
+# Cloudflare 自动更新方案 · jpq 独立部署
 
-日期：2026-10-11。用户要求：使用自己的 Cloudflare 免费资源为 App 提供自动更新，与现有其他项目分开部署。当前只完成设计和文档，未连接账户、创建资源或部署。
+日期：2026-10-11。用户要求使用自己的 Cloudflare 免费资源，更新服务与其他项目分开。后续用户已指定项目 `jpq`，并明确授权直接修正部署；现已通过其登录会话读取配置，更新服务源码与本地验证完成，正在部署。Android App 的交互与开发仍遵守原设计确认要求。
 
 ## 1. 方案与隔离边界
 
-候选方案：新建独立 Worker 提供最新版本信息，通过独立安装包存储提供下载。建议项目名 `jpq-updates`、存储名 `jpq-releases`，只是拟定名称，创建前核对账户和重名。
+实际目标：使用用户已创建的独立 Worker `jpq`，已连接 `cyotun/JPQ` 的 main 分支，构建根目录 `/`。默认域名为 `jpq.240438457.workers.dev`；初次检查时生产域名关闭、构建失败，失败原因是缺少 Worker 入口/配置。修复通过本仓库根目录 Wrangler 配置完成。
+
+安装包存储未来采用独立资源；当前 Worker 无任何存储绑定，本次不创建 R2 或启用收费产品。
 
 - 使用 JPQ 专用部署目录与配置，不在原项目目录发布。
 - 新 Worker 使用独立访问地址；如使用自定义域名，新建专用子域名，不覆盖原域名/路由。
@@ -16,7 +18,7 @@
 
 ## 2. 免费资源选型
 
-[Workers Free](https://developers.cloudflare.com/workers/platform/pricing/) 当前包含每日 100,000 请求和每次 10ms CPU；小型版本接口采用缓存和轻量逻辑，不运行识别或训练。
+用户账户已在控制台确认当前为 Workers Free。[官方额度](https://developers.cloudflare.com/workers/platform/pricing/) 包含每日 100,000 请求和每次 10ms CPU；更新接口为轻量服务，不运行识别或训练。
 
 [R2 Standard 免费额度](https://developers.cloudflare.com/r2/pricing/) 当前为每月 10 GB-month 存储、100 万 Class A、1,000 万 Class B 操作，出口流量免费；并非所有存储类别都适用，也不是无条件无上限免费。需先确认用户账户是否已启用及其他项目占用，不自动开通可能涉及计费的服务。
 
@@ -53,4 +55,12 @@
 
 目前插件目录搜索未返回 Cloudflare 专用连接插件；后续在设计确认后选择官方账户授权/部署工具，不据此推断 Cloudflare 不可使用。
 
-待确认：现有服务类型/域名、账户免费资源状态、独立部署目标，以及更新提示和自动下载/安装细节。
+已确认：Workers Free、目标 Worker `jpq`、默认域名、关联仓库和分支。仍待后续确认：安装包存储启用条件、App 更新提示和自动下载/安装细节。
+
+## 6. 已实现的服务基础
+
+源码见 [services/updates](../../services/updates/README.md)。只有 GET/HEAD 公共接口：健康检查、最新版本查询、已发布版本 APK 下载。未配置独立存储或未发布清单时，版本接口返回 204，不虚构可用 APK。下载流式处理，拒绝不匹配的包名/对象 key/版本与哈希 metadata，客户端仍需校验真实签名和文件哈希。
+
+部署配置只命名 `jpq`，启用其默认 workers.dev 地址，不配置其他项目路由或存储。已保存该项目的构建检查命令 `npm run check && npm test`，部署仍使用 `npx wrangler deploy`。
+
+本地验证：7 项测试通过，语法检查通过，Wrangler dry-run 通过，上传体积约 6.22 KiB。真实 APK/客户端更新链路尚未验证，需自研 App 和首个发布版本完成后验收。
