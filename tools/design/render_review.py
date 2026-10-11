@@ -5,6 +5,7 @@ These are review artifacts, not App screenshots. Font binaries are not published
 """
 from pathlib import Path
 import json
+import math
 import os
 from PIL import Image, ImageDraw, ImageFont
 
@@ -27,6 +28,8 @@ LABELS = ["大", "小", "A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", 
 VALUES = [1, 1, 4, 6, 5, 3, 0, 1, 1, 0, 0, 4, 4, 4, 6]
 HISTORY = ["Q·6·77722·AAA99·3", "9·4·小·66688·JJJ1010·大", "6·99944·K·J·10101088·7"]
 DEFAULTS = json.loads((ROOT / "docs/research/reference-display-defaults.json").read_text(encoding="utf-8"))
+JPQ_DEFAULTS = json.loads((ROOT / "docs/design/display-defaults.json").read_text(encoding="utf-8"))
+WIDTH_ANALYSIS = json.loads((ROOT / "docs/design/history-width-analysis.json").read_text(encoding="utf-8"))
 
 
 def font(size, bold=False):
@@ -39,7 +42,7 @@ class Canvas:
         self.d = ImageDraw.Draw(self.im)
         self.text(64, 40, title, 46, bold=True)
         self.text(66, 106, subtitle, 25, MUTED)
-        self.text(66, h - 54, "设计确认稿 v3 · 2026-10-11 · 自绘静态示意，手机端尚未开发", 22, MUTED)
+        self.text(66, h - 54, "设计确认稿 v4 · 2026-10-11 · 自绘静态示意，手机端尚未开发", 22, MUTED)
         self.text(1650, h - 54, number, 24, MUTED)
 
     def rect(self, box, fill, radius=18, outline=None, width=1):
@@ -128,10 +131,11 @@ def circle(im, x, y, scale, value):
     jpq_text(im,(x,y,x+w,y+w),value,16*scale,"#000000")
 
 
-def overlay(c, x, y, full=True, scale=2.18, double_tap_hide=False, show_reset=True):
+def overlay(c, x, y, full=True, scale=2.18, double_tap_hide=False, show_reset=True,
+            reference_width=False, histories=None, counts=None, values=None):
     # The reference dp constants and adjustment floats drive the same geometry
     # in both full and count-only previews. This is not a crop of the APK UI.
-    a = DEFAULTS["twoDeckAdjustment"]
+    a = DEFAULTS["twoDeckAdjustment"] if reference_width else JPQ_DEFAULTS["twoDeckAdjustment"]
     base = DEFAULTS["standardBase"]
     g = base["grid"]
     rec = base["record"]
@@ -141,6 +145,19 @@ def overlay(c, x, y, full=True, scale=2.18, double_tap_hide=False, show_reset=Tr
     inner = content_base*a["contentWidthScale"] - 2*win["edgeInsetDp"] - win["sectionSpacingDp"]
     gridw = inner*a["gridSectionRatio"]*scale
     rightw = inner*(1-a["gridSectionRatio"])*scale if full else 0
+    histories = HISTORY if histories is None else histories
+    counts = [13, 14, 14] if counts is None else counts
+    values = VALUES if values is None else values
+    if full and not reference_width:
+        # Keep the saved base geometry and grow only the right section.
+        # Android will use its resolved text measurer and available screen area.
+        detail_font = ImageFont.truetype(str(OVERLAY_FONT), 1000)
+        needed = []
+        for value in histories:
+            bounds = detail_font.getbbox(value)
+            ink = max(detail_font.getlength(value), bounds[2]) - min(0, bounds[0])
+            needed.append(ink/1000*rec["detailFontSizeSp"]*a["recordDetailTextScale"])
+        rightw = max(rightw, math.ceil(32+max(needed)+JPQ_DEFAULTS["historyWidth"]["endPaddingDp"])*scale)
     edge, seam = scale, scale
     ch = g["cellHeightDp"]*a["gridCellHeightScale"]*scale
     h = ch*2 + seam + edge*2
@@ -161,7 +178,7 @@ def overlay(c, x, y, full=True, scale=2.18, double_tap_hide=False, show_reset=Tr
     pd = ImageDraw.Draw(inner_patch)
     cw = (gridw-14*seam)/15
     pd.rectangle((round(gx*aa),round(edge*aa),round((gx+gridw)*aa),round((h-edge)*aa)),fill="#000000")
-    for i,(label,value) in enumerate(zip(LABELS,VALUES)):
+    for i,(label,value) in enumerate(zip(LABELS,values)):
         left = (gx+i*(cw+seam))*aa
         top = edge*aa
         for j in range(round(ch*aa)):
@@ -178,7 +195,7 @@ def overlay(c, x, y, full=True, scale=2.18, double_tap_hide=False, show_reset=Tr
     if full:
         rx = (gx+gridw+seam)*aa
         rh = rec["rowHeightDp"]*a["recordRowHeightScale"]*ss
-        for i,(seat,count,history) in enumerate(zip("上对下",[13,14,14],HISTORY)):
+        for i,(seat,count,history) in enumerate(zip("上对下",counts,histories)):
             ry=edge*aa+i*(rh+ss)
             lb=(rx,ry,rx+14*ss,ry+rh)
             pd.rectangle(tuple(map(round,lb)),fill="#434343")
@@ -223,7 +240,7 @@ def table(c, box, seats=True):
 
 
 def start_settings():
-    c=Canvas(1410,"记牌器 · 启动与设置","保留原纵向配置顺序；新增重置按钮显示开关和可选的双击隐藏。","01 / 05")
+    c=Canvas(1410,"记牌器 · 启动与设置","原配置顺序、按钮设置保留；右侧采用适中基础宽度，超长记录自动加宽。","01 / 06")
     for x,title,nav in [(70,"记牌器","记牌"),(655,"权限设置",None),(1240,"设置","设置")]:
         c.phone(x,180,title=title,nav=nav)
     x=70
@@ -266,7 +283,7 @@ def start_settings():
 
 
 def overlay_states():
-    c=Canvas(1510,"记牌器 · 原 APK 风格悬浮窗","默认保留原两圆钮；按钮可见性及双击隐藏另见第 5 张设计图。","02 / 05")
+    c=Canvas(1510,"记牌器 · 原 APK 风格悬浮窗","原字形、字号和牌格不变；右侧基础宽度缩短，放不下记录时自动加宽。","02 / 06")
     c.text(70,184,"开始后 · 等待有效牌局",29,bold=True)
     table(c,(70,237,1730,475))
     waiting(c,86,252)
@@ -313,9 +330,11 @@ def adjust_header(c, y, order=False):
 
 
 def adjustment():
-    c=Canvas(1900,"记牌器 · 复现原来的两页调整","默认布局示例；按钮可见性随设置预览，调整页不会响应双击隐藏。","03 / 05")
+    c=Canvas(1900,"记牌器 · 复现原来的两页调整","宽度与比例设置基础布局；超长记录只扩展右侧，不改左侧牌格或保存值。","03 / 06")
     adjust_header(c,245)
-    groups=[("窗口",[("总宽度","115%",(1.1578497-.8)/.55),("左右比例","37:63",(.3703267-.3)/.3)]),
+    a=JPQ_DEFAULTS["twoDeckAdjustment"]
+    pct=int(a["gridSectionRatio"]*100)
+    groups=[("窗口",[("总宽度",f'{int(a["contentWidthScale"]*100)}%',(a["contentWidthScale"]-.8)/.55),("左右比例",f'{pct}:{100-pct}',(a["gridSectionRatio"]-.3)/.3)]),
             ("行高",[("牌格高度","94%",(.94622684-.85)/.45),("记录行高","98%",(.98167837-.85)/.45)]),
             ("左侧字体",[("标题字号","89%",(.89647275-.8)/.55),("数值字号","96%",(.96344686-.8)/.55)]),
             ("右侧字体",[("计数字号","102%",(1.0216086-.8)/.55),("详情字号","90%",(.90082836-.8)/.55)])]
@@ -331,7 +350,7 @@ def adjustment():
             c.rect((min(x+343,knob+15),y+52,x+356,y+82),"#887D54",15)
             c.rect((knob-4,y+39,knob+4,y+95),GOLD,4)
             c.d.ellipse((x+339,y+64,x+346,y+71),fill=GOLD)
-    c.text(82,956,"显示值截断，存储保留原浮点精度；关闭右侧时相关滑块置灰且保留设置。",24,MUTED)
+    c.text(82,956,"滑块设置基础宽度，长记录自动扩展右侧。显示值截断，存储保留浮点精度。",24,MUTED)
     adjust_header(c,1091,True)
     c.text(107,1480,"拖动牌面调整顺序",27,WHITE)
     names=["大王","小王","A","K","Q","J","10","9","8","7","6","5","4","3","2"]
@@ -346,7 +365,7 @@ def adjustment():
 
 
 def tools_update():
-    c=Canvas(1470,"记牌器 · 工具与应用更新","按钮可隐藏，重置与停止仍可从工具进入；保留应用自动更新。","04 / 05")
+    c=Canvas(1470,"记牌器 · 工具与应用更新","按钮可隐藏，重置与停止仍可从工具进入；保留应用自动更新。","04 / 06")
     c.text(70,183,"长按记牌条 / 隐藏按钮（D2）",29,bold=True)
     c.rect((70,241,650,1080),PANEL,25)
     c.text(106,275,"记牌工具",33,GOLD,bold=True)
@@ -378,7 +397,7 @@ def tools_update():
 
 
 def visibility_controls():
-    c=Canvas(1960,"记牌器 · 按钮与双击隐藏","两个设置独立保存：默认显示重置按钮，默认关闭双击隐藏。所有牌格保持原尺寸。","05 / 05")
+    c=Canvas(1960,"记牌器 · 按钮与双击隐藏","两个设置独立保存：默认显示重置按钮，默认关闭双击隐藏。所有牌格保持原尺寸。","05 / 06")
     rows=[
         ("默认：两个按钮均显示",False,True,"点击「隐藏」隐藏；未开启双击时，双击内容区不会隐藏。"),
         ("只关闭重置按钮：保留隐藏按钮",False,False,"右端圆钮及占位移除；重置本局仍可从工具进入。"),
@@ -406,6 +425,31 @@ def visibility_controls():
     c.save("visibility-controls.png")
 
 
+def history_width():
+    c=Canvas(1500,"记牌器 · 默认适中，超长才加宽","三条示意使用相同字号、牌格和圆钮；只比较右侧长度。","06 / 06")
+    rows=[
+        ("原 APK 默认宽度 · 右侧约 401dp",True,None,None,None),
+        ("新默认宽度 · 右侧 320dp，缩短约 20%",False,None,None,None),
+        ("极端记录 · 自动扩至约 511dp",False,
+         [WIDTH_ANALYSIS["maxHistoryExample"],"K·K·J·J","9·9·8·8"],[27,4,4],
+         [0,0,1,4,0,4,0,4,4,4,4,4,4,5,8]),
+    ]
+    scale=1.86
+    for i,(title,reference,histories,counts,values) in enumerate(rows):
+        y=180+i*290
+        c.text(70,y,title,29,bold=True)
+        table(c,(70,y+54,1730,y+242),seats=False)
+        total=overlay(c,86,y+72,scale=scale,reference_width=reference,histories=histories,counts=counts,values=values)
+        note=["同样的短记录，原右侧留白较多。", "平常固定基础长度，左侧 15 列宽度不变。", "27 张全部单出、26 个分隔点；最宽文字约 467dp，末尾留约 12dp。 "][i]
+        c.text(99,y+179,note,25,WHITE)
+        assert 86+total < 1730
+    c.rect((70,1084,1730,1376),"#E8EAE1",20)
+    c.text(105,1110,"默认右侧 = 标签和计数 32dp + 文字空间 276dp + 边距 12dp",29,bold=True)
+    c.wrap(105,1170,"只有已确认的记录超过基础长度才扩展；同一局不因识别临时变化缩回。新一局恢复基础宽度。放大字体时重新测量，始终限制在手机可见区域内。",1580,27,INK,43)
+    c.text(105,1296,"320dp 是当前设计基线，适配多数对局的目标仍需真机录屏验证。",25,MUTED)
+    c.save("history-width.png")
+
+
 if __name__ == "__main__":
     if not OVERLAY_FONT.is_file():
         raise SystemExit("Set JPQ_OVERLAY_FONT to the official DingTalk JinBuTi font obtained locally.")
@@ -417,4 +461,5 @@ if __name__ == "__main__":
     adjustment()
     tools_update()
     visibility_controls()
-    print("Created 5 static design drawings in docs/design/review")
+    history_width()
+    print("Created 6 static design drawings in docs/design/review")

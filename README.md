@@ -8,7 +8,7 @@
 
 ## 设计资料
 
-当前确认入口：[设计确认稿 v3](docs/design/PRD.md) 与 [五张页面设计图](docs/design/review/README.md)。应用名「记牌器」。最新加入 [重置按钮开关与双击隐藏](docs/design/review/visibility-controls.png)：默认仍是原按钮方式，开启双击后移除隐藏按钮，隐藏后只出现显示按钮，恢复后消失。保留全自动零错漏验收、原 APK 外观和 Cloudflare 应用自动更新；手机 App 尚未开发。
+当前确认入口：[设计确认稿 v4](docs/design/PRD.md) 与 [六张页面设计图](docs/design/review/README.md)。应用名「记牌器」。最新加入 [记录宽度对照](docs/design/review/history-width.png)：右侧基础 320dp，超长记录才自动扩展，左侧/字体保持原样。保留 [按钮开关与双击隐藏](docs/design/review/visibility-controls.png)、全自动零错漏验收、原 APK 外观和 Cloudflare 应用自动更新；手机 App 尚未开发。
 
 用户已选定 [1 号黑金图标](docs/design/icons/README.md)；设计源图与其余候选已保存。
 
@@ -17,6 +17,7 @@
 - [参考 APK 的静态研究](docs/research/apk-analysis.md)
 - [反混淆后的方法研究](docs/research/method-analysis.md)
 - [原 APK 默认显示参数](docs/research/reference-display-defaults.json)
+- [JPQ 基础显示参数与最长历史计算](docs/design/history-width.md)
 - [原字体与配色证据](docs/research/display-style.md)
 - [开始后的等待提示示意](docs/design/waiting-preview.png)
 - [GitHub 类似项目调查](docs/research/github-survey.md)
@@ -32,7 +33,7 @@
 - 使用设备：小米 17 Pro Max、小米 17 Ultra 徕卡版；用户报告系统为澎湃 OS 3/4。
 - 以稳定准确记牌为交付门槛：自动识别、剩余统计和三家出牌记录；不设置手动纠错、补记或改初始手牌。
 - 炸弹潜力计数标红，普通计数白色，0 张淡化；牌序按玩法可拖动，尺寸/字号可调，右侧三家记录可关闭。
-- 配色、默认尺寸和整体交互沿用原 APK；普通点数阈值 4，大小王各自阈值 2。开始后保留左上角等待提示。
+- 配色、字体、行高和整体交互沿用原 APK；普通点数阈值 4，大小王各自阈值 2。开始后保留左上角等待提示。右侧基础宽度适当缩短，超长才加宽，末尾留少量边距。
 - 可关闭悬浮条的重置按钮；可开启双击隐藏并移除隐藏按钮。隐藏仅留显示入口，后台继续记牌。
 - 其他交互改进先沟通、确认后实现。
 - 记牌在本地离线运行；无会员、收费、登录和广告。仅版本检查/下载安装包使用独立 Cloudflare 服务。

@@ -1,0 +1,26 @@
+{
+  "source": "User-approved JPQ design: moderate base width, expand only when history exceeds it",
+  "referenceDefaults": "../research/reference-display-defaults.json",
+  "calculation": "history-width-analysis.json",
+  "twoDeckAdjustment": {
+    "contentWidthScale": 1.0119149409245263,
+    "gridSectionRatio": 0.42402228187232194,
+    "gridCellHeightScale": 0.94622684,
+    "recordRowHeightScale": 0.98167837,
+    "gridHeaderTextScale": 0.89647275,
+    "gridValueTextScale": 0.96344686,
+    "recordLabelTextScale": 1.0,
+    "recordCounterTextScale": 1.0216086,
+    "recordDetailTextScale": 0.90082836
+  },
+  "historyWidth": {
+    "defaultRightSectionWidthDp": 320,
+    "endPaddingDp": 12,
+    "autoExpand": true,
+    "shrinkDuringRound": false,
+    "resetToBaseOnNewRound": true,
+    "measureConfirmedEventsOnly": true,
+    "respectAvailableScreenWidth": true
+  },
+  "androidRuntimeVerified": false
+}
