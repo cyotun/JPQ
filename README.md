@@ -22,6 +22,7 @@
 - [开始后的等待提示示意](docs/design/waiting-preview.png)
 - [GitHub 类似项目调查](docs/research/github-survey.md)
 - [技术实现方案](docs/design/technical-plan.md)
+- [开发就绪核对与剩余实现工作](docs/design/development-readiness.md)
 - [验收与开发里程碑](docs/design/acceptance-plan.md)
 - [独立 Cloudflare 自动更新方案](docs/design/cloudflare-update-plan.md)
 - [清单签名与下载契约](docs/design/update-contract.md)
