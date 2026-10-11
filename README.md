@@ -8,8 +8,10 @@
 
 ## 设计资料
 
+当前确认入口：[设计确认稿 v1](docs/design/PRD.md) 与 [五张页面设计图](docs/design/review/README.md)。已补齐使用流程、页面行为、异常恢复、两页调整、手动纠错、模式覆盖与 App 更新交互；新增设计待用户确认，手机 App 尚未开发。
+
 - [产品方案与待确认设计](docs/brief.md)
-- [界面示意](docs/design/design-preview.png)
+- [界面汇总示意（旧稿留档）](docs/design/design-preview.png)
 - [参考 APK 的静态研究](docs/research/apk-analysis.md)
 - [反混淆后的方法研究](docs/research/method-analysis.md)
 - [原 APK 默认显示参数](docs/research/reference-display-defaults.json)
@@ -18,6 +20,7 @@
 - [技术实现方案](docs/design/technical-plan.md)
 - [验收与开发里程碑](docs/design/acceptance-plan.md)
 - [独立 Cloudflare 自动更新方案](docs/design/cloudflare-update-plan.md)
+- [清单签名与下载契约](docs/design/update-contract.md)
 - [更新服务源码与接口](services/updates/README.md)
 
 ## 已确认的方向
