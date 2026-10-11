@@ -42,3 +42,6 @@ artifacts/
 app/src/main/assets/overlay.ttf
 app/src/main/assets/overlay-font-license.txt
 coverage/
+.signing/
+app/src/main/assets/models/
+services/updates/release-assets/

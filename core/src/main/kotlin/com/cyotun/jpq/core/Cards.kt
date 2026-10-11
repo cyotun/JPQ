@@ -6,9 +6,16 @@ enum class Rank(val label: String, val capacity: Int) {
     FIVE("5", 8), FOUR("4", 8), THREE("3", 8), TWO("2", 8);
     val isJoker: Boolean get() = this == BIG || this == SMALL
 }
-enum class Suit { SPADE, HEART, CLUB, DIAMOND, NONE }
+/** The reference detector distinguishes red/black ranks, not all four suits. */
+enum class Suit { SPADE, HEART, CLUB, DIAMOND, RED, BLACK, NONE }
 data class Card(val rank: Rank, val suit: Suit) {
     init { require(rank.isJoker == (suit == Suit.NONE)) { "Physical suit required for ordinary cards" } }
+}
+
+fun Card.colorKey(): String = when(suit) {
+    Suit.HEART, Suit.DIAMOND, Suit.RED -> "${rank.name}:RED"
+    Suit.SPADE, Suit.CLUB, Suit.BLACK -> "${rank.name}:BLACK"
+    Suit.NONE -> rank.name
 }
 enum class Seat(val label: String) { SELF("自己"), PREVIOUS("上"), OPPOSITE("对"), NEXT("下") }
 enum class RoundPhase { WAITING, ACTIVE, SELF_FINISHED, UNAVAILABLE, FINISHED }

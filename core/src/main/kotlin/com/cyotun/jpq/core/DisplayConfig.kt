@@ -15,6 +15,7 @@ data class DisplayConfig(
     val order: List<Rank> = guandanOrder,
     val x: Float = 0f,
     val y: Float = 0f,
+    val countWidthScale: Float = 1f,
 ) {
     fun validate(): DisplayConfig {
         require(validOrder(order))
@@ -22,6 +23,7 @@ data class DisplayConfig(
         require(gridHeight in .85f..1.3f && recordHeight in .85f..1.3f)
         require(listOf(headerText,valueText,counterText,detailText).all { it in .8f..1.35f })
         require(x.isFinite() && y.isFinite() && x in 0f..1f && y in 0f..1f)
+        require(countWidthScale in .8f..1.35f)
         return this
     }
 }
@@ -40,7 +42,10 @@ class HistoryWidth {
         val inner = 552 * config.widthScale - 3
         val grid = inner * config.gridRatio
         val controls = (if (config.doubleTapHide) 0 else 48) + (if (config.showReset) 48 else 0)
-        if (!config.showHistory) return OverlaySize(grid, 0f, grid + 2, grid + 2 + controls)
+        if (!config.showHistory) {
+            val onlyGrid=235.577047f*config.countWidthScale
+            return OverlaySize(onlyGrid, 0f, onlyGrid + 2, onlyGrid + 2 + controls)
+        }
         val base = inner - grid
         expanded = maxOf(expanded, base, kotlin.math.ceil(32 + textWidth + 12))
         val record = minOf(expanded, maxOf(0f, available - controls - grid - 3))

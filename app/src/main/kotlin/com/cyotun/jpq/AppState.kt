@@ -3,8 +3,14 @@ package com.cyotun.jpq
 import android.os.Handler
 import android.os.Looper
 import com.cyotun.jpq.core.*
+import android.graphics.Rect
+
+data class CaptureMask(val rectangle: Rect,val screenWidth: Int,val screenHeight: Int)
 
 object AppState {
+    @Volatile var adjusting=false
+    @Volatile var barMask: CaptureMask?=null
+    @Volatile var adjustmentMask: CaptureMask?=null
     val ledger = RoundLedger()
     @Volatile var running = false
     @Volatile var capturedFrames = 0L

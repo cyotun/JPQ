@@ -17,6 +17,7 @@ import com.cyotun.jpq.core.*
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import com.cyotun.jpq.updates.UpdateManager
 
 class MainActivity : ComponentActivity() {
     private lateinit var store: ConfigStore
@@ -46,6 +47,10 @@ class MainActivity : ComponentActivity() {
     private val importResult=registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null) importConfig(uri)
     }
+    private val diagnosticResult=registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if(uri!=null) runCatching { RoundRepository(this).use { db -> contentResolver.openOutputStream(uri,"wt")!!.use { it.write(db.export().toByteArray()) } } }
+            .onFailure { Toast.makeText(this,"导出失败",Toast.LENGTH_LONG).show() }
+    }
     private fun dp(v: Int)=(v*resources.displayMetrics.density).toInt()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,6 +62,8 @@ class MainActivity : ComponentActivity() {
             override fun handleOnBackPressed() { if(page=="home") finish() else leave() }
         })
         render()
+        UpdateManager.schedule(this)
+        Thread { runCatching { UpdateManager(applicationContext).check() } }.start()
     }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("page",page); outState.putString("draft",store.draftJson(draft)); outState.putString("restorePage",restorePage); super.onSaveInstanceState(outState)
@@ -111,6 +118,7 @@ class MainActivity : ComponentActivity() {
             "update" -> updates(content)
             "backup" -> backup(content)
         }
+        if(page=="home") add(root,button(if(AppState.running) "返回记牌" else "开始记牌") { startCapture() },58)
         if(page in listOf("home","settings")) {
             val nav=LinearLayout(this)
             listOf("home" to "记牌","settings" to "设置").forEach { (key,label) ->
@@ -124,7 +132,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun home(c: LinearLayout) {
         add(c,text("本地运行 · 个人使用",14f,muted))
-        add(c,text("1、选择游戏平台")); add(c,row("大掼蛋（腾讯）","适配开发中"))
+        add(c,text("1、选择游戏平台")); add(c,row("大掼蛋（腾讯）","本地识别"))
         add(c,text("2、选择玩法")); add(c,row("掼蛋","默认"))
         add(c,text("3、选择玩家人数")); add(c,row("4 人","✓"))
         add(c,text("4、几副牌")); add(c,row("2 副","✓"))
@@ -132,9 +140,8 @@ class MainActivity : ComponentActivity() {
         guandanOrder.forEach { rank -> cards.addView(text("${rank.label}\n${rank.capacity}",13f,gold).apply { gravity=Gravity.CENTER; background=bg(Color.rgb(38,38,38),4) },LinearLayout.LayoutParams(0,dp(64),1f)) }
         add(c,cards)
         stateText=text("",14f,muted); add(c,stateText!!); updateState()
-        add(c,button(if(AppState.running) "返回记牌" else "开始记牌") { startCapture() },58)
         if(AppState.running) add(c,row("停止记牌","›") { stopCapture() })
-        add(c,text("此开发版已接入权限、屏幕采集和悬浮操作。自动牌面识别尚未接通，请勿用于实际计数。",14f,muted))
+        add(c,text("请在大厅开始记牌，再进入房间。牌面无法完整确认时等待下一局。当前适配版仍需连续牌局验证。",14f,muted))
     }
     private fun settings(c: LinearLayout) {
         val d=store.load()
@@ -147,8 +154,19 @@ class MainActivity : ComponentActivity() {
         add(c,text("应用设置",15f,muted))
         add(c,row("权限设置","›") { navigate("permissions") }); add(c,row("应用更新","›") { navigate("update") })
         add(c,row("配置备份","›") { navigate("backup") })
+        add(c,row("最近牌局","查看") { RoundRepository(this).use { db -> AlertDialog.Builder(this).setTitle("最近牌局").setMessage(db.summary()).setPositiveButton("关闭",null).show() } })
+        add(c,row("导出牌局诊断","仅保存到本机") { diagnosticResult.launch("记牌器牌局诊断.json") })
+        switch(c,"保存本机识别诊断画面",getSharedPreferences("jpq-diagnostics",MODE_PRIVATE).getBoolean("enabled",false)) {
+            getSharedPreferences("jpq-diagnostics",MODE_PRIVATE).edit().putBoolean("enabled",it).apply()
+        }
+        add(c,text("默认关闭。开启后画面仅保存在本机，最多100 MiB，不上传服务器。",13f,muted))
+        add(c,row("清理牌局和诊断","清理") {
+            AlertDialog.Builder(this).setMessage("清理已保存的本机记录和诊断画面？正在记牌时不可清理。").setPositiveButton("清理") { _,_ ->
+                if(!AppState.running) { RoundRepository(this).use { it.clear() }; java.io.File(filesDir,"diagnostic").listFiles()?.filter { it.isFile }?.forEach { it.delete() } }
+            }.setNegativeButton("取消",null).show()
+        })
         add(c,row("关于记牌器",BuildConfig.VERSION_NAME) {
-            AlertDialog.Builder(this).setTitle("记牌器").setMessage("个人本地使用，无账号、会员或收费。当前为开发版，识别适配尚未完成。\n\n版本：${BuildConfig.VERSION_NAME}") .setPositiveButton("知道了",null).show()
+            AlertDialog.Builder(this).setTitle("记牌器").setMessage("个人本地使用，无账号、会员或收费。牌面识别在本机完成；当前适配版尚未完成连续真机牌局验收。\n\n版本：${BuildConfig.VERSION_NAME}") .setPositiveButton("知道了",null).show()
         })
     }
     private fun switch(c: LinearLayout,label: String,on: Boolean,change: (Boolean)->Unit) {
@@ -180,7 +198,9 @@ class MainActivity : ComponentActivity() {
         groups.forEach { columns.addView(it,LinearLayout.LayoutParams(0,-2,1f)) }
         add(c,columns)
         add(groups[0],text("窗口",16f,gold)); add(groups[1],text("行高",16f,gold)); add(groups[2],text("左侧字体",16f,gold)); add(groups[3],text("右侧字体",16f,gold))
-        slider(groups[0],"总宽度",draft.widthScale,.8f,1.35f) { draft=draft.copy(widthScale=it) }
+        slider(groups[0],"总宽度",if(draft.showHistory) draft.widthScale else draft.countWidthScale,.8f,1.35f) {
+            draft=if(draft.showHistory) draft.copy(widthScale=it) else draft.copy(countWidthScale=it)
+        }
         slider(groups[0],"左右比例",draft.gridRatio,.3f,.6f,draft.showHistory) { draft=draft.copy(gridRatio=it) }
         slider(groups[1],"牌格高度",draft.gridHeight,.85f,1.3f) { draft=draft.copy(gridHeight=it) }
         slider(groups[1],"记录行高",draft.recordHeight,.85f,1.3f,draft.showHistory) { draft=draft.copy(recordHeight=it) }
@@ -192,12 +212,8 @@ class MainActivity : ComponentActivity() {
     }
     private fun slider(c: LinearLayout,label: String,value: Float,min: Float,max: Float,enabled: Boolean=true,change: (Float)->Unit) {
         val title=text("$label  ${(value*100).toInt()}%",17f,if(enabled) Color.WHITE else muted); add(c,title)
-        val seek=SeekBar(this).apply { this.max=1000; progress=((value-min)/(max-min)*1000).toInt(); isEnabled=enabled
-            setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(bar: SeekBar?,progress: Int,fromUser: Boolean) { if(fromUser) { val next=min+(max-min)*progress/1000; change(next); title.text="$label  ${(next*100).toInt()}%"; preview?.refresh() } }
-                override fun onStartTrackingTouch(bar: SeekBar?)=Unit
-                override fun onStopTrackingTouch(bar: SeekBar?)=Unit
-            }) }; add(c,seek)
+        val seek=GoldSlider(this,min,max,value) { next -> change(next); title.text="$label  ${(next*100).toInt()}%"; preview?.refresh() }.apply { isEnabled=enabled }
+        add(c,seek)
     }
     private fun order(c: LinearLayout) {
         adjustmentPreview(c)
@@ -237,19 +253,21 @@ class MainActivity : ComponentActivity() {
     }
     private fun updates(c: LinearLayout) {
         add(c,text("当前版本：${BuildConfig.VERSION_NAME}",17f,gold))
-        add(c,text("更新不打断记牌。安装包与手机更新流程正在接入。",15f,muted))
-        val status=text("",16f); add(c,status)
+        add(c,text("每天自动检查；停止记牌后在 Wi-Fi 下下载。安装需要系统确认。",15f,muted))
+        val updates=UpdateManager(this)
+        val status=text(updates.status(),16f); add(c,status)
         add(c,button("检查更新") {
             status.text="正在检查更新"
             Thread {
-                val message=runCatching {
-                    val connection=java.net.URL("https://jpq.240438457.workers.dev/v1/releases/latest").openConnection() as javax.net.ssl.HttpsURLConnection
-                    connection.connectTimeout=12000; connection.readTimeout=12000
-                    try { when(connection.responseCode) { 204 -> "暂无发布版本"; 200 -> "发现发布清单；客户端签名验证和下载尚在开发，暂不安装"; else -> "暂时无法检查，稍后重试" } } finally { connection.disconnect() }
-                }.getOrDefault("暂时无法检查，稍后重试")
-                runOnUiThread { if(!isFinishing) status.text=message }
+                updates.check(true)
+                runOnUiThread { if(!isFinishing) status.text=updates.status() }
             }.start()
         },56)
+        add(c,button("下载更新") {
+            val action={ Thread { updates.download(true); runOnUiThread { if(!isFinishing) status.text=updates.status() } }.start(); Unit }
+            AlertDialog.Builder(this).setMessage("手动下载可能使用移动网络流量，是否下载？").setPositiveButton("下载") { _,_ -> action() }.setNegativeButton("取消",null).show()
+        },56)
+        add(c,button("安装已下载的更新") { updates.install(this); status.text=updates.status() },56)
     }
     private fun backup(c: LinearLayout) {
         add(c,text("只备份显示配置，不含权限、录屏、牌局或密钥。",15f,muted))
@@ -266,9 +284,13 @@ class MainActivity : ComponentActivity() {
             notificationResult.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else requestProjection()
     }
-    private fun requestProjection() { captureResult.launch((getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager).createScreenCaptureIntent()) }
+    private fun requestProjection() {
+        val manager=getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val request=if(Build.VERSION.SDK_INT>=34) manager.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()) else manager.createScreenCaptureIntent()
+        captureResult.launch(request)
+    }
     private fun stopCapture() { startService(Intent(this,CaptureService::class.java).setAction("STOP")); Handler(Looper.getMainLooper()).postDelayed({ render() },300) }
-    private fun updateState() { stateText?.text=if(AppState.running) "屏幕采集运行中 · ${AppState.capturedWidth} × ${AppState.capturedHeight}\n${AppState.capturedFrames} 帧，自动识别适配尚未接通" else AppState.message }
+    private fun updateState() { stateText?.text=if(AppState.running) "${AppState.message}\n${AppState.capturedWidth} × ${AppState.capturedHeight} · ${AppState.capturedFrames} 帧" else AppState.message }
     private fun leave() { page=if(page in listOf("size","order")) restorePage else "settings"; render() }
     private fun importConfig(uri: Uri) {
         runCatching {

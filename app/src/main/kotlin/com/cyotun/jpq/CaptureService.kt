@@ -23,6 +23,7 @@ class CaptureService : Service() {
     private var overlay: OverlayController? = null
     private var visualContext: Context? = null
     private var lastFrame = 0L
+    private var lastFrameError=0L
     @Volatile private var closed = false
     private var recognizer: FrameRecognizer = AwaitingValidatedAdapter()
     private val main = Handler(Looper.getMainLooper())
@@ -45,19 +46,32 @@ class CaptureService : Service() {
             val data=if(Build.VERSION.SDK_INT>=33) intent.getParcelableExtra("data",Intent::class.java) else @Suppress("DEPRECATION") intent.getParcelableExtra<Intent>("data")
             require(data!=null)
             createForeground()
-            visualContext=if(Build.VERSION.SDK_INT>=30) createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,null) else this
+            visualContext=if(Build.VERSION.SDK_INT>=30) {
+                val deviceDisplay=(getSystemService(DISPLAY_SERVICE) as DisplayManager).getDisplay(android.view.Display.DEFAULT_DISPLAY)
+                require(deviceDisplay!=null) { "Main display unavailable" }
+                createDisplayContext(deviceDisplay).createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,null)
+            } else this
             thread=HandlerThread("jpq-capture").also { it.start() }; worker=Handler(thread!!.looper)
+            AppState.ledger.waitForNext()
+            recognizer=TencentRecognizer(this)
+            android.util.Log.i("JPQCapture","local_recognizer_ready")
             projection=(getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager).getMediaProjection(intent.getIntExtra("code",Activity.RESULT_CANCELED),data)
             projection!!.registerCallback(callback,main)
             val dimensions = screenSize()
             reader=newReader(dimensions.first,dimensions.second)
             display=projection!!.createVirtualDisplay("JPQCapture",dimensions.first,dimensions.second,resources.configuration.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader!!.surface,null,worker)
-            AppState.running=true; AppState.capturedFrames=0; AppState.recognitionReady=recognizer.validated
+            AppState.running=true; AppState.capturedFrames=0; AppState.recognitionReady=recognizer.ready
             AppState.message="进入游戏房间后，会自动开始记牌"
             overlay=OverlayController(visualContext!!).also { it.show() }
             AppState.notifyChanged()
-        } catch (_: Exception) { shutdown("暂时无法读取游戏画面，请重新授权") }
+        } catch (error: Exception) {
+            android.util.Log.e("JPQCapture","startup_failed",error)
+            shutdown("暂时无法启动记牌，请停止后重新开始")
+        } catch(error: LinkageError) {
+            android.util.Log.e("JPQCapture","recognizer_component_failed",error)
+            shutdown("本机识别组件未能启动，请稍后重试")
+        }
         return START_NOT_STICKY
     }
     private fun createForeground() {
@@ -72,6 +86,7 @@ class CaptureService : Service() {
     }
     private fun newReader(width: Int,height: Int): ImageReader {
         AppState.capturedWidth=width; AppState.capturedHeight=height
+        android.util.Log.i("JPQCapture","capture_size=${width}x$height")
         return ImageReader.newInstance(width,height,PixelFormat.RGBA_8888,2).also { next ->
             next.setOnImageAvailableListener({ source ->
                 val image=runCatching { source.acquireLatestImage() }.getOrNull() ?: return@setOnImageAvailableListener
@@ -81,7 +96,9 @@ class CaptureService : Service() {
                         lastFrame=now; recognizer.observe(image); AppState.capturedFrames++
                         if(AppState.capturedFrames % 8L==0L) AppState.notifyChanged()
                     }
-                } catch (_: Exception) {
+                } catch (error: Exception) {
+                    val now=SystemClock.elapsedRealtime()
+                    if(now-lastFrameError>5000) { lastFrameError=now; android.util.Log.e("JPQCapture","frame_failed",error) }
                     AppState.ledger.invalidate("识别暂时不可用，等待下一局"); AppState.notifyChanged()
                 } finally { image.close() }
             },worker)
@@ -113,6 +130,7 @@ class CaptureService : Service() {
     private fun shutdown(message: String) {
         if(closed) return
         closed=true; AppState.running=false; AppState.message=message
+        com.cyotun.jpq.updates.UpdateManager.scheduleDownload(this)
         if(AppState.ledger.snapshot().remaining!=null) AppState.ledger.invalidate(message)
         overlay?.close(); overlay=null
         visualContext=null

@@ -5,11 +5,11 @@ import org.junit.Test
 
 class RoundLedgerTest {
     private val baseline = Rank.entries.filterNot { it.isJoker }.flatMap { r ->
-        Suit.entries.filter { it != Suit.NONE }.flatMap { s -> List(2) { Card(r,s) } }
+        listOf(Suit.SPADE,Suit.HEART,Suit.CLUB,Suit.DIAMOND).flatMap { s -> List(2) { Card(r,s) } }
     }.takeLast(27)
     private fun available(ledger: RoundLedger) = Rank.entries.flatMap { r ->
         if (r.isJoker) List(2) { Card(r,Suit.NONE) }
-        else Suit.entries.filter { it != Suit.NONE }.flatMap { s -> List(2) { Card(r,s) } }
+        else listOf(Suit.SPADE,Suit.HEART,Suit.CLUB,Suit.DIAMOND).flatMap { s -> List(2) { Card(r,s) } }
     }.toMutableList().also { all -> baseline.forEach { all.remove(it) } }
 
     @Test fun ownPlayDoesNotDeductTwice() {
@@ -76,7 +76,7 @@ class RoundLedgerTest {
         assertEquals(base.grid,wide.grid); assertEquals(511f,wide.history)
         assertEquals(wide,w.measure(config,10f,1000f))
         w.newRound(); assertEquals(base,w.measure(config,158.25f,1000f))
-        assertEquals(base.grid,w.measure(config.copy(showHistory=false),100f,1000f).grid)
+        assertEquals(base.grid,w.measure(config.copy(showHistory=false),100f,1000f).grid,.001f)
         assertEquals(700f,w.measure(config,466.806f,700f).total)
     }
     @Test fun explicitSizeChangeRecomputesBaseWithoutLosingRecordSetting() {

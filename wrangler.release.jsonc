@@ -1,0 +1,10 @@
+{
+  "$schema":"node_modules/wrangler/config-schema.json",
+  "name":"jpq-release-store",
+  "main":"services/updates/src/release-store.mjs",
+  "compatibility_date":"2026-10-11",
+  "workers_dev":false,
+  "preview_urls":false,
+  "observability":{"enabled":false},
+  "assets":{"directory":"services/updates/release-assets","binding":"ASSETS","run_worker_first":true}
+}

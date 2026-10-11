@@ -33,17 +33,19 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private var size=OverlaySize(0f,0f,0f,0f)
     private var barHeight=44f
     private var left=0f
+    private var adjustment: AdjustmentOverlay?=null
+    private var draftPreview: DisplayConfig?=null
     fun show() { AppState.subscribe(listener); refresh(); wm.addView(view,params); added=true }
     fun previewView(): View { refresh(); return view }
     private fun snapshot()=if(preview) PreviewData.snapshot else AppState.ledger.snapshot()
-    fun close() { AppState.unsubscribe(listener); if(added) runCatching { wm.removeView(view) }; added=false }
+    fun close() { adjustment?.close(); adjustment=null; AppState.unsubscribe(listener); if(added) runCatching { wm.removeView(view) }; added=false; if(!preview) AppState.barMask=null }
     @Suppress("DEPRECATION") private fun bounds(): Rect =
         if(Build.VERSION.SDK_INT>=30) wm.currentWindowMetrics.bounds
         else context.resources.displayMetrics.let { Rect(0,0,it.widthPixels,it.heightPixels) }
     fun refresh() {
         if(touch) { changedDuringTouch=true; view.invalidate(); return }
         val previous=config
-        config=configSource?.invoke() ?: store.load()
+        config=draftPreview ?: configSource?.invoke() ?: store.load()
         val screen=bounds()
         val keepAnchor=added && oldBounds==screen && previous.x==config.x && previous.y==config.y
         oldBounds=Rect(screen)
@@ -68,6 +70,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
         params.x=if(keepAnchor) params.x.coerceIn(0,maxX) else (config.x*maxX).roundToInt()
         params.y=if(keepAnchor) params.y.coerceIn(0,maxY) else (config.y*maxY).roundToInt()
         if(added) wm.updateViewLayout(view,params)
+        if(!preview) view.post { publishMask() }
         if(preview) view.layoutParams=(view.layoutParams ?: ViewGroup.LayoutParams(params.width,params.height)).apply {
             width=params.width; height=params.height
         }
@@ -76,6 +79,11 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private fun occupied(paint: Paint,value: String): Float {
         val b=Rect(); paint.getTextBounds(value,0,value.length,b)
         return max(paint.measureText(value),b.right.toFloat())-min(0,b.left)
+    }
+    private fun publishMask() {
+        if(!added) return
+        val location=IntArray(2); view.getLocationOnScreen(location); val screen=bounds()
+        AppState.barMask=CaptureMask(Rect(location[0],location[1],location[0]+view.width,location[1]+view.height),screen.width(),screen.height())
     }
     private fun hide() { hidden=true; detectorCancel(); refresh() }
     private fun detectorCancel() { view.cancelGesture() }
@@ -89,7 +97,10 @@ class OverlayController(private val context: Context,private val preview: Boolea
         val choices=arrayOf("尺寸调整","牌序调整",if(config.showHistory) "关闭三家出牌记录" else "显示三家出牌记录","重置本局","停止记牌")
         val dialog=AlertDialog.Builder(context).setTitle("记牌工具").setItems(choices) { _,which ->
             when(which) {
-                0,1 -> context.startActivity(Intent(context,MainActivity::class.java).putExtra("page",if(which==0) "size" else "order").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                0,1 -> {
+                    adjustment?.close()
+                    adjustment=AdjustmentOverlay(context,if(which==0) "size" else "order") { value -> draftPreview=value; refresh() }.also { it.show() }
+                }
                 2 -> { store.save(config.copy(showHistory=!config.showHistory)); refresh() }
                 3 -> reset()
                 4 -> context.startService(Intent(context,CaptureService::class.java).setAction("STOP"))
@@ -142,6 +153,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
                     params.x=(originX+dx).roundToInt().coerceIn(0,max(0,bounds().width()-params.width))
                     params.y=(originY+dy).roundToInt().coerceIn(0,max(0,bounds().height()-params.height))
                     if(added) wm.updateViewLayout(this,params)
+                    post { publishMask() }
                 }
             }
             if(!moved) detector.onTouchEvent(event)
@@ -204,7 +216,11 @@ class OverlayController(private val context: Context,private val preview: Boolea
             p.color=Color.BLACK; canvas.drawRoundRect(b,dp(12f),dp(12f),p)
             b.inset(dp(1f),dp(1f)); p.color=GOLD; canvas.drawRoundRect(b,dp(11f),dp(11f),p)
             val title=if(snap.phase==RoundPhase.UNAVAILABLE) "本局画面不完整，等待下一局" else AppState.message
-            val subtitle=if(!AppState.recognitionReady) "识别适配正在开发，此版本用于权限与悬浮验证" else "牌局已开始仍未显示？请检查权限或重新开始记牌"
+            val subtitle=when {
+                snap.phase==RoundPhase.UNAVAILABLE -> snap.reason ?: "本局不显示推测数字，下一局自动恢复"
+                !AppState.recognitionReady -> "识别尚未准备好，请停止后重新开始"
+                else -> "请从游戏大厅进入房间；进行中的牌局需等待下一局"
+            }
             text(canvas,RectF(b.left+dp(9f),dp(2f),b.right-dp(9f),dp(26f)),title,18f,Color.BLACK)
             text(canvas,RectF(b.left+dp(9f),dp(27f),b.right-dp(9f),dp(43f)),subtitle,10f,Color.BLACK)
         }

@@ -2,6 +2,7 @@
  * JPQ's read-only update service. No release is advertised until an explicit
  * JPQ_RELEASES binding and validated stable release manifest are present.
  */
+import { AssetBucket } from './asset-bucket.mjs';
 const PACKAGE_NAME = "com.cyotun.jpq";
 const MANIFEST_KEY = "releases/stable/latest.json";
 const MAX_MANIFEST_BYTES = 32 * 1024;
@@ -121,7 +122,9 @@ async function handle(request, env = {}) {
   if (url.pathname === "/health") return json({ service: "jpq-updates", status: "ok", schemaVersion: 1 });
   const downloadMatch = /^\/v1\/releases\/([1-9]\d*)\/download$/.exec(url.pathname);
   if (url.pathname !== "/v1/releases/latest" && !downloadMatch) return json({ error: "not_found" }, 404);
-  const stored = await readRelease(env.JPQ_RELEASES);
+  const assets=env.RELEASE_STORE ?? env.ASSETS;
+  const bucket=env.JPQ_RELEASES ?? (assets ? new AssetBucket(assets) : undefined);
+  const stored = await readRelease(bucket);
   const release = stored?.release;
   if (url.pathname === "/v1/releases/latest") {
     if (!release) return new Response(null, { status: 204, headers: SAFE_HEADERS });
@@ -131,7 +134,7 @@ async function handle(request, env = {}) {
     });
   }
   if (!release || downloadMatch[1] !== String(release.versionCode)) return json({ error: "not_found" }, 404);
-  return download(request, env.JPQ_RELEASES, release);
+  return download(request, bucket, release);
 }
 
 export default {

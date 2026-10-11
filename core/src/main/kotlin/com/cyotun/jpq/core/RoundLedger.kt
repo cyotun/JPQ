@@ -53,7 +53,14 @@ class RoundLedger {
         phase = RoundPhase.UNAVAILABLE; reason = message
         return snapshot()
     }
-    @Synchronized fun finish(): RoundSnapshot { phase = RoundPhase.FINISHED; return snapshot() }
+    @Synchronized fun finish(): RoundSnapshot {
+        if(phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) phase = RoundPhase.FINISHED
+        return snapshot()
+    }
+    @Synchronized fun selfFinished(): RoundSnapshot {
+        if(phase==RoundPhase.ACTIVE) { phase=RoundPhase.SELF_FINISHED; selfHand=emptyList() }
+        return snapshot()
+    }
     @Synchronized fun waitForNext(): RoundSnapshot {
         id = null; initial = emptyList(); selfHand = emptyList(); events.clear()
         phase = RoundPhase.WAITING; reason = null; lastSequence = -1
@@ -69,7 +76,10 @@ class RoundLedger {
             plays, reason)
     }
     private fun checkCapacity(cards: List<Card>) {
-        require(cards.groupingBy { it }.eachCount().values.all { it <= 2 }) { "Physical card capacity exceeded" }
+        require(cards.filter { it.suit !in setOf(Suit.RED,Suit.BLACK) }.groupingBy { it }.eachCount().values.all { it <= 2 }) { "Physical card capacity exceeded" }
+        require(cards.groupingBy { it.colorKey() }.eachCount().all { (key,count) -> count <= if(key.contains(':')) 4 else 2 }) { "Card color capacity exceeded" }
         require(cards.groupingBy { it.rank }.eachCount().all { (rank, count) -> count <= rank.capacity })
     }
+    @Synchronized fun initialHand(): List<Card> = initial.toList()
+    @Synchronized fun currentHand(): List<Card> = selfHand.toList()
 }
