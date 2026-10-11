@@ -1,0 +1,43 @@
+# JPQ Cloudflare 部署与验证记录
+
+日期：2026-10-11（Asia/Shanghai）。用户已明确授权查看配置并直接修正部署问题。
+
+## 实际配置
+
+| 项目 | 状态 |
+| --- | --- |
+| 服务类型 | Cloudflare Workers |
+| 项目 | `jpq`，独立连接 `cyotun/JPQ` |
+| 账户套餐 | Workers Free，控制台显示 Current plan |
+| 生产分支 / 根目录 | main / `/` |
+| 构建检查 | `npm run check && npm test` |
+| 部署命令 | `npx wrangler deploy` |
+| 生产域名 | https://jpq.240438457.workers.dev/，已启用 |
+| 预览域名 | 关闭 |
+| 自定义域名/其他项目路由 | 无；未修改其他项目 |
+| 存储绑定 | 无；未创建/开通 R2，未修改其他项目存储 |
+
+## 修复与证据
+
+原 Git 构建失败，错误为无法识别静态文件目录；当时仓库缺少 Worker 入口和 Wrangler 配置。补齐专用更新服务、锁定工具版本并设置构建检查后，main 自动构建与部署成功。
+
+- 首次成功上线代码提交：`f82d5fc81df13be03ad1ec424d7626a3da51d6c6`。
+- 对应 Cloudflare 构建：`0d609f2a-af31-4c41-9dde-2319325f1625`，控制台显示 Ready。
+- 对应活跃 Worker 版本短 ID：`6ebb73a3`，100% 流量。
+- 本地 7 项功能测试、语法检查、Wrangler dry-run 均通过。
+
+## 外部 HTTP 验证
+
+| 请求 | 实际响应 |
+| --- | --- |
+| `GET /` | 200，显示 JPQ 更新服务运行中及未发布说明 |
+| `GET /health` | 200，`service=jpq-updates`、`status=ok`、`schemaVersion=1` |
+| `GET /v1/releases/latest` | 204，空响应体，明确尚无发布版本 |
+
+以上请求通过无登录凭证的外部 HTTPS 访问验证。控制台刷新后确认生产域名开关开启，预览域名仍关闭。
+
+## 当前完成范围
+
+已修复更新服务部署并验证公网接口。Android App 尚未开发、尚无自研 APK，R2 实际下载与手机安装链路也尚未验证；下一阶段需在 App 开发和首版发布后完成。没有上传参考 APK、原解密脚本、签名密钥或游戏截图。
+
+配置与服务源码由本仓库维护，后续仍只针对 `jpq` 部署。账户内其他项目的域名、数据库、存储绑定和套餐未被修改。
