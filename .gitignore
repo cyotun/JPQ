@@ -1,0 +1,34 @@
+# Android / IDE / local configuration
+.gradle/
+.idea/
+*.iml
+local.properties
+**/build/
+.cxx/
+.externalNativeBuild/
+
+# Signing and private material
+*.jks
+*.keystore
+keystore.properties
+.env
+.env.*
+
+# Reference binaries and raw personal captures
+*.apk
+*.aab
+research-private/
+datasets/raw/
+datasets/private/
+captures/
+*.mp4
+*.mkv
+*.webm
+
+# Local research tools and temporary outputs
+.research-tools/
+.venv/
+__pycache__/
+*.pyc
+*.log
+tmp/
