@@ -1,6 +1,6 @@
 # 记牌器 Android 工程
 
-当前 0.2.0 为个人适配测试版：已接入本地牌面模型、中文 OCR、自动确认和记牌、原风格悬浮配置、牌局保存及更新客户端。正在真机修复和验收，尚未达到稳定完整版交付条件。见 [适配记录](../docs/development/adaptation.md)。
+当前 0.2.1-regression 为个人回归测试版：已接入本地牌面模型、异步中文 OCR、自动确认和记牌、原风格悬浮配置、牌局保存及更新客户端。53 项核心回归及手机八个固定图检查已通过，仍需完整真机对局验收。见 [适配记录](../docs/development/adaptation.md) 与 [真机计划](../docs/development/live-test-plan.md)。
 
 固定 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、compile/target SDK 36、min SDK 28，当前手机实际 API 37；首版 ABI arm64-v8a。界面为 Kotlin 原生 View / Canvas，内部保存使用 SharedPreferences / SQLite。
 
@@ -14,7 +14,7 @@ node tools/release/identity.mjs
 
 字体与参考模型只在本机作个人适配，不进入 Git；构建严格检查 SHA-256，不悄悄替换。新克隆需另行准备本地资产。私钥只在 `.signing`，必须另行备份；初始化脚本不覆盖已有完整身份。
 
-正式包 `com.cyotun.jpq` 使用自研项目持续签名，调试包 `.dev` 与其分开，不覆盖参考软件。0.2.0 版本号不代表已通过准确率验收。截图和日志只留在忽略目录 `captures/phone`。
+正式包 `com.cyotun.jpq` 使用自研项目持续签名，调试包 `.dev` 与其分开，不覆盖参考软件。回归版版本号不代表已通过准确率验收。截图和日志只留在忽略目录 `captures/phone`。
 
 观察到完整新局手牌后才显示精确数字；画面缺失、阶段冲突或归属不明时等待下一局。不提供手动补记或纠错。调整页 `PreviewData` 明确标为示例，不进入账本。
 

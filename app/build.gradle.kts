@@ -9,12 +9,15 @@ android {
         applicationId = "com.cyotun.jpq"
         minSdk = 28
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0-adaptation"
+        versionCode = 3
+        versionName = "0.2.1-regression"
+        testApplicationId = "com.cyotun.jpq.tests"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     buildFeatures { buildConfig = true }
+    testBuildType = "release"
     val identityFile=rootProject.file(".signing/release.properties")
     if(identityFile.exists()) {
         val identity=Properties().apply { identityFile.inputStream().use { load(it) } }
@@ -30,8 +33,10 @@ kotlin { jvmToolchain(17) }
 dependencies {
     implementation(project(":core"))
     implementation("androidx.activity:activity:1.12.3")
-    implementation("com.google.ai.edge.litert:litert:2.1.0")
+    implementation("com.google.ai.edge.litert:litert:2.2.0")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }
 val checkOverlayFont by tasks.registering {
     doLast {

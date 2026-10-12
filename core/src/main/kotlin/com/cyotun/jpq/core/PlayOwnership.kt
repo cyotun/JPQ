@@ -8,32 +8,40 @@ data class PlayGlyph(val card: Card,val confidence: Float,val box: GlyphBox)
 data class OwnedPlays(val seats: Map<Seat,List<PlayGlyph>>,val ambiguous: List<PlayGlyph>)
 
 /** A whole card group has one owner; never split a run at an arbitrary column. */
-fun assignPlayGroups(glyphs: List<PlayGlyph>,passing: Set<Seat>,selfDifference: List<Card>): OwnedPlays {
+fun assignPlayGroups(glyphs: List<PlayGlyph>,passing: Set<Seat>,selfDifference: List<Card>,teammateView: Boolean=false): OwnedPlays {
     val seats=Seat.entries.associateWith { mutableListOf<PlayGlyph>() }
+    val groupsBySeat=Seat.entries.associateWith { mutableListOf<List<PlayGlyph>>() }
     val ambiguous=mutableListOf<PlayGlyph>()
     val remaining=glyphs.toMutableList()
-    val width=glyphs.map { it.box.width }.average().toFloat()
-    val height=glyphs.map { it.box.height }.average().toFloat()
+    val widths=glyphs.map { it.box.width }.sorted()
+    val heights=glyphs.map { it.box.height }.sorted()
+    val width=widths.getOrNull(widths.size/2) ?: 0f
+    val height=heights.getOrNull(heights.size/2) ?: 0f
     while(remaining.isNotEmpty()) {
         val group=mutableListOf(remaining.removeAt(0))
         var changed=true
         while(changed) {
             val connected=remaining.filter { p -> group.any { q ->
-                kotlin.math.abs(p.box.cy-q.box.cy)<height*.8f && kotlin.math.abs(p.box.cx-q.box.cx)<width*4
+                kotlin.math.abs(p.box.top-q.box.top)<height*.5f && kotlin.math.abs(p.box.cx-q.box.cx)<width*2.5f
             } }
             changed=connected.isNotEmpty(); group.addAll(connected); remaining.removeAll(connected.toSet())
         }
         val cy=group.map { it.box.cy }.average()
         fun key(cards: List<Card>)=cards.map { it.colorKey() }.sorted()
         val owner=when {
-            group.maxOf { it.box.cy }<.30f -> Seat.OPPOSITE
-            group.minOf { it.box.left }<.32f -> Seat.PREVIOUS
-            group.maxOf { it.box.right }>.70f -> Seat.NEXT
-            cy>.42 && selfDifference.isNotEmpty() && key(selfDifference)==key(group.map { it.card }) -> Seat.SELF
-            passing.size==2 -> listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).singleOrNull { it !in passing }
+            group.minOf { it.box.left }<.32f && cy<.48 -> Seat.PREVIOUS
+            group.maxOf { it.box.right }>.70f && cy<.48 -> Seat.NEXT
+            cy<.285 && group.minOf { it.box.cx }>.32f && group.maxOf { it.box.cx }<.70f -> Seat.OPPOSITE
+            cy in .285.. .48 && !teammateView -> Seat.SELF
+            teammateView && passing.size==2 -> listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).singleOrNull { it !in passing }
+            selfDifference.isNotEmpty() && key(selfDifference)==key(group.map { it.card }) -> Seat.SELF
             else -> null
         }
-        if(owner==null) ambiguous.addAll(group) else seats[owner]!!.addAll(group)
+        if(owner==null) ambiguous.addAll(group) else groupsBySeat[owner]!!.add(group)
+    }
+    for((seat,groups) in groupsBySeat) {
+        if(groups.size==1) seats[seat]!!.addAll(groups.single())
+        else if(groups.size>1) ambiguous.addAll(groups.flatten())
     }
     return OwnedPlays(seats,ambiguous)
 }

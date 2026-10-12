@@ -62,6 +62,23 @@ class RoundLedgerTest {
         assertFailsWith<IllegalStateException> { ledger.commit(PlayEvent("a","1",1,Seat.SELF,listOf(baseline[0]))) }
         assertEquals(RoundPhase.WAITING,ledger.waitForNext().phase)
     }
+    @Test fun automaticPresentationReviewPreservesIdentityAndRechecksAllCapacityAtomically() {
+        val ledger=RoundLedger(); ledger.begin("a",baseline)
+        val cards=available(ledger); val first=cards.first()
+        val event=PlayEvent("a","presentation",1,Seat.NEXT,listOf(first)); ledger.commit(event)
+        val expanded=cards.take(4); ledger.replaceLatestObservedPresentation(event.eventId,expanded)
+        val expected=event.copy(cards=expanded)
+        assertEquals(expected,ledger.snapshot().plays[Seat.NEXT]!!.single()); assertEquals(77,ledger.snapshot().remaining!!.values.sum())
+        val before=ledger.snapshot()
+        assertFails { ledger.replaceLatestObservedPresentation(event.eventId,expanded+List(9) { first }) }
+        assertEquals(before,ledger.snapshot())
+        assertFails { ledger.replaceLatestObservedPresentation(event.eventId,listOf(first)) }
+        assertEquals(before,ledger.snapshot())
+        ledger.commit(PlayEvent("a","new-boundary",2,Seat.NEXT,listOf(cards[4])))
+        val afterBoundary=ledger.snapshot()
+        assertFails { ledger.replaceLatestObservedPresentation(event.eventId,expanded+cards[4]) }
+        assertEquals(afterBoundary,ledger.snapshot())
+    }
     @Test fun originalColorThresholdsAndBothOrders() {
         assertEquals(CountTone.RED,countTone(Rank.BIG,2)); assertEquals(CountTone.WHITE,countTone(Rank.SMALL,1))
         assertEquals(CountTone.RED,countTone(Rank.A,4)); assertEquals(CountTone.WHITE,countTone(Rank.A,3))

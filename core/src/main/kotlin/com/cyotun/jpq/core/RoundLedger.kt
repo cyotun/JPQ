@@ -53,6 +53,22 @@ class RoundLedger {
         phase = RoundPhase.UNAVAILABLE; reason = message
         return snapshot()
     }
+    /** Internal visual-track review of the latest presentation for one opponent. No manual editing flow. */
+    @Synchronized fun replaceLatestObservedPresentation(eventId: String,cards: List<Card>): RoundSnapshot {
+        check(phase==RoundPhase.ACTIVE || phase==RoundPhase.SELF_FINISHED) { "Round has no valid baseline" }
+        val old=events[eventId] ?: error("Unknown presentation")
+        require(old.seat!=Seat.SELF) { "Self plays require the hand difference proof" }
+        require(events.values.lastOrNull { it.seat==old.seat }?.eventId==eventId) { "Only the current presentation can be reviewed" }
+        require(cards.isNotEmpty())
+        val remainder=cards.toMutableList()
+        require(old.cards.all { remainder.remove(it) }) { "An expansion must keep every previously tracked card" }
+        val otherEvents=events.values.filter { it.eventId!=eventId }
+        require(otherEvents.filter { it.seat==old.seat }.sumOf { it.cards.size }+cards.size<=27)
+        checkCapacity(initial+otherEvents.filter { it.seat!=Seat.SELF }.flatMap { it.cards }+cards)
+        // Everything is checked before mutating the event; preserve its identity and sequence.
+        events[eventId]=old.copy(cards=cards.toList())
+        return snapshot()
+    }
     @Synchronized fun finish(): RoundSnapshot {
         if(phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) phase = RoundPhase.FINISHED
         return snapshot()

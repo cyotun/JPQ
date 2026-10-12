@@ -41,7 +41,7 @@ class ObservationTest {
         o.observe(TableFrame(4120,TableScene.RESULT,null)); assertNull(l.snapshot().remaining); startAfter(o,5000)
         assertNotNull(l.snapshot().remaining)
     }
-    private fun startAfter(o: RoundObserver,time: Long) { repeat(4) { o.observe(TableFrame(time+it*120,TableScene.TABLE,baseline())) } }
+    private fun startAfter(o: RoundObserver,time: Long) { repeat(4) { o.observe(TableFrame(time+it*120,TableScene.TABLE,baseline(),Seat.entries.associateWith { ObservedPlay(emptyList(),1f) })) } }
     @Test fun coloredCapacityAllowsFourButRejectsFifth() {
         val l=RoundLedger(); l.begin("r",baseline())
         l.commit(PlayEvent("r","p",1,Seat.NEXT,List(3) { Card(Rank.A,Suit.RED) }))

@@ -11,7 +11,8 @@
 | Temurin JDK | [Adoptium](https://adoptium.net/)，随工具附带许可；不作为 JPQ 源码资产发布 |
 | 悬浮字体 | [钉钉官方字体](https://page.dingtalk.com/wow/dingtalk/default/dingtalk/y-W5aF3_ZJwzulU0nceIl)，按官方法律声明处理；二进制不进入 Git，个人调试包与公开分发区别见 app/README.md |
 | 记牌器图标 | 本项目生成的自有设计，用户选定 1 号黑金；保留原始候选和提示词 |
-| LiteRT | [Google LiteRT](https://github.com/google-ai-edge/LiteRT)，运行时 2.1.0，保留依赖许可 |
+| LiteRT | [Google LiteRT](https://github.com/google-ai-edge/LiteRT)，运行时 2.2.0，保留依赖许可 |
+| scrcpy（仅本机测试工具） | [Genymobile/scrcpy](https://github.com/Genymobile/scrcpy)，5.0.1、Apache-2.0；二进制留在本地忽略目录，录制只读且无音频，不作为 APP 依赖 |
 | 随包中文 OCR | [Google ML Kit](https://developers.google.com/ml-kit/vision/text-recognition/v2/android)，16.0.1，按 SDK 条款使用 |
 | EdDSA-Java | [str4d/ed25519-java](https://github.com/str4d/ed25519-java)，0.3.0，按其 public-domain 声明使用 |
 

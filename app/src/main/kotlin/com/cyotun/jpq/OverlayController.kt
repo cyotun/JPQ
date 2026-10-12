@@ -16,6 +16,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private var config=store.load()
     private var hidden=false
     private var added=false
+    private var disposed=false
     private var touch=false
     private var changedDuringTouch=false
     private var oldRound: String?=null
@@ -35,14 +36,31 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private var left=0f
     private var adjustment: AdjustmentOverlay?=null
     private var draftPreview: DisplayConfig?=null
-    fun show() { AppState.subscribe(listener); refresh(); wm.addView(view,params); added=true }
+    private val dialogs=linkedSetOf<AlertDialog>()
+    fun show() {
+        check(!disposed)
+        if(added) return
+        refresh(); wm.addView(view,params); added=true; AppState.subscribe(listener)
+        view.post { publishMask() }
+    }
     fun previewView(): View { refresh(); return view }
     private fun snapshot()=if(preview) PreviewData.snapshot else AppState.ledger.snapshot()
-    fun close() { adjustment?.close(); adjustment=null; AppState.unsubscribe(listener); if(added) runCatching { wm.removeView(view) }; added=false; if(!preview) AppState.barMask=null }
+    fun close() {
+        if(disposed) return
+        disposed=true
+        AppState.unsubscribe(listener)
+        dialogs.toList().forEach { runCatching { it.dismiss() }; AppState.endOverlayOcclusion(it) }
+        dialogs.clear()
+        adjustment?.close(); adjustment=null
+        val wasAdded=added; added=false
+        if(wasAdded) runCatching { wm.removeView(view) }
+        if(!preview) AppState.barMask=null
+    }
     @Suppress("DEPRECATION") private fun bounds(): Rect =
         if(Build.VERSION.SDK_INT>=30) wm.currentWindowMetrics.bounds
         else context.resources.displayMetrics.let { Rect(0,0,it.widthPixels,it.heightPixels) }
     fun refresh() {
+        if(disposed) return
         if(touch) { changedDuringTouch=true; view.invalidate(); return }
         val previous=config
         config=draftPreview ?: configSource?.invoke() ?: store.load()
@@ -81,17 +99,30 @@ class OverlayController(private val context: Context,private val preview: Boolea
         return max(paint.measureText(value),b.right.toFloat())-min(0,b.left)
     }
     private fun publishMask() {
-        if(!added) return
+        if(!added || disposed || view.width<=0 || view.height<=0) return
         val location=IntArray(2); view.getLocationOnScreen(location); val screen=bounds()
         AppState.barMask=CaptureMask(Rect(location[0],location[1],location[0]+view.width,location[1]+view.height),screen.width(),screen.height())
     }
     private fun hide() { hidden=true; detectorCancel(); refresh() }
     private fun detectorCancel() { view.cancelGesture() }
+    private fun showDialog(dialog: AlertDialog) {
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.setOnDismissListener {
+            dialogs.remove(dialog)
+            AppState.endOverlayOcclusion(dialog)
+        }
+        dialogs.add(dialog)
+        AppState.beginOverlayOcclusion(dialog)
+        try { dialog.show() } catch(error: Exception) {
+            dialogs.remove(dialog); AppState.endOverlayOcclusion(dialog)
+            throw error
+        }
+    }
     private fun reset() {
         val dialog=AlertDialog.Builder(context).setMessage("重新开始记牌？本局记录将清空；牌局已开始时需等待下一局。")
             .setPositiveButton("重新开始") { _,_ -> AppState.ledger.waitForNext(); width.newRound(); AppState.notifyChanged() }
             .setNegativeButton("取消",null).create()
-        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY); dialog.show()
+        showDialog(dialog)
     }
     private fun tools() {
         val choices=arrayOf("尺寸调整","牌序调整",if(config.showHistory) "关闭三家出牌记录" else "显示三家出牌记录","重置本局","停止记牌")
@@ -106,7 +137,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
                 4 -> context.startService(Intent(context,CaptureService::class.java).setAction("STOP"))
             }
         }.setNegativeButton("关闭",null).create()
-        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY); dialog.show()
+        showDialog(dialog)
     }
     private inner class BarView: View(context) {
         private val p=Paint(Paint.ANTI_ALIAS_FLAG)
@@ -129,10 +160,14 @@ class OverlayController(private val context: Context,private val preview: Boolea
                 return true
             }
             override fun onLongPress(e: android.view.MotionEvent) {
-                if(!hidden && downTarget!=2 && !moved) { post { tools(); cancelGesture() } }
+                if(!hidden && downTarget==0 && !moved) { post { tools(); cancelGesture() } }
             }
         })
         fun cancelGesture() { detector=makeDetector(); touch=false; moved=false }
+        override fun onSizeChanged(w: Int,h: Int,oldw: Int,oldh: Int) {
+            super.onSizeChanged(w,h,oldw,oldh)
+            if(!preview) post { publishMask() }
+        }
         override fun performClick(): Boolean { super.performClick(); return true }
         override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
             if(preview) return false
@@ -218,7 +253,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
             val title=if(snap.phase==RoundPhase.UNAVAILABLE) "本局画面不完整，等待下一局" else AppState.message
             val subtitle=when {
                 snap.phase==RoundPhase.UNAVAILABLE -> snap.reason ?: "本局不显示推测数字，下一局自动恢复"
-                !AppState.recognitionReady -> "识别尚未准备好，请停止后重新开始"
+                !AppState.recognitionReady -> "正在准备识别，稍后会自动开始"
                 else -> "请从游戏大厅进入房间；进行中的牌局需等待下一局"
             }
             text(canvas,RectF(b.left+dp(9f),dp(2f),b.right-dp(9f),dp(26f)),title,18f,Color.BLACK)

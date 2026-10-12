@@ -14,6 +14,7 @@ class AdjustmentOverlay(private val context: Context,initialPage: String,private
     private var draft=store.load()
     private var page=initialPage
     private var attached=false
+    private var disposed=false
     private val d=context.resources.displayMetrics.density
     private fun dp(n: Int)=(n*d).toInt()
     private val gold=Color.rgb(255,227,149)
@@ -26,15 +27,30 @@ class AdjustmentOverlay(private val context: Context,initialPage: String,private
         background=GradientDrawable().apply { setColor(gold); cornerRadius=dp(24).toFloat() }; setOnClickListener { action() }
     }
     fun show() {
-        render(); wm.addView(root,params); attached=true; AppState.adjusting=true
-        root.post {
-            val xy=IntArray(2); root.getLocationOnScreen(xy)
-            val screen=if(android.os.Build.VERSION.SDK_INT>=30) wm.currentWindowMetrics.bounds else Rect(0,0,context.resources.displayMetrics.widthPixels,context.resources.displayMetrics.heightPixels)
-            AppState.adjustmentMask=CaptureMask(Rect(xy[0],xy[1],xy[0]+root.width,xy[1]+root.height),screen.width(),screen.height())
-        }
+        check(!disposed)
+        if(attached) return
+        AppState.beginOverlayOcclusion(this)
+        try {
+            render(); wm.addView(root,params); attached=true
+            root.addOnLayoutChangeListener { _,_,_,_,_,_,_,_,_ -> publishMask() }
+            root.post { publishMask() }
+        } catch(error: Exception) { AppState.endOverlayOcclusion(this); throw error }
     }
-    fun close() { if(attached) { wm.removeView(root); attached=false }; AppState.adjusting=false; AppState.adjustmentMask=null; preview(null) }
+    private fun publishMask() {
+        if(!attached || disposed || root.width<=0 || root.height<=0) return
+        val xy=IntArray(2); root.getLocationOnScreen(xy)
+        val screen=if(android.os.Build.VERSION.SDK_INT>=30) wm.currentWindowMetrics.bounds else Rect(0,0,context.resources.displayMetrics.widthPixels,context.resources.displayMetrics.heightPixels)
+        AppState.adjustmentMask=CaptureMask(Rect(xy[0],xy[1],xy[0]+root.width,xy[1]+root.height),screen.width(),screen.height())
+    }
+    fun close() {
+        if(disposed) return
+        disposed=true
+        val wasAttached=attached; attached=false
+        if(wasAttached) runCatching { wm.removeView(root) }
+        AppState.endOverlayOcclusion(this); AppState.adjustmentMask=null; preview(null)
+    }
     private fun render() {
+        if(disposed) return
         root.removeAllViews()
         root.background=GradientDrawable().apply { setColor(Color.argb(245,38,38,38)); cornerRadii=floatArrayOf(dp(24).toFloat(),dp(24).toFloat(),dp(24).toFloat(),dp(24).toFloat(),0f,0f,0f,0f) }
         val head=LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL }
@@ -78,5 +94,6 @@ class AdjustmentOverlay(private val context: Context,initialPage: String,private
             slider(3,"计数字号",draft.counterText,.8f,1.35f,draft.showHistory) { draft=draft.copy(counterText=it) }
             slider(3,"详情字号",draft.detailText,.8f,1.35f,draft.showHistory) { draft=draft.copy(detailText=it) }
         }
+        root.post { publishMask() }
     }
 }

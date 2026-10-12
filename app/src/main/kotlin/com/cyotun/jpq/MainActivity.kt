@@ -51,6 +51,12 @@ class MainActivity : ComponentActivity() {
         if(uri!=null) runCatching { RoundRepository(this).use { db -> contentResolver.openOutputStream(uri,"wt")!!.use { it.write(db.export().toByteArray()) } } }
             .onFailure { Toast.makeText(this,"导出失败",Toast.LENGTH_LONG).show() }
     }
+    private val archiveResult=registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if(uri!=null) Thread {
+            runCatching { contentResolver.openOutputStream(uri,"wt")!!.use { DiagnosticArchive.write(applicationContext,it) } }
+                .onFailure { runOnUiThread { Toast.makeText(this,"请在本局结束并停止记牌后导出",Toast.LENGTH_LONG).show() } }
+        }.start()
+    }
     private fun dp(v: Int)=(v*resources.displayMetrics.density).toInt()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,6 +68,7 @@ class MainActivity : ComponentActivity() {
             override fun handleOnBackPressed() { if(page=="home") finish() else leave() }
         })
         render()
+        com.cyotun.jpq.vision.VisionRuntime.warm(applicationContext)
         UpdateManager.schedule(this)
         Thread { runCatching { UpdateManager(applicationContext).check() } }.start()
     }
@@ -91,7 +98,7 @@ class MainActivity : ComponentActivity() {
         parent.addView(view,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,if(height<0) height else dp(height)).apply { bottomMargin=dp(10) })
     }
     private fun render() {
-        val layoutOrientation=if(page in listOf("size","order")) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        val layoutOrientation=if(page in listOf("size","order")) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         if(requestedOrientation!=layoutOrientation) requestedOrientation=layoutOrientation
         stateText=null
         preview=null
@@ -156,6 +163,9 @@ class MainActivity : ComponentActivity() {
         add(c,row("配置备份","›") { navigate("backup") })
         add(c,row("最近牌局","查看") { RoundRepository(this).use { db -> AlertDialog.Builder(this).setTitle("最近牌局").setMessage(db.summary()).setPositiveButton("关闭",null).show() } })
         add(c,row("导出牌局诊断","仅保存到本机") { diagnosticResult.launch("记牌器牌局诊断.json") })
+        add(c,row("导出完整测试日志","日志和诊断画面") {
+            if(!AppState.running) archiveResult.launch("记牌器测试日志.zip") else Toast.makeText(this,"请先正常完成本局，再停止记牌导出",Toast.LENGTH_LONG).show()
+        })
         switch(c,"保存本机识别诊断画面",getSharedPreferences("jpq-diagnostics",MODE_PRIVATE).getBoolean("enabled",false)) {
             getSharedPreferences("jpq-diagnostics",MODE_PRIVATE).edit().putBoolean("enabled",it).apply()
         }
