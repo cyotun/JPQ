@@ -20,6 +20,7 @@ class TencentRecognizer(private val context: Context): FrameRecognizer {
     private val evidenceIo=java.util.concurrent.Executors.newSingleThreadExecutor()
     private val evidenceBusy=java.util.concurrent.atomic.AtomicBoolean(false)
     private val converter=FrameBitmapConverter()
+    private val captureProbe=CaptureFrameProbe()
     private val emptyGuard=EmptyRegionGuard()
     private var frameNumber=0L
     private val repository=RoundRepository(context)
@@ -55,7 +56,7 @@ class TencentRecognizer(private val context: Context): FrameRecognizer {
     }
     override fun observe(image: Image) {
         if(closed) return
-        if(image.width<=image.height || AppState.adjusting) {
+        if(image.width<=image.height || AppState.sourceWidth<=AppState.sourceHeight || AppState.adjusting) {
             val now=SystemClock.elapsedRealtime()
             trace.write(JSONObject().put("type","frame").put("elapsedMs",now).put("width",image.width).put("height",image.height)
                 .put("scene","UNKNOWN").put("reason",if(AppState.adjusting) "adjustment_occlusion" else "portrait_non_game"))
@@ -64,6 +65,7 @@ class TencentRecognizer(private val context: Context): FrameRecognizer {
         val start=SystemClock.elapsedRealtime(); frameNumber++
         diagnosticFrameAllowed=false
         val bitmap=converter.convert(image)
+        val probeFolder=captureProbe.capture(context,image,bitmap)
         val maskingCanvas=Canvas(bitmap); val maskingPaint=Paint().apply { color=Color.rgb(38,38,38) }
         val normalizedMasks=mutableListOf<GlyphBox>()
         listOfNotNull(AppState.barMask,AppState.adjustmentMask).forEach { mask ->
@@ -75,7 +77,9 @@ class TencentRecognizer(private val context: Context): FrameRecognizer {
         }
         try {
             val converted=SystemClock.elapsedRealtime()
-            val detections=detector.detect(bitmap).filter { it.box.centerY()>.13f && it.box.centerX() in .10f.. .88f && it.box.width()<.12f && it.box.height()>.02f }
+            val rawDetections=detector.detect(bitmap)
+            val detections=rawDetections.filter { it.box.centerY()>.13f && it.box.centerX() in .10f.. .88f && it.box.width()<.12f && it.box.height()>.02f }
+            if(probeFolder!=null) saveProbeInput(probeFolder,bitmap,image.timestamp,rawDetections,detections.size)
             ocr.request(bitmap,converted)
             val text=ocr.snapshot(image.width,image.height,SystemClock.elapsedRealtime())
             val tableLines=text?.lines.orEmpty().filter { (it.box?.centerY() ?: 0)>image.height*.12f }
@@ -99,6 +103,7 @@ class TencentRecognizer(private val context: Context): FrameRecognizer {
                 .put("width",image.width).put("height",image.height).put("scene",scene.name).put("backend",detector.backend)
                 .put("sourceWidth",AppState.sourceWidth).put("sourceHeight",AppState.sourceHeight)
                 .put("convertMs",converted-start).put("preprocessMs",detector.preprocessMs).put("inferenceMs",detector.inferenceMs).put("decodeMs",detector.decodeMs)
+                .put("rawDetectionCount",rawDetections.size).put("filteredDetectionCount",detections.size).put("maxClassScore",detector.maxClassScore)
                 .put("ocrAgeMs",if(text==null) JSONObject.NULL else SystemClock.elapsedRealtime()-text.timeMs)
                 .put("emptyEvidenceMs",SystemClock.elapsedRealtime()-evidenceStart)
                 .put("overlayMasks",JSONArray(normalizedMasks.map { b -> JSONArray(listOf(rounded(b.left),rounded(b.top),rounded(b.right),rounded(b.bottom))) }))
@@ -162,11 +167,40 @@ class TencentRecognizer(private val context: Context): FrameRecognizer {
             }
         }
     }
+    private fun saveProbeInput(folder: java.io.File,bitmap: Bitmap,imageTimestampNs: Long,
+                               detections: List<CardDetection>,filteredCount: Int) {
+        var masked: Bitmap?=null
+        var modelInput: Bitmap?=null
+        try {
+            val ownedMasked=checkNotNull(bitmap.copy(Bitmap.Config.ARGB_8888,false))
+            masked=ownedMasked
+            val ownedInput=detector.copyInputForProbe()
+            modelInput=ownedInput
+            val data=JSONObject().put("frame",frameNumber).put("imageTimestampNs",imageTimestampNs)
+                .put("rawDetectionCount",detections.size).put("filteredDetectionCount",filteredCount)
+                .put("maxClassScore",detector.maxClassScore)
+                .put("detections",JSONArray(detections.map { p -> JSONObject().put("card",p.card.colorKey()).put("score",p.confidence)
+                    .put("box",JSONArray(listOf(p.box.left,p.box.top,p.box.right,p.box.bottom))) }))
+            evidenceIo.execute {
+                try {
+                    check(folder.isDirectory || folder.mkdirs() || folder.isDirectory)
+                    java.io.File(folder,"masked.png").outputStream().use { check(ownedMasked.compress(Bitmap.CompressFormat.PNG,100,it)) }
+                    java.io.File(folder,"model-input.png").outputStream().use { check(ownedInput.compress(Bitmap.CompressFormat.PNG,100,it)) }
+                    java.io.File(folder,"model-detections.json").writeText(data.toString(2),Charsets.UTF_8)
+                } catch(error: Exception) {
+                    android.util.Log.w("JPQCaptureProbe","model_input_save_failed",error)
+                } finally { ownedMasked.recycle(); ownedInput.recycle() }
+            }
+        } catch(error: Exception) {
+            masked?.recycle(); modelInput?.recycle()
+            android.util.Log.w("JPQCaptureProbe","model_input_snapshot_failed",error)
+        }
+    }
     override fun close() {
         if(closed) return
         closed=true
         runCatching { repository.save(AppState.ledger) }; runCatching { repository.close() }
-        runCatching { ocr.close() }; runCatching { converter.close() }
+        runCatching { ocr.close() }; runCatching { converter.close() }; runCatching { captureProbe.close() }
         runCatching { trace.close() }; evidenceIo.shutdown()
     }
 }

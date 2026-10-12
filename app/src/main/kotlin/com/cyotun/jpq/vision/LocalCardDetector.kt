@@ -36,6 +36,7 @@ class LocalCardDetector(context: Context,forceBackend: String?=null): AutoClosea
     var preprocessMs=0L; private set
     var inferenceMs=0L; private set
     var decodeMs=0L; private set
+    var maxClassScore=0f; private set
     private val pixels=IntArray(w*h)
     private val canvasBitmap=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888)
     private val canvas=Canvas(canvasBitmap)
@@ -83,9 +84,11 @@ class LocalCardDetector(context: Context,forceBackend: String?=null): AutoClosea
         }
         val inferred=android.os.SystemClock.elapsedRealtime(); inferenceMs=inferred-prepared
         val proposals=ArrayList<CardDetection>()
+        maxClassScore=0f
         for(i in 0 until n) {
             var score=0f; var label=0
             for(c in 0 until 28) { val v=values[(c+4)*n+i]; if(v>score) { score=v; label=c } }
+            if(score>maxClassScore) maxClassScore=score
             if(score<.55f) continue
             val cx=values[i]*w; val cy=values[n+i]*h; val bw=values[2*n+i]*w; val bh=values[3*n+i]*h
             val box=RectF(((cx-bw/2-dx)/scale/source.width).coerceIn(0f,1f),((cy-bh/2-dy)/scale/source.height).coerceIn(0f,1f),
@@ -97,6 +100,11 @@ class LocalCardDetector(context: Context,forceBackend: String?=null): AutoClosea
         for(p in proposals.sortedByDescending { it.confidence }) if(selected.none { iou(it.box,p.box)>.45f }) selected.add(p)
         decodeMs=android.os.SystemClock.elapsedRealtime()-inferred
         return selected
+    }
+    /** Owned diagnostic copy; callers must recycle it. Normal recognition never allocates this. */
+    fun copyInputForProbe(): Bitmap {
+        check(Thread.currentThread()===owner && !closed)
+        return checkNotNull(canvasBitmap.copy(Bitmap.Config.ARGB_8888,false))
     }
     private fun card(label: Int): Card {
         if(label>=26) return Card(if(label==26) Rank.BIG else Rank.SMALL,Suit.NONE)

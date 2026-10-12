@@ -24,6 +24,7 @@ class CaptureService : Service() {
     private var lastFrame = 0L
     private var lastFrameError=0L
     private var lastStartId=0
+    private var referenceCapture=true
     @Volatile private var closed = false
     @Volatile private var session = 0L
     @Volatile private var recognizer: FrameRecognizer = AwaitingValidatedAdapter()
@@ -50,6 +51,7 @@ class CaptureService : Service() {
         }
         if (projection != null || intent == null) return START_NOT_STICKY
         closed=false
+        referenceCapture=getSharedPreferences("jpq-runtime",MODE_PRIVATE).getString("captureProfile","reference")!="adaptive_scaled"
         val generation=++session
         android.util.Log.i("JPQCapture","session_start generation=$generation")
         lastFrame=0L; lastFrameError=0L
@@ -111,11 +113,15 @@ class CaptureService : Service() {
     }
     private fun newReader(width: Int,height: Int,generation: Long): ImageReader {
         AppState.sourceWidth=width; AppState.sourceHeight=height
-        val scale=minOf(1f,1280f/maxOf(width,height))
-        val outputWidth=(width*scale).toInt().coerceAtLeast(1); val outputHeight=(height*scale).toInt().coerceAtLeast(1)
+        // Match the reference APK: one fixed landscape canvas at physical resolution.
+        // Portrait/landscape source transitions are composed by MediaProjection;
+        // resizing and letterboxing for inference happen after capture.
+        val scale=if(referenceCapture) 1f else minOf(1f,1280f/maxOf(width,height))
+        val outputWidth=if(referenceCapture) maxOf(width,height) else (width*scale).toInt().coerceAtLeast(1)
+        val outputHeight=if(referenceCapture) minOf(width,height) else (height*scale).toInt().coerceAtLeast(1)
         AppState.capturedWidth=outputWidth; AppState.capturedHeight=outputHeight
-        android.util.Log.i("JPQCapture","source_size=${width}x$height capture_size=${outputWidth}x$outputHeight")
-        return ImageReader.newInstance(outputWidth,outputHeight,PixelFormat.RGBA_8888,2).also { next ->
+        android.util.Log.i("JPQCapture","source_size=${width}x$height capture_size=${outputWidth}x$outputHeight profile=${if(referenceCapture) "reference" else "adaptive_scaled"}")
+        return ImageReader.newInstance(outputWidth,outputHeight,PixelFormat.RGBA_8888,3).also { next ->
             next.setOnImageAvailableListener({ source ->
                 val image=runCatching { source.acquireLatestImage() }.getOrNull() ?: return@setOnImageAvailableListener
                 try {
@@ -138,6 +144,11 @@ class CaptureService : Service() {
     private fun resize(width: Int,height: Int) {
         if(width<=0 || height<=0 || display==null || closed) return
         if(width==AppState.sourceWidth && height==AppState.sourceHeight) return
+        if(referenceCapture && maxOf(width,height)==AppState.capturedWidth && minOf(width,height)==AppState.capturedHeight) {
+            AppState.sourceWidth=width; AppState.sourceHeight=height
+            android.util.Log.i("JPQCapture","source_orientation=${width}x$height fixed_capture=${AppState.capturedWidth}x${AppState.capturedHeight}")
+            overlay?.refresh(); return
+        }
         // Projection callbacks and teardown run on main. Retire the old reader only
         // after any image already being observed on the vision worker is released.
         var next: ImageReader?=null
