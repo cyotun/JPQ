@@ -28,7 +28,7 @@ class SessionTrace(context: Context): AutoCloseable {
         if(!enabled) return
         val encoded=record.put("sessionId",id).toString()
         // ADB streams compact records during live testing; full evidence stays in the private file.
-        val compact=if(encoded.length<=3600) encoded else JSONObject(record.toString()).apply { remove("detections"); remove("events") }.toString()
+        val compact=if(encoded.length<=3600) encoded else JSONObject(record.toString()).apply { remove("detections"); remove("events"); remove("glyphs") }.toString()
         if(compact.length<=3600) android.util.Log.i("JPQTrace",compact)
         val sink=writer ?: return
         runCatching {

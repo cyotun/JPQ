@@ -2,7 +2,7 @@ package com.cyotun.jpq.core
 
 enum class TableScene { TABLE, DEALING, LOBBY, TRIBUTE, TEAMMATE, RESULT, UNKNOWN }
 data class ObservedPlay(val cards: List<Card>,val confidence: Float,val glyphs: List<PlayGlyph> = emptyList(),val regionObserved: Boolean = true)
-data class TableFrame(val timeMs: Long,val scene: TableScene,val hand: List<Card>?,val plays: Map<Seat,ObservedPlay?> = emptyMap())
+data class TableFrame(val timeMs: Long,val scene: TableScene,val hand: List<Card>?,val plays: Map<Seat,ObservedPlay?> = emptyMap(),val selfFinished: Boolean = false)
 data class ObserverStatus(val armed: Boolean,val locked: Boolean,val baselineWindow: Boolean,val tribute: Boolean,
     val handVotes: Int,val playVotes: Map<Seat,Int>,val pendingPlays: Int,val sequence: Long)
 
@@ -61,8 +61,15 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         if(frame.scene==TableScene.DEALING) {
             // A visible new dealing/doubling stage is a boundary even without visiting the lobby.
             if(sceneBeforeDeal!=TableScene.DEALING && frame.timeMs-lastDealAt>3000) {
-                if(snap.roundId!=null) { ledger.finish(); emit(); ledger.waitForNext(); lastRound=null; emit() }
-                clearCandidates(); locked=false; tribute=false; armed=true; freshDeal=true; baselineWindow=true
+                val current=ledger.snapshot()
+                val sameOpening=current.phase==RoundPhase.ACTIVE && current.plays.values.all { it.isEmpty() } &&
+                    frame.hand?.size==27 && key(frame.hand)==key(ledger.initialHand())
+                // Doubling labels appear and disappear while each player decides. That is still
+                // the same opening when the complete hand and empty event history are unchanged.
+                if(!sameOpening) {
+                    if(current.roundId!=null) { ledger.finish(); emit(); ledger.waitForNext(); lastRound=null; emit() }
+                    clearCandidates(); locked=false; tribute=false; armed=true; freshDeal=true; baselineWindow=true
+                }
                 lastDealAt=frame.timeMs
             }
             sceneBeforeDeal=TableScene.DEALING
@@ -84,7 +91,13 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             tribute=false; ledger.waitForNext(); lastRound=null; armed=true; baselineWindow=true; freshDeal=true; clearCandidates()
         }
         if(locked || ledger.snapshot().phase==RoundPhase.UNAVAILABLE) return
-        if(frame.scene==TableScene.TEAMMATE && ledger.snapshot().phase==RoundPhase.ACTIVE) { ledger.selfFinished(); emit() }
+        if((frame.scene==TableScene.TEAMMATE || frame.selfFinished) && ledger.snapshot().phase==RoundPhase.ACTIVE) { ledger.selfFinished(); emit() }
+        if(ledger.snapshot().phase==RoundPhase.SELF_FINISHED &&
+            listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).count { ledger.snapshot().played(it)==27 }>=2) {
+            // Three players have visibly finished. The last player's revealed hand is not a play.
+            ledger.finish(); emit(); ledger.waitForNext(); lastRound=null; emit()
+            armed=false; baselineWindow=false; tribute=false; freshDeal=false; clearCandidates(); return
+        }
         snap=ledger.snapshot()
         val hand=frame.hand
         if(armed && hand?.size==27 && listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).all { observedEmpty(frame.plays[it]) }) baselineWindow=true

@@ -1,6 +1,6 @@
 # 记牌器 Android 工程
 
-当前 0.2.1-regression 为个人回归测试版：已接入本地牌面模型、异步中文 OCR、自动确认和记牌、原风格悬浮配置、牌局保存及更新客户端。53 项核心回归及手机八个固定图检查已通过，仍需完整真机对局验收。见 [适配记录](../docs/development/adaptation.md) 与 [真机计划](../docs/development/live-test-plan.md)。
+当前 0.2.2-regression 为个人回归测试版。第一局真实测试中途因炸弹遮挡后重复扣牌失败，已据录像修复；81 项核心检查和完整录像的三家 28 次逐事件回放通过，手机颜色/OCR与第二局仍待验收。见 [第一局修复记录](../docs/development/first-phone-round.md) 与 [真机计划](../docs/development/live-test-plan.md)。
 
 固定 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、compile/target SDK 36、min SDK 28，当前手机实际 API 37；首版 ABI arm64-v8a。界面为 Kotlin 原生 View / Canvas，内部保存使用 SharedPreferences / SQLite。
 

@@ -15,6 +15,7 @@ class AdjustmentOverlay(private val context: Context,initialPage: String,private
     private var page=initialPage
     private var attached=false
     private var disposed=false
+    private var compactHeader=false
     private val d=context.resources.displayMetrics.density
     private fun dp(n: Int)=(n*d).toInt()
     private val gold=Color.rgb(255,227,149)
@@ -32,7 +33,10 @@ class AdjustmentOverlay(private val context: Context,initialPage: String,private
         AppState.beginOverlayOcclusion(this)
         try {
             render(); wm.addView(root,params); attached=true
-            root.addOnLayoutChangeListener { _,_,_,_,_,_,_,_,_ -> publishMask() }
+            root.addOnLayoutChangeListener { _,left,_,right,_,_,_,_,_ ->
+                publishMask()
+                if(right>left && (right-left<dp(620))!=compactHeader) root.post { if(attached && !disposed) render() }
+            }
             root.post { publishMask() }
         } catch(error: Exception) { AppState.endOverlayOcclusion(this); throw error }
     }
@@ -53,14 +57,22 @@ class AdjustmentOverlay(private val context: Context,initialPage: String,private
         if(disposed) return
         root.removeAllViews()
         root.background=GradientDrawable().apply { setColor(Color.argb(245,38,38,38)); cornerRadii=floatArrayOf(dp(24).toFloat(),dp(24).toFloat(),dp(24).toFloat(),dp(24).toFloat(),0f,0f,0f,0f) }
+        val screenWidth=if(attached && root.width>0) root.width else if(android.os.Build.VERSION.SDK_INT>=30) wm.currentWindowMetrics.bounds.width() else context.resources.displayMetrics.widthPixels
+        compactHeader=screenWidth<dp(620)
         val head=LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL }
-        fun action(text: String,width: Int,click: ()->Unit) { head.addView(button(text,click),LinearLayout.LayoutParams(dp(width),dp(38)).apply { marginEnd=dp(8) }) }
-        action("尺寸调整",90) { page="size"; render() }; action("牌序调整",90) { page="order"; render() }
+        fun action(row: LinearLayout,text: String,width: Int,weight: Float=0f,endMargin: Int=8,click: ()->Unit) {
+            row.addView(button(text,click),LinearLayout.LayoutParams(if(weight>0f) 0 else dp(width),dp(38),weight).apply { marginEnd=dp(endMargin) })
+        }
+        action(head,"尺寸调整",90) { page="size"; render() }; action(head,"牌序调整",90) { page="order"; render() }
         head.addView(label("掼蛋默认 · 4人 · 2副"),LinearLayout.LayoutParams(0,dp(38),1f))
-        action("退出",54) { close() }
-        action("重置",54) { val defaults=DisplayConfig(); draft=if(page=="order") draft.copy(order=guandanOrder) else defaults.copy(showHistory=draft.showHistory,showReset=draft.showReset,doubleTapHide=draft.doubleTapHide,order=draft.order,x=draft.x,y=draft.y); preview(draft); render() }
-        action("保存并退出",100) { store.save(draft); close() }
         root.addView(head)
+        val controls=if(compactHeader) LinearLayout(context).apply {
+            gravity=Gravity.CENTER_VERTICAL
+            root.addView(this,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(8) })
+        } else head
+        action(controls,"退出",54,if(compactHeader) 1f else 0f) { close() }
+        action(controls,"重置",54,if(compactHeader) 1f else 0f) { val defaults=DisplayConfig(); draft=if(page=="order") draft.copy(order=guandanOrder) else defaults.copy(showHistory=draft.showHistory,showReset=draft.showReset,doubleTapHide=draft.doubleTapHide,order=draft.order,x=draft.x,y=draft.y); preview(draft); render() }
+        action(controls,"保存并退出",100,if(compactHeader) 1.8f else 0f,if(compactHeader) 0 else 8) { store.save(draft); close() }
         val scroll=ScrollView(context)
         val body=LinearLayout(context).apply { orientation=LinearLayout.VERTICAL; setPadding(0,dp(8),0,0) }; scroll.addView(body)
         root.addView(scroll,LinearLayout.LayoutParams(-1,dp(144)))
