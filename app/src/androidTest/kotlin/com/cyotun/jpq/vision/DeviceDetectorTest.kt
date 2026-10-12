@@ -39,6 +39,13 @@ class DeviceDetectorTest {
         }
         val cpu=times["CPU"]!!.sorted()
         android.util.Log.i("JPQBench","CPU fixtures=8 capture=1280x588 median=${cpu[cpu.size/2]} p95=${cpu.last()} ms")
+        // A stalled native GPU call cannot be safely cancelled by a JUnit timeout.
+        // Request that separate device validation explicitly, outside any game.
+        if(InstrumentationRegistry.getArguments().getString("validateGpu")!="true") {
+            source.forEach { it.recycle() }
+            android.util.Log.i("JPQBench","gpu_validation_not_requested; CPU fixtures passed")
+            return
+        }
         android.util.Log.i("JPQBench","cpu_fixtures_passed gpu_construct_start")
         LocalCardDetector(app,"GPU").use { detector ->
             android.util.Log.i("JPQBench","gpu_ready")

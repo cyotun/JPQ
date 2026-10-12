@@ -42,6 +42,7 @@ class TencentRecognizer(private val context: Context): FrameRecognizer {
     }
     override val ready=true
     private var ambiguousSince: Long?=null
+    private var overlayOcclusionSince: Long?=null
     private var closed=false
     private var diagnosticFrameAllowed=false
     private fun observe(frame: TableFrame) {
@@ -100,6 +101,7 @@ class TencentRecognizer(private val context: Context): FrameRecognizer {
                 .put("convertMs",converted-start).put("preprocessMs",detector.preprocessMs).put("inferenceMs",detector.inferenceMs).put("decodeMs",detector.decodeMs)
                 .put("ocrAgeMs",if(text==null) JSONObject.NULL else SystemClock.elapsedRealtime()-text.timeMs)
                 .put("emptyEvidenceMs",SystemClock.elapsedRealtime()-evidenceStart)
+                .put("overlayMasks",JSONArray(normalizedMasks.map { b -> JSONArray(listOf(rounded(b.left),rounded(b.top),rounded(b.right),rounded(b.bottom))) }))
                 .put("emptyEvidence",JSONObject(emptyEvidence.mapKeys { it.key.name }.mapValues { (_,e) -> JSONObject().put("observed",e.observed).put("reason",e.reason).put("tableRatio",e.tableRatio ?: JSONObject.NULL) }))
                 .put("hand",JSONArray(hand.map { it.colorKey() })).put("groups",JSONObject(ownership.seats.mapKeys { it.key.name }.mapValues { (_,p) -> p.map { it.card.colorKey() } }))
                 .put("confidences",JSONObject(ownership.seats.mapKeys { it.key.name }.mapValues { (_,p) -> p.minOfOrNull { it.confidence } ?: 1f }))
@@ -109,6 +111,17 @@ class TencentRecognizer(private val context: Context): FrameRecognizer {
             if(diagnostics.getBoolean("enabled",false) && SystemClock.elapsedRealtime()-lastDiagnostic>=2000) {
                 android.util.Log.i("JPQVision","scene=$scene hand=${hand.map { it.colorKey() }} passing=$passing groups=${ownership.seats.mapValues { (_,p) -> p.map { it.card.colorKey() } }} ambiguous=${ownership.ambiguous.size}")
             }
+            val overlayOccluded=emptyEvidence.values.any { it.reason=="overlay_occlusion" } &&
+                scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)
+            if(overlayOccluded) {
+                val now=SystemClock.elapsedRealtime()
+                if(overlayOcclusionSince==null) overlayOcclusionSince=now
+                if(now-overlayOcclusionSince!!>1500 && AppState.ledger.snapshot().remaining!=null)
+                    observer.interrupted("悬浮条遮住出牌区，请移回顶部并等待下一局")
+                // No partial presentation or empty-region vote may survive a masked table.
+                observe(TableFrame(now,TableScene.UNKNOWN,null)); return
+            }
+            overlayOcclusionSince=null
             if(ownership.ambiguous.isNotEmpty() && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)) {
                 val now=SystemClock.elapsedRealtime(); if(ambiguousSince==null) ambiguousSince=now
                 if(now-ambiguousSince!!>1500 && AppState.ledger.snapshot().remaining!=null) observer.interrupted("出牌归属无法完整确认，等待下一局")

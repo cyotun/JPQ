@@ -25,8 +25,14 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private val font=Typeface.createFromAsset(context.assets,"overlay.ttf")
     private val view=BarView()
     private val params=WindowManager.LayoutParams(1,1,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-        PixelFormat.TRANSLUCENT).apply { gravity=Gravity.TOP or Gravity.LEFT }
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        PixelFormat.TRANSLUCENT).apply {
+            gravity=Gravity.TOP or Gravity.LEFT
+            // The reference bar starts at the physical top edge. Otherwise system
+            // safe insets can shift a 46dp banner into the card recognition area.
+            layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
     private val listener: () -> Unit = { refresh() }
     private val d get()=context.resources.displayMetrics.density
     private fun sp(value: Float)=android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,value,context.resources.displayMetrics)

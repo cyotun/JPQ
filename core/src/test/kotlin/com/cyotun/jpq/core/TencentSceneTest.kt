@@ -27,4 +27,44 @@ class TencentSceneTest {
         assertFalse(tencentSelfFinished(listOf(hint("头游",.24f,.34f),hint("二游",.5f,.22f))))
         assertTrue(tencentSelfFinished(listOf(hint("三游",.5f,.70f))))
     }
+    private val actualHead=SceneHint("头游",GlyphBox(.1625f,.30045f,.28229f,.40930f))
+    private val actualSecond=SceneHint("二游",GlyphBox(.47031f,.18934f,.52917f,.25170f))
+    private val actualThird=SceneHint("三游",GlyphBox(.42292f,.67574f,.53073f,.74490f))
+    private val actualThirdBadge=SceneHint("三游",GlyphBox(.07656f,.78571f,.12031f,.8220f))
+    private val actualHeadBadge=SceneHint("头游",GlyphBox(.08333f,.21655f,.11615f,.25283f))
+
+    @Test fun actualThreeFinishSlotsEndTheRevealWhenLastPlaceOcrIsMissing() {
+        // Actual OCR on the first real game's final image: the blue last-place label
+        // was missed completely, but these three positioned finishers were recognized.
+        assertEquals(TableScene.RESULT,tencentScene(listOf(actualHead,actualSecond,actualThird,actualThirdBadge,actualHeadBadge),true,false))
+    }
+    @Test fun anOwnFinishBadgeCanSupplyTheThirdProofWithoutItsLargeBanner() {
+        assertEquals(TableScene.RESULT,tencentScene(listOf(actualHeadBadge,actualSecond,actualThirdBadge),true,false))
+    }
+    @Test fun aBannerAndBadgeAreNotTwoDifferentCompletedPlayers() {
+        assertEquals(TableScene.TABLE,tencentScene(listOf(actualHead,actualHeadBadge,actualSecond),true,false))
+    }
+    @Test fun threeRankWordsOnTheSamePlayerDoNotProveThreeFinishers() {
+        assertEquals(TableScene.TABLE,tencentScene(listOf(actualHead,actualHead.copy(text="二游"),actualHead.copy(text="三游")),true,false))
+    }
+    @Test fun aRankAssignedToTwoPlayersIsAmbiguousRatherThanATerminalProof() {
+        assertEquals(TableScene.TABLE,tencentScene(listOf(actualHead,actualSecond,actualThirdBadge,actualThird.copy(text="头游")),true,false))
+    }
+    @Test fun aThirdPlaceNicknameOrUnpositionedWordCannotSupplyTheMissingFinisher() {
+        for(third in listOf(hint("三游",.90f,.52f),hint("三游",.1f,.90f),SceneHint("三游",null))) {
+            assertEquals(TableScene.TABLE,tencentScene(listOf(actualHead,actualSecond,third),true,false))
+        }
+    }
+    @Test fun aCombinedTextLineIsNotThreePositionedFinishers() {
+        assertEquals(TableScene.TABLE,tencentScene(listOf(actualHead.copy(text="头游 二游 三游")),true,false))
+    }
+    @Test fun firstPlaceTeammateViewIsStillAnOngoingGame() {
+        assertEquals(TableScene.TEAMMATE,tencentScene(listOf(actualThird.copy(text="头游"),actualThirdBadge.copy(text="头游"),actualSecond,hint("队友手牌",.5f,.78f)),true,true))
+    }
+    @Test fun otherThreePlayersCanFinishWhileSelfIsLast() {
+        assertEquals(TableScene.RESULT,tencentScene(listOf(actualHead,actualSecond,hint("三游",.75f,.34f)),true,true))
+    }
+    @Test fun rankWordsOutsideTheUiSlotsDoNotBecomeTerminalProofs() {
+        assertEquals(TableScene.TABLE,tencentScene(listOf(actualHead,actualSecond,SceneHint("三游",GlyphBox(.48f,.13f,.52f,.15f))),true,false))
+    }
 }

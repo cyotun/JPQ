@@ -22,6 +22,7 @@ class FrameBitmapConverter: AutoCloseable {
     private val owner=Thread.currentThread()
     private var bitmap: Bitmap?=null
     private var packed: ByteBuffer?=null
+    private var opaquePixels=IntArray(0)
     private var closed=false
 
     fun convert(image: Image): Bitmap {
@@ -48,15 +49,15 @@ class FrameBitmapConverter: AutoCloseable {
         }
         val data=source.duplicate().order(ByteOrder.LITTLE_ENDIAN)
         val base=data.position()
+        val destination=packed?.takeIf { it.capacity()>=target.byteCount } ?: ByteBuffer.allocateDirect(target.byteCount)
+            .order(ByteOrder.LITTLE_ENDIAN).also { packed=it }
         if(pixelStride==4 && rowStride==target.rowBytes && data.remaining()>=target.byteCount) {
-            // Normal ImageReader frames: one native copy, no Kotlin per-pixel conversion.
+            // Bulk word transfer followed by one alpha OR; RGB bytes are never unpacked.
             data.limit(base+target.byteCount)
-            target.copyPixelsFromBuffer(data)
+            copyOpaque(data,destination,target)
             return target
         }
 
-        val destination=packed?.takeIf { it.capacity()>=target.byteCount } ?: ByteBuffer.allocateDirect(target.byteCount)
-            .order(ByteOrder.LITTLE_ENDIAN).also { packed=it }
         destination.clear()
         for(y in 0 until height) {
             val start=base+y*rowStride
@@ -72,14 +73,25 @@ class FrameBitmapConverter: AutoCloseable {
             while(destination.position()<(y+1)*target.rowBytes) destination.put(0.toByte())
         }
         destination.position(target.byteCount); destination.flip()
-        target.copyPixelsFromBuffer(destination)
+        copyOpaque(destination,destination,target)
         return target
+    }
+
+    private fun copyOpaque(source: ByteBuffer,destination: ByteBuffer,target: Bitmap) {
+        val count=target.byteCount/4
+        if(opaquePixels.size!=count) opaquePixels=IntArray(count)
+        source.asIntBuffer().get(opaquePixels)
+        // setHasAlpha(false) is only a rendering hint; raw capture alpha must be normalized.
+        for(index in 0 until count) opaquePixels[index]=opaquePixels[index] or 0xff000000.toInt()
+        destination.clear(); destination.asIntBuffer().put(opaquePixels)
+        destination.limit(target.byteCount)
+        target.copyPixelsFromBuffer(destination)
     }
 
     override fun close() {
         check(Thread.currentThread()===owner) { "Frame converter must close on its owning thread" }
         if(closed) return
         closed=true
-        bitmap?.takeUnless { it.isRecycled }?.recycle(); bitmap=null; packed=null
+        bitmap?.takeUnless { it.isRecycled }?.recycle(); bitmap=null; packed=null; opaquePixels=IntArray(0)
     }
 }
