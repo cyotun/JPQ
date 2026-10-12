@@ -1,6 +1,6 @@
 # 记牌器 Android 工程
 
-当前 0.2.2-regression 为个人回归测试版。第一局真实测试中途因炸弹遮挡后重复扣牌失败，已据录像修复。97 项核心检查、手机八项颜色/遮挡/OCR检查与CPU固定图复测通过；完整录像的三家28次逐事件回放通过，第二局真机仍待验收。GPU本次验证停滞，当前测试手机使用CPU。见 [第一局修复记录](../docs/development/first-phone-round.md) 与 [真机计划](../docs/development/live-test-plan.md)。
+当前 0.2.2-regression 为个人回归测试版。第一局真实测试中途因炸弹遮挡后重复扣牌失败，已据录像修复。99 项核心检查、手机八项颜色/遮挡/OCR检查与CPU固定图复测通过；完整录像的三家28次逐事件回放通过，第二局真机仍待验收。GPU本次验证停滞，当前测试手机使用CPU。见 [第一局修复记录](../docs/development/first-phone-round.md) 与 [真机计划](../docs/development/live-test-plan.md)。
 
 固定 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、compile/target SDK 36、min SDK 28，当前手机实际 API 37；首版 ABI arm64-v8a。界面为 Kotlin 原生 View / Canvas，内部保存使用 SharedPreferences / SQLite。
 

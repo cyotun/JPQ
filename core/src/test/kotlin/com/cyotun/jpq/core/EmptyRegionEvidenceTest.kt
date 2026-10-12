@@ -30,6 +30,22 @@ class EmptyRegionEvidenceTest {
         assertTrue(result.getValue(Seat.OPPOSITE).observed)
     }
 
+    @Test fun observedPhoneInsetStillLeavesTheDefaultBannerAboveTheCardArea() {
+        val evidence=EmptyRegionEvidence()
+        // Actual default mask on 2608x1200: [0,12,1254,150], not a guessed top edge.
+        val result=evidence.evaluate(felt,width,height,TableScene.DEALING,27,empty,null,
+            listOf(GlyphBox(0f,.01f,.4808f,.125f)))
+        assertTrue(result.values.all { it.observed })
+    }
+
+    @Test fun anIndividualGlyphIntersectingTheBannerIsStillNotFullyObserved() {
+        val evidence=EmptyRegionEvidence()
+        val high=PlayGlyph(Card(Rank.A,Suit.RED),.99f,GlyphBox(.40f,.12f,.44f,.17f))
+        val result=evidence.evaluate(felt,width,height,TableScene.TABLE,27,group(Seat.OPPOSITE,high),"one",
+            listOf(GlyphBox(0f,.01f,.4808f,.125f))).getValue(Seat.OPPOSITE)
+        assertFalse(result.observed); assertEquals("overlay_occlusion",result.reason)
+    }
+
     @Test fun maskBeyondTheDetectedGlyphStillMakesAPartialGroupUnobserved() {
         val evidence=EmptyRegionEvidence()
         val tailMask=listOf(GlyphBox(.30f,.30f,.35f,.36f))

@@ -7,9 +7,11 @@ class EmptyRegionEvidence {
     private val calibrationRegion=GlyphBox(.33f,.25f,.67f,.40f)
     // Side players' long groups can reach across the center. These are deliberately
     // broader than an individual detected group, so a hidden tail is never "complete".
-    // Default bars end above .12; moving one into these areas removes observation proof.
-    private val sideRegion=GlyphBox(.04f,.12f,.94f,.58f)
-    private val oppositeRegion=GlyphBox(.26f,.12f,.76f,.35f)
+    // Match the recognizer's centerY > .13 card-area boundary. The verified default
+    // banner ends at .125 with this phone's 12px window inset. Individual glyph
+    // footprints below also catch partial overlaps above that center boundary.
+    private val sideRegion=GlyphBox(.04f,.13f,.94f,.58f)
+    private val oppositeRegion=GlyphBox(.26f,.13f,.76f,.35f)
     private val selfRegion=GlyphBox(.26f,.24f,.76f,.58f)
     private var palette: SurfacePalette?=null
     private val regions=mutableMapOf<Seat,GlyphBox>()
