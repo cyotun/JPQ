@@ -1,6 +1,6 @@
 # 记牌器 Android 工程
 
-当前0.2.3-regression为个人采集对照版。第一局中途重复扣牌、第二局全场未激活，均未通过真实验收。已按原APK恢复固定横屏原始尺寸并加入三帧像素/模型输入对照，等待手机大厅验证；不能以99项核心回归或桌面录像预测通过代表稳定记牌。GPU本次未通过验证，测试手机使用CPU。见 [第二局记录](../docs/development/second-phone-round.md)、[第一局记录](../docs/development/first-phone-round.md) 与 [真机计划](../docs/development/live-test-plan.md)。
+当前0.2.4-regression为离线修复与原快速管线验证候选版。109项核心检查通过；第一局3177帧既有回放保持通过，第二局2805帧新预处理回放的初始27张、27手外家出牌与剩余8张均匹配独立录像真值。两次已进行的真实验收仍判失败，候选包尚未安装验证，不能把离线结果称为稳定真机记牌。已恢复原APK固定横屏原始尺寸、独立采集/推理及最新帧交付；原native预处理和320/640模型仅接入显式验证入口，默认识别仍使用整图模型。GPU未通过本机验证，继续使用CPU。见 [第二局记录](../docs/development/second-phone-round.md)、[第一局记录](../docs/development/first-phone-round.md) 与 [真机计划](../docs/development/live-test-plan.md)。
 
 固定 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、compile/target SDK 36、min SDK 28，当前手机实际 API 37；首版 ABI arm64-v8a。界面为 Kotlin 原生 View / Canvas，内部保存使用 SharedPreferences / SQLite。
 
@@ -8,11 +8,13 @@
 ./tools/android/bootstrap.ps1
 ./tools/android/prepare-assets.ps1 -FontPath '本机官方钉钉进步体.ttf'
 ./tools/android/prepare-model.ps1 -ModelPath '本机合法持有的 cards.tflite'
+# 原快速管线的本机探针需另备原APK的指定7个arm64库和2个packed模型：
+./tools/android/prepare-reference-preprocess.ps1 -NativeLibraryDirectory '本机原生库目录' -PackedModelDirectory '本机packed模型目录'
 node tools/release/identity.mjs
 ./tools/android/build.ps1 -Tasks ':core:test',':app:assembleRelease',':app:lintRelease'
 ```
 
-字体与参考模型只在本机作个人适配，不进入 Git；构建严格检查 SHA-256，不悄悄替换。新克隆需另行准备本地资产。私钥只在 `.signing`，必须另行备份；初始化脚本不覆盖已有完整身份。
+字体、参考模型及原生库只在本机作个人适配，不进入 Git；准备脚本检查 SHA-256，不悄悄替换。新克隆需另行准备本地资产。私钥只在 `.signing`，必须另行备份；初始化脚本不覆盖已有完整身份。
 
 正式包 `com.cyotun.jpq` 使用自研项目持续签名，调试包 `.dev` 与其分开，不覆盖参考软件。回归版版本号不代表已通过准确率验收。截图和日志只留在忽略目录 `captures/phone`。
 

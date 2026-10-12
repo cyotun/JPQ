@@ -132,7 +132,15 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     }
     private fun observedEmpty(play: ObservedPlay?)=play!=null && play.regionObserved && play.confidence>=.65f && play.cards.isEmpty()
     private fun collectOthers(frame: TableFrame,commitNow: Boolean) {
+        val confirmed=if(commitNow) ledger.snapshot() else null
         for(seat in listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT)) {
+            if(confirmed?.played(seat)==27) {
+                // A finished player's last presentation can temporarily move away during
+                // an effect and return over real table pixels. It cannot be another play.
+                playVotes[seat]!!.clear(); emptyVotes[seat]!!.clear(); visible[seat]=""
+                presentations[seat]=null; previousGlyphs[seat]=emptyList(); empty[seat]=0
+                continue
+            }
             val p=frame.plays[seat]
             if(p==null || !p.regionObserved || p.confidence<.65f) {
                 playVotes[seat]!!.clear(); emptyVotes[seat]!!.clear(); previousGlyphs[seat]=emptyList(); empty[seat]=0; continue

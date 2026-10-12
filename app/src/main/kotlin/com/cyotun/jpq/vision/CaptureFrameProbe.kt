@@ -83,6 +83,7 @@ class CaptureFrameProbe : AutoCloseable {
             if (convertedPixels.size != count) convertedPixels = IntArray(count)
 
             val rawRgb = RgbStatistics()
+            val crop=image.cropRect
             var alphaMin = 255
             var alphaMax = 0
             var alphaSum = 0L
@@ -97,7 +98,7 @@ class CaptureFrameProbe : AutoCloseable {
                     val g = bytes.get(offset + 1).toInt() and 255
                     val b = bytes.get(offset + 2).toInt() and 255
                     val a = bytes.get(offset + 3).toInt() and 255
-                    legacyPixels[y * width + x] = Color.argb(255, r, g, b)
+                    legacyPixels[y * width + x] = if(crop.contains(x,y)) Color.argb(255,r,g,b) else Color.BLACK
                     rawRgb.add(r, g, b)
                     alphaMin = minOf(alphaMin, a)
                     alphaMax = maxOf(alphaMax, a)
@@ -145,7 +146,6 @@ class CaptureFrameProbe : AutoCloseable {
                 absoluteError[2] += db
             }
 
-            val crop = image.cropRect
             val record = JSONObject()
                 .put("schemaVersion", 1)
                 .put("probeId", probeId)
@@ -153,6 +153,7 @@ class CaptureFrameProbe : AutoCloseable {
                 .put("elapsedMs", elapsedMs)
                 .put("imageTimestampNs", image.timestamp)
                 .put("stage", "after_conversion_before_masks")
+                .put("comparisonMethod", "bytewise_RGBA_crop_to_full_display_canvas")
                 .put("attempt", attempts)
                 .put("remaining", remaining - 1)
                 .put("image", JSONObject().put("format", image.format)

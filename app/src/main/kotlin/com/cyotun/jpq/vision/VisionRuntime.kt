@@ -8,7 +8,7 @@ import android.os.SystemClock
 
 /** The model is prepared before consent and used on the same worker, including GPU calls. */
 object VisionRuntime {
-    private val thread=HandlerThread("jpq-vision").apply { start() }
+    private val thread=HandlerThread("jpq-vision",android.os.Process.THREAD_PRIORITY_DISPLAY).apply { start() }
     val handler=Handler(thread.looper)
     private var detector: LocalCardDetector?=null
     private var power: android.os.PowerManager?=null

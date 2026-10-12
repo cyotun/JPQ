@@ -28,16 +28,19 @@ class FrameBitmapConverter: AutoCloseable {
     fun convert(image: Image): Bitmap {
         require(image.format==PixelFormat.RGBA_8888) { "RGBA_8888 capture required" }
         val plane=image.planes.single()
-        return convert(plane.buffer,image.width,image.height,plane.rowStride,plane.pixelStride)
+        val crop=image.cropRect
+        require(crop.left>=0 && crop.top>=0 && crop.right<=image.width && crop.bottom<=image.height)
+        return convert(plane.buffer,crop.width(),crop.height(),plane.rowStride,plane.pixelStride,crop.left,crop.top)
     }
 
-    fun convert(source: ByteBuffer,width: Int,height: Int,rowStride: Int,pixelStride: Int): Bitmap {
+    fun convert(source: ByteBuffer,width: Int,height: Int,rowStride: Int,pixelStride: Int,
+                cropLeft: Int=0,cropTop: Int=0): Bitmap {
         check(Thread.currentThread()===owner) { "Frame converter must stay on its owning thread" }
         check(!closed) { "Frame converter already closed" }
-        require(width>0 && height>0 && pixelStride>=4)
-        val rowPayload=(width-1L)*pixelStride+4L
+        require(width>0 && height>0 && pixelStride>=4 && cropLeft>=0 && cropTop>=0)
+        val rowPayload=(cropLeft+width-1L)*pixelStride+4L
         require(rowStride.toLong()>=rowPayload) { "Capture row stride is too short" }
-        val required=(height-1L)*rowStride+rowPayload
+        val required=(cropTop+height-1L)*rowStride+rowPayload
         require(required<=source.remaining().toLong()) { "Capture plane is truncated" }
         require(width.toLong()*height*4L<=Int.MAX_VALUE) { "Capture dimensions are too large" }
 
@@ -48,12 +51,13 @@ class FrameBitmapConverter: AutoCloseable {
             next
         }
         val data=source.duplicate().order(ByteOrder.LITTLE_ENDIAN)
-        val base=data.position()
+        val base=data.position()+cropTop*rowStride+cropLeft*pixelStride
         val destination=packed?.takeIf { it.capacity()>=target.byteCount } ?: ByteBuffer.allocateDirect(target.byteCount)
             .order(ByteOrder.LITTLE_ENDIAN).also { packed=it }
-        if(pixelStride==4 && rowStride==target.rowBytes && data.remaining()>=target.byteCount) {
+        if(pixelStride==4 && cropLeft==0 && rowStride==target.rowBytes && data.limit()-base>=target.byteCount) {
             // Bulk word transfer followed by one alpha OR; RGB bytes are never unpacked.
             data.limit(base+target.byteCount)
+            data.position(base)
             copyOpaque(data,destination,target)
             return target
         }

@@ -44,5 +44,6 @@ app/src/main/assets/overlay-font-license.txt
 coverage/
 .signing/
 app/src/main/assets/models/
+app/src/main/jniLibs/
 services/updates/release-assets/
 app/src/androidTest/assets/fixtures/

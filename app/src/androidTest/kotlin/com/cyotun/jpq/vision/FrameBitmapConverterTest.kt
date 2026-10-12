@@ -66,6 +66,25 @@ class FrameBitmapConverterTest {
         }
     }
 
+    @Test fun cropOffsetHonorsRowsPixelsAndSourcePosition() {
+        val source=bytes(11,22,33,
+            0,0,0,255, 255,0,0,255, 0,255,0,255, 91,92,93,94,
+            255,255,255,255, 0,0,255,0, 255,255,0,128)
+        source.position(3)
+        FrameBitmapConverter().use { converter ->
+            colors(converter.convert(source,2,1,16,4,1,1),Color.BLUE,Color.YELLOW)
+            assertEquals(3,source.position())
+            colors(converter.convert(source,2,2,16,4,1,0),Color.RED,Color.GREEN,Color.BLUE,Color.YELLOW)
+        }
+    }
+
+    @Test fun cropTopOnTightlyPackedRowsUsesTheOffsetOnTheFastPath() {
+        val source=bytes(255,0,0,255, 0,255,0,255, 0,0,255,0, 255,255,0,128)
+        FrameBitmapConverter().use { converter ->
+            colors(converter.convert(source,2,1,8,4,0,1),Color.BLUE,Color.YELLOW)
+        }
+    }
+
     @Test fun resizedFrameRecyclesOldBitmapAndCloseIsIdempotent() {
         val converter=FrameBitmapConverter()
         val first=converter.convert(bytes(255,0,0,255),1,1,4,4)

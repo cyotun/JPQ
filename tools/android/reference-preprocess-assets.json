@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "abi": "arm64-v8a",
+  "assets": [
+    {
+      "name": "libmnnyolodetector.so",
+      "sha256": "2a047823610c0545a69aa03e21e09d93c26d9c36020e71b8fcbea30c8c06e066",
+      "bytes": 256968
+    },
+    {
+      "name": "libMNN.so",
+      "sha256": "e6a13acc5387647f03e523dfe9dcfa0f75eb6a0f253114e3bbaa3e097fc0f382",
+      "bytes": 2554296
+    },
+    {
+      "name": "libMNN_Express.so",
+      "sha256": "25014efa3b2382b838b02b18c08b856c39cf6786d6dc01e7e87fdad56e108258",
+      "bytes": 750904
+    },
+    {
+      "name": "libMNNOpenCV.so",
+      "sha256": "e3005c8868c9a586580f4cb61e76ca38cca76f1e8c0b1e4038adf2f268b086cd",
+      "bytes": 173336
+    },
+    {
+      "name": "libMNN_CL.so",
+      "sha256": "1ef3cc66c5b68b7995020d6741f0b7309a89febd8b27dda393bcc757c3c73970",
+      "bytes": 1905432
+    },
+    {
+      "name": "libMNN_GL.so",
+      "sha256": "6fbde718db15c242c244f23359895a520c668448577cc6f1f7cc3324d0b29a74",
+      "bytes": 730248
+    },
+    {
+      "name": "libc++_shared.so",
+      "sha256": "92ee8da641b969254cc8723f64aa115d36c8ffa87115e38bc9cb89e3eefee839",
+      "bytes": 1292896
+    },
+    {
+      "name": "packed_320.tflite",
+      "sha256": "c9863253fc04c956de0893df1b9a794973c8f714fb456cfd83bd491a58cfde84",
+      "bytes": 10481226
+    },
+    {
+      "name": "packed_640.tflite",
+      "sha256": "7d00e992bc0b8ddc2ac7b29fab5c4e1c52ec6768f749c7f41b4ff820ec211a21",
+      "bytes": 10632427
+    }
+  ]
+}

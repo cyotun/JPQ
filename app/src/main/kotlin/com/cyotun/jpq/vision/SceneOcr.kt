@@ -9,7 +9,7 @@ import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class OcrLine(val text: String,val box: Rect?)
-data class SceneText(val lines: List<OcrLine>,val timeMs: Long,val width: Int,val height: Int)
+data class SceneText(val lines: List<OcrLine>,val timeMs: Long,val width: Int,val height: Int,val visibilityEpoch: Long=0L)
 /** OCR never blocks card inference. Its owned immutable snapshot survives the next frame. */
 class SceneOcr: AutoCloseable {
     private val recognizer=TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
@@ -18,18 +18,27 @@ class SceneOcr: AutoCloseable {
     @Volatile private var latest: SceneText?=null
     @Volatile private var closed=false
     private var requestedAt=0L
-    fun request(bitmap: Bitmap,now: Long) {
+    fun request(bitmap: Bitmap,now: Long,visibilityEpoch: Long=0L) {
         if(closed || now-requestedAt<250 || !busy.compareAndSet(false,true)) return
         requestedAt=now
         var copy: Bitmap?=null
         try {
-            val owned=bitmap.copy(Bitmap.Config.ARGB_8888,false)
+            val sourceWidth=bitmap.width; val sourceHeight=bitmap.height
+            val scale=minOf(1f,1280f/maxOf(sourceWidth,sourceHeight))
+            val owned=if(scale<1f) Bitmap.createScaledBitmap(bitmap,(sourceWidth*scale).toInt().coerceAtLeast(1),
+                (sourceHeight*scale).toInt().coerceAtLeast(1),true)
+                else bitmap.copy(Bitmap.Config.ARGB_8888,false)
             copy=owned
             recognizer.process(InputImage.fromBitmap(owned,0)).addOnCompleteListener { task ->
                 try {
                     if(task.isSuccessful) {
                         val result=task.result
-                        val text=SceneText(result.textBlocks.flatMap { it.lines }.map { OcrLine(it.text.replace(" ",""),it.boundingBox?.let(::Rect)) },now,owned.width,owned.height)
+                        val sx=sourceWidth.toFloat()/owned.width; val sy=sourceHeight.toFloat()/owned.height
+                        val text=SceneText(result.textBlocks.flatMap { it.lines }.map { line ->
+                            OcrLine(line.text.replace(" ",""),line.boundingBox?.let { b ->
+                                Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
+                            })
+                        },now,sourceWidth,sourceHeight,visibilityEpoch)
                         synchronized(resultLock) { if(!closed) latest=text }
                     }
                 } catch(error: Exception) { android.util.Log.w("JPQVision","ocr_result_unavailable",error) }
@@ -41,8 +50,10 @@ class SceneOcr: AutoCloseable {
             android.util.Log.w("JPQVision","ocr_request_unavailable",error)
         }
     }
-    fun snapshot(width: Int,height: Int,now: Long): SceneText? = synchronized(resultLock) {
-        if(closed) null else latest?.takeIf { it.width==width && it.height==height && now-it.timeMs in 0L..1500L }
+    fun snapshot(width: Int,height: Int,now: Long,visibilityEpoch: Long=0L): SceneText? = synchronized(resultLock) {
+        if(closed) null else latest?.takeIf {
+            it.width==width && it.height==height && it.visibilityEpoch==visibilityEpoch && now-it.timeMs in 0L..1500L
+        }
     }
     override fun close() {
         synchronized(resultLock) {

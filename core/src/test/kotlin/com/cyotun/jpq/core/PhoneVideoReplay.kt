@@ -7,7 +7,7 @@ import java.util.zip.InflaterInputStream
 
 /** Offline replay of model predictions + video pixels. Scene labels are explicitly supplied by the tape. */
 fun main(args: Array<String>) {
-    require(args.size==2) { "Replay tape and output JSON paths required" }
+    require(args.size in 2..3) { "Replay tape, output JSON and optional frame trace paths required" }
     val ledger=RoundLedger(); val evidence=EmptyRegionEvidence()
     var time=0L; var frames=0; var ambiguous=0; var initial=emptyList<Card>()
     var ambiguousSince: Long?=null
@@ -21,6 +21,7 @@ fun main(args: Array<String>) {
         if(snap.phase==RoundPhase.UNAVAILABLE) failures.add("$time:${snap.reason}")
         history.add("{\"timeMs\":$time,\"phase\":${quote(snap.phase.name)},\"remaining\":${snap.remaining?.values?.sum()},\"previous\":${snap.played(Seat.PREVIOUS)},\"opposite\":${snap.played(Seat.OPPOSITE)},\"next\":${snap.played(Seat.NEXT)}}")
     }
+    val trace=if(args.size==3) File(args[2]).bufferedWriter(Charsets.UTF_8) else null
     var pixels=IntArray(0)
     File(args[0]).bufferedReader(Charsets.UTF_8).useLines { rows -> rows.forEach { row ->
         val f=row.split(';',limit=7); require(f.size==7)
@@ -37,6 +38,7 @@ fun main(args: Array<String>) {
         val removed=ledger.currentHand().toMutableList(); val subset=hand.all { removed.remove(it) }
         val owned=assignPlayGroups(partition.table.filter { it.box.cy<.55f },emptySet(),if(subset) removed else emptyList())
         val seen=evidence.evaluate(pixels,width,height,scene,hand.size,owned.seats,ledger.snapshot().roundId)
+        trace?.appendLine("{\"timeMs\":$time,\"scene\":${quote(scene.name)},\"hand\":${cards(hand)},\"phase\":${quote(ledger.snapshot().phase.name)},\"groups\":{${owned.seats.entries.joinToString(",") { (seat,g) -> "${quote(seat.name)}:${cards(g.map { it.card })}" }}},\"empty\":{${seen.entries.joinToString(",") { (seat,e) -> "${quote(seat.name)}:{\"observed\":${e.observed},\"reason\":${quote(e.reason)}}" }}}" + "}")
         if(owned.ambiguous.isNotEmpty() && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)) {
             if(ambiguousSince==null) ambiguousSince=time
             if(time-ambiguousSince!!>1500 && ledger.snapshot().remaining!=null) observer.interrupted("出牌归属无法完整确认，等待下一局")
@@ -48,6 +50,7 @@ fun main(args: Array<String>) {
         }
         frames++
     } }
+    trace?.close()
     val final=latestKnown
     val events=final?.plays?.values?.flatten().orEmpty().sortedBy { it.sequence }
     val encoded="{\"frames\":$frames,\"ambiguousFrames\":$ambiguous,\"initial\":${cards(initial)},\"finalPhase\":${quote(ledger.snapshot().phase.name)},\"lastKnownPhase\":${quote(final?.phase?.name ?: "NONE")},\"remaining\":${final?.remaining?.values?.sum()},\"failures\":[${failures.joinToString(",") { quote(it) }}],\"history\":[${history.joinToString(",")}],\"events\":[${events.joinToString(",") { p -> "{\"id\":${quote(p.eventId)},\"sequence\":${p.sequence},\"seat\":${quote(p.seat.name)},\"cards\":${cards(p.cards)}}" }}]}"

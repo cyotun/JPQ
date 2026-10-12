@@ -13,20 +13,27 @@ import android.graphics.PixelFormat
 import android.os.*
 import android.view.WindowManager
 import com.cyotun.jpq.vision.*
+import com.cyotun.jpq.core.LatestFrameDispatcher
 
 class CaptureService : Service() {
     private var projection: MediaProjection? = null
     private var display: VirtualDisplay? = null
     @Volatile private var reader: ImageReader? = null
     private var worker: Handler? = null
+    private var captureWorker: CaptureWorker?=null
+    private var dispatcher: LatestFrameDispatcher<CapturedFrame>?=null
     private var overlay: OverlayController? = null
     private var visualContext: Context? = null
     private var lastFrame = 0L
-    private var lastFrameError=0L
+    @Volatile private var lastFrameError=0L
     private var lastStartId=0
     private var referenceCapture=true
     @Volatile private var closed = false
     @Volatile private var session = 0L
+    private val sessionGuard=Any()
+    @Volatile private var capturedVisible=true
+    @Volatile private var requestedVisible=true
+    @Volatile private var visibilityEpoch=0L
     @Volatile private var recognizer: FrameRecognizer = AwaitingValidatedAdapter()
     private val main = Handler(Looper.getMainLooper())
     private var callback: MediaProjection.Callback? = null
@@ -34,13 +41,42 @@ class CaptureService : Service() {
         override fun onStop() { if(generation==session && !closed) shutdown("屏幕共享已停止，请重新开始记牌") }
         override fun onCapturedContentResize(width: Int, height: Int) { if(generation==session) resize(width,height) }
         override fun onCapturedContentVisibilityChanged(visible: Boolean) {
-            if (generation==session && !closed && !visible && AppState.ledger.snapshot().remaining != null) {
-                AppState.ledger.invalidate("游戏画面被遮挡，本局无法完整观察")
-                AppState.notifyChanged()
+            synchronized(sessionGuard) {
+                if(generation!=session || closed || visible==requestedVisible) return
+                requestedVisible=visible
+                capturedVisible=false; visibilityEpoch++
+                android.util.Log.i("JPQCapture","content_visible=$visible epoch=$visibilityEpoch")
+                if(visible) {
+                    // Retire buffers queued while content was invisible before accepting
+                    // a new visible epoch. Image timestamps need not share our clock.
+                    restoreVisibility(generation,visibilityEpoch)
+                }
+                if(!visible && AppState.ledger.snapshot().remaining!=null) {
+                    AppState.ledger.invalidate("游戏画面被遮挡，本局无法完整观察")
+                    AppState.notifyChanged()
+                }
             }
         }
     }
     override fun onBind(intent: Intent?) = null
+    private fun restoreVisibility(generation: Long,restoringEpoch: Long) {
+        val capture=captureWorker ?: return
+        val source=reader ?: return
+        capture.handler.post {
+            if(generation!=session || closed || !requestedVisible || restoringEpoch!=visibilityEpoch ||
+                capture!==captureWorker || source!==reader) return@post
+            while(true) {
+                val stale=runCatching { source.acquireLatestImage() }.getOrNull() ?: break
+                stale.close()
+            }
+            synchronized(sessionGuard) {
+                if(generation==session && !closed && requestedVisible && restoringEpoch==visibilityEpoch &&
+                    capture===captureWorker && source===reader) {
+                    visibilityEpoch++; capturedVisible=true
+                }
+            }
+        }
+    }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId=startId
         if (intent?.action == "STOP") { shutdown("记牌已停止"); return START_NOT_STICKY }
@@ -51,6 +87,7 @@ class CaptureService : Service() {
         }
         if (projection != null || intent == null) return START_NOT_STICKY
         closed=false
+        capturedVisible=true; requestedVisible=true; visibilityEpoch=0L
         referenceCapture=getSharedPreferences("jpq-runtime",MODE_PRIVATE).getString("captureProfile","reference")!="adaptive_scaled"
         val generation=++session
         android.util.Log.i("JPQCapture","session_start generation=$generation")
@@ -66,15 +103,33 @@ class CaptureService : Service() {
                 createDisplayContext(deviceDisplay).createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,null)
             } else this
             worker=VisionRuntime.handler
+            captureWorker=CaptureWorker(applicationContext)
+            dispatcher=LatestFrameDispatcher({ worker!!.post(it) },{ frame ->
+                if(generation==session && !closed && capturedVisible && frame.visibilityEpoch==visibilityEpoch && AppState.recognitionReady) {
+                    recognizer.observe(frame)
+                    if(generation==session && !closed) {
+                        AppState.capturedFrames++
+                        if(AppState.capturedFrames % 8L==0L) AppState.notifyChanged()
+                    }
+                }
+            },{ error -> frameFailed(generation,error) })
             worker!!.post {
                 if(generation==session && !closed) try {
                     // Old session observations/close must finish before clearing its ledger.
                     AppState.ledger.waitForNext()
-                    val prepared=TencentRecognizer(this)
-                    if(generation!=session || closed) { prepared.close(); return@post }
-                    recognizer=prepared
-                    AppState.recognitionReady=true; AppState.notifyChanged()
-                    android.util.Log.i("JPQCapture","local_recognizer_ready")
+                    val prepared=TencentRecognizer(this,{ generation==session && !closed && capturedVisible },
+                        { visibilityEpoch },sessionGuard)
+                    // Publish on main, serialized with shutdown. A stopped initialization
+                    // must never overwrite the next session or escape its close chain.
+                    main.post {
+                        if(generation!=session || closed) {
+                            VisionRuntime.handler.post { prepared.close() }
+                        } else {
+                            recognizer=prepared
+                            AppState.recognitionReady=true; AppState.notifyChanged()
+                            android.util.Log.i("JPQCapture","local_recognizer_ready")
+                        }
+                    }
                 } catch(error: Exception) { initializationFailed(generation,error) }
                   catch(error: LinkageError) { initializationFailed(generation,error) }
             }
@@ -101,6 +156,15 @@ class CaptureService : Service() {
         android.util.Log.e("JPQCapture","recognizer_init_failed",error)
         main.post { if(generation==session && !closed) shutdown("本地识别未能准备好，请重新开始") }
     }
+    private fun frameFailed(generation: Long,error: Exception) {
+        val now=SystemClock.elapsedRealtime()
+        if(now-lastFrameError>5000) { lastFrameError=now; android.util.Log.e("JPQCapture","frame_failed",error) }
+        if(generation==session && !closed) {
+            worker?.post {
+                if(generation==session && !closed) { AppState.ledger.invalidate("识别暂时不可用，等待下一局"); AppState.notifyChanged() }
+            }
+        }
+    }
     private fun createForeground() {
         val manager=getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(NotificationChannel("capture","记牌服务",NotificationManager.IMPORTANCE_LOW))
@@ -121,24 +185,27 @@ class CaptureService : Service() {
         val outputHeight=if(referenceCapture) minOf(width,height) else (height*scale).toInt().coerceAtLeast(1)
         AppState.capturedWidth=outputWidth; AppState.capturedHeight=outputHeight
         android.util.Log.i("JPQCapture","source_size=${width}x$height capture_size=${outputWidth}x$outputHeight profile=${if(referenceCapture) "reference" else "adaptive_scaled"}")
+        val capture=checkNotNull(captureWorker)
+        val delivery=checkNotNull(dispatcher)
         return ImageReader.newInstance(outputWidth,outputHeight,PixelFormat.RGBA_8888,3).also { next ->
             next.setOnImageAvailableListener({ source ->
+                val epoch=visibilityEpoch
                 val image=runCatching { source.acquireLatestImage() }.getOrNull() ?: return@setOnImageAvailableListener
                 try {
                     val now=SystemClock.elapsedRealtime()
-                    if(now-lastFrame>=67 && generation==session && source===reader && !closed && AppState.recognitionReady) {
-                        lastFrame=now; recognizer.observe(image)
-                        if(generation==session && !closed) {
-                            AppState.capturedFrames++
-                            if(AppState.capturedFrames % 8L==0L) AppState.notifyChanged()
+                    if(now-lastFrame>=33 && generation==session && source===reader && !closed && capturedVisible && epoch==visibilityEpoch && AppState.recognitionReady) {
+                        lastFrame=now
+                        val masks=listOfNotNull(AppState.barMask,AppState.adjustmentMask).map {
+                            CaptureMask(android.graphics.Rect(it.rectangle),it.screenWidth,it.screenHeight)
                         }
+                        delivery.offer(capture.capture(image,AppState.sourceWidth,AppState.sourceHeight,AppState.adjusting,masks,now).also {
+                            it.visibilityEpoch=epoch
+                        })
                     }
                 } catch (error: Exception) {
-                    val now=SystemClock.elapsedRealtime()
-                    if(now-lastFrameError>5000) { lastFrameError=now; android.util.Log.e("JPQCapture","frame_failed",error) }
-                    if(generation==session && !closed) { AppState.ledger.invalidate("识别暂时不可用，等待下一局"); AppState.notifyChanged() }
+                    frameFailed(generation,error)
                 } finally { image.close() }
-            },worker)
+            },capture.handler)
         }
     }
     private fun resize(width: Int,height: Int) {
@@ -150,7 +217,7 @@ class CaptureService : Service() {
             overlay?.refresh(); return
         }
         // Projection callbacks and teardown run on main. Retire the old reader only
-        // after any image already being observed on the vision worker is released.
+        // after any image already being copied on the capture worker is released.
         var next: ImageReader?=null
         try {
             val old=reader
@@ -158,7 +225,8 @@ class CaptureService : Service() {
             display!!.resize(AppState.capturedWidth,AppState.capturedHeight,resources.configuration.densityDpi)
             display!!.surface=next.surface; reader=next
             old?.setOnImageAvailableListener(null,null)
-            worker?.post { old?.close() }
+            captureWorker?.handler?.post { old?.close() }
+            if(requestedVisible && !capturedVisible) restoreVisibility(session,visibilityEpoch)
             overlay?.refresh()
         } catch (error: Exception) {
             if(next!==reader) next?.close()
@@ -177,22 +245,28 @@ class CaptureService : Service() {
         else android.util.DisplayMetrics().also { wm.defaultDisplay.getRealMetrics(it) }.let { it.widthPixels to it.heightPixels }
     }
     private fun shutdown(message: String) {
-        if(closed) return
-        closed=true; ++session
+        synchronized(sessionGuard) {
+            if(closed) return
+            closed=true; ++session
+            if(AppState.ledger.snapshot().remaining!=null) AppState.ledger.invalidate(message)
+        }
         android.util.Log.i("JPQCapture","session_stop reason=$message")
         AppState.running=false; AppState.recognitionReady=false; AppState.message=message
         com.cyotun.jpq.updates.UpdateManager.scheduleDownload(this)
-        if(AppState.ledger.snapshot().remaining!=null) AppState.ledger.invalidate(message)
         overlay?.close(); overlay=null
         visualContext=null
         callback?.let { projection?.unregisterCallback(it) }; callback=null; display?.release(); display=null
         val previousReader=reader
         previousReader?.setOnImageAvailableListener(null,null); reader=null
+        dispatcher?.close(); dispatcher=null
+        val previousCapture=captureWorker; captureWorker=null
+        previousCapture?.closeAfter {
+            runCatching { previousReader?.close() }.onFailure { android.util.Log.e("JPQCapture","reader_close_failed",it) }
+        }
         projection?.stop(); projection=null
         val previousRecognizer=recognizer
         recognizer=AwaitingValidatedAdapter()
         worker?.post {
-            runCatching { previousReader?.close() }.onFailure { android.util.Log.e("JPQCapture","reader_close_failed",it) }
             runCatching { previousRecognizer.close() }.onFailure { android.util.Log.e("JPQCapture","recognizer_close_failed",it) }
             VisionRuntime.trimWhenIdle()
         }

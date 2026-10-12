@@ -7,5 +7,8 @@ tasks.register<JavaExec>("replayPhoneVideo") {
     mainClass.set("com.cyotun.jpq.core.PhoneVideoReplayKt")
     val tape=providers.gradleProperty("replayTape")
     val output=providers.gradleProperty("replayOutput")
-    doFirst { args(tape.get(),output.get()) }
+    doFirst {
+        args(tape.get(),output.get())
+        providers.gradleProperty("replayTrace").orNull?.let { args(it) }
+    }
 }
