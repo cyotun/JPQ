@@ -5,3 +5,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "JPQ"
 include(":core", ":app")
+include(":phoneProbe")
+project(":phoneProbe").projectDir=file("tools/android/phone-probe")

@@ -43,9 +43,13 @@ class DisplayInteractionTest {
             }.take(27)
             AppState.ledger.begin("display-test",initial)
             val before=AppState.ledger.snapshot()
-            activity=instrument.startActivitySync(Intent(context,MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("page","settings")) as MainActivity
-            instrument.waitForIdleSync()
+            context.startActivity(Intent(context,MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK).putExtra("page","settings"))
+            waitFor(instrument) {
+                activity=androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull()
+                activity!=null
+            }
             fun descendants(view: View): List<View> = listOf(view)+if(view is ViewGroup)
                 (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
             lateinit var switches: List<Switch>

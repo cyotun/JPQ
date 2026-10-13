@@ -16,6 +16,7 @@ class ReferenceRegionPreprocessor(
     handSeed: DoubleArray? = null
 ): AutoCloseable {
     private val handSeed=handSeed?.copyOf()
+    private val exitCache=ReferenceExitRegionCache()
     enum class Route { PACKED_320, PACKED_640, FULL_FALLBACK, NO_ACTIVE }
     data class PackingConfig(
         val effectiveMinSamplePoints: Int = 304,
@@ -69,9 +70,11 @@ class ReferenceRegionPreprocessor(
                     remaining+hand.regions,global.metrics,global.negativeUiRingMatches,global.negativeUiRingScanMs)
             }
             val combined=checkNotNull(result)
-            val plan=plan(combined.regions,source.width,source.height,packingConfig)
+            val retained=NativePreprocessResult(combined.frameWidth,combined.frameHeight,combined.frameIndex,combined.timestampMs,
+                exitCache.merge(timestampMs,combined.regions),combined.metrics,combined.negativeUiRingMatches,combined.negativeUiRingScanMs)
+            val plan=plan(retained.regions,source.width,source.height,packingConfig)
             val packed=plan.manifest?.let { session.composePacked(source,it) }
-            Preparation(combined,plan,packed,handScanMs)
+            Preparation(retained,plan,packed,handScanMs)
         } catch (error: LinkageError) {
             Preparation(result,failure(result,"native_linkage:${error.javaClass.simpleName}"),null)
         } catch (error: Exception) {
@@ -82,8 +85,8 @@ class ReferenceRegionPreprocessor(
     private fun failure(result: NativePreprocessResult?, reason: String) = Plan(Route.FULL_FALLBACK,null,
         result?.regions?.size ?: 0,emptyList(),emptyList(),emptyList(),result?.regions?.map { it.regionId }.orEmpty(),reason)
 
-    fun reset(reason: String) = session.reset(reason)
-    override fun close() = session.close()
+    fun reset(reason: String) { exitCache.clear(); session.reset(reason) }
+    override fun close() { exitCache.clear(); session.close() }
 
     companion object {
         private const val MIN_GLOBAL_SCALE=.25

@@ -14,7 +14,9 @@ fun partitionGuandanHand(glyphs: List<PlayGlyph>): HandPartition {
         val found=rest.filter { p -> frontier.any { q ->
             val dy=q.box.top-p.box.bottom
             val overlap=if(p.card.rank.isJoker || q.card.rank.isJoker) height*.75f else height*.2f
-            p.box.cy<q.box.cy && dy>=-overlap && dy<height*1.5f && kotlin.math.abs(p.box.cx-q.box.cx)<width*.65f
+            // Actual stacked/raised rows have a short glyph gap. The larger former
+            // gap could bridge a separate central presentation into the own-hand chain.
+            p.box.cy<q.box.cy && dy>=-overlap && dy<height*.6f && kotlin.math.abs(p.box.cx-q.box.cx)<width*.65f
         } }
         hand.addAll(found); rest.removeAll(found.toSet()); frontier=found
     }

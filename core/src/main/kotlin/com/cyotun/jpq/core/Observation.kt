@@ -21,7 +21,8 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         fun clear() { key=""; count=0; lastVoteTime=-1 }
         fun duration(time: Long)=if(count==0) 0 else time-first
     }
-    private class Presentation(var cards: List<Card>,var glyphs: List<PlayGlyph>,var lastSeen: Long,var eventId: String?=null)
+    private class Presentation(var cards: List<Card>,var glyphs: List<PlayGlyph>,var lastSeen: Long,var eventId: String?=null,
+                               var unobservedSince: Long?=null)
     private val handVote=Vote(3)
     private val tributeVote=Vote(2)
     private val playVotes=Seat.entries.associateWith { Vote(4) }
@@ -93,8 +94,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         if(locked || ledger.snapshot().phase==RoundPhase.UNAVAILABLE) return
         if((frame.scene==TableScene.TEAMMATE || frame.selfFinished) && ledger.snapshot().phase==RoundPhase.ACTIVE) { ledger.selfFinished(); emit() }
         if(ledger.snapshot().phase==RoundPhase.SELF_FINISHED &&
-            listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).count { ledger.snapshot().played(it)==27 }>=2) {
-            // Three players have visibly finished. The last player's revealed hand is not a play.
+            (ledger.snapshot().played(Seat.OPPOSITE)==27 ||
+            listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).count { ledger.snapshot().played(it)==27 }>=2)) {
+            // Both teammates have finished, or three players have finished. The
+            // remaining players' revealed cards are not new table presentations.
             ledger.finish(); emit(); ledger.waitForNext(); lastRound=null; emit()
             armed=false; baselineWindow=false; tribute=false; freshDeal=false; clearCandidates(); return
         }
@@ -143,7 +146,19 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             }
             val p=frame.plays[seat]
             if(p==null || !p.regionObserved || p.confidence<.65f) {
+                // A low score with a visible region may recover its known geometry.
+                // A blind region cannot establish that an expansion is the old play.
+                presentations[seat]?.let { current ->
+                    if(p==null || !p.regionObserved) {
+                        if(current.unobservedSince==null) current.unobservedSince=frame.timeMs
+                        if(frame.timeMs-current.unobservedSince!!>500) current.glyphs=emptyList()
+                    } else current.unobservedSince=null
+                }
                 playVotes[seat]!!.clear(); emptyVotes[seat]!!.clear(); previousGlyphs[seat]=emptyList(); empty[seat]=0; continue
+            }
+            presentations[seat]?.let { current ->
+                if(current.unobservedSince!=null && frame.timeMs-current.unobservedSince!!>500) current.glyphs=emptyList()
+                current.unobservedSince=null
             }
             if(p.cards.isEmpty()) {
                 playVotes[seat]!!.clear(); empty[seat]=empty[seat]!!+1
@@ -156,7 +171,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             val presentation=presentations[seat]
             val geometric=hasGeometry(p)
             val trackedPresentation=geometric && presentation!=null && presentation.glyphs.isNotEmpty() &&
-                frame.timeMs-presentation.lastSeen<=500 && containsTracked(p.glyphs,presentation.glyphs)
+                frame.timeMs-presentation.lastSeen<=1500 && containsTracked(p.glyphs,presentation.glyphs)
             if(trackedPresentation) presentation!!.lastSeen=frame.timeMs
             val previous=previousGlyphs[seat]!!
             if(geometric && key(previous.map { it.card })==k && !containsTracked(p.glyphs,previous)) playVotes[seat]!!.clear()

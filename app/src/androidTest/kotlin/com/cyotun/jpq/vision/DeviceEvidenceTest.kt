@@ -26,7 +26,9 @@ class DeviceEvidenceTest {
         if(arguments.getString("exportEvidence")=="true") {
             val intent=android.content.Intent(context,com.cyotun.jpq.MainActivity::class.java)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("page","home")
-            InstrumentationRegistry.getInstrumentation().startActivitySync(intent)
+            // Export needs no UI result. Waiting for AndroidX's activity-idle
+            // monitor can time out on HyperOS task transitions before any IO starts.
+            context.startActivity(intent)
         }
         val output=File(context.getExternalFilesDir(null),"phone-preflight").apply { mkdirs() }
         val store=ConfigStore(context)

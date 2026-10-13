@@ -290,7 +290,7 @@ class ReferenceCardDetector(
 
     companion object {
         /** Qualification applies only to the explicit eight-fixture CPU test, not whole games. */
-        const val PIPELINE_VERSION = "reference-native-hand-coverage-pack640-20261013-v3"
+        const val PIPELINE_VERSION = "reference-native-hand-exit-coverage-pack640-20261014-v5"
         private const val TAG = "JPQReference"
     }
 }

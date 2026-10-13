@@ -21,6 +21,8 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             ReferenceCardDetector(context,detector) else null
     }
     private var referenceEpoch: Long?=null
+    private val ownExitTracker=OwnExitPresentationTracker()
+    private var referenceRoundId: String?=null
     private val ocr=SceneOcr()
     private val trace=SessionTrace(context)
     private val evidenceIo=java.util.concurrent.Executors.newSingleThreadExecutor()
@@ -30,6 +32,10 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     private val repository=RoundRepository(context)
     private var tracedEvents=emptyMap<String,PlayEvent>()
     private val observer=RoundObserver(AppState.ledger) { snapshot ->
+        if(snapshot.roundId!=referenceRoundId) {
+            referenceDetector?.reset("round_boundary")
+            referenceRoundId=snapshot.roundId
+        }
         runCatching { repository.save(AppState.ledger) }.onFailure { android.util.Log.w("JPQTrace","round_checkpoint_unavailable") }
         val events=snapshot.plays.values.flatten()
         val changes=events.filter { tracedEvents[it.eventId]!=it }
@@ -96,7 +102,12 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             val text=ocr.snapshot(captured.width,captured.height,start,activeVisibilityEpoch)
             val tableLines=text?.lines.orEmpty().filter { (it.box?.centerY() ?: 0)>captured.height*.12f }
             val hints=text?.lines.orEmpty().map { line -> SceneHint(line.text,line.box?.let { b -> GlyphBox(b.left.toFloat()/captured.width,b.top.toFloat()/captured.height,b.right.toFloat()/captured.width,b.bottom.toFloat()/captured.height) }) }
-            val scene=tencentScene(hints,detections.isNotEmpty(),detections.any { it.box.centerY()>.55f })
+            val detectedScene=tencentScene(hints,detections.isNotEmpty(),detections.any { it.box.centerY()>.55f })
+            val round=AppState.ledger.snapshot()
+            // Own completion is a round state, not a label that must be re-read
+            // on every frame. Teammate hand pixels never become our hand again.
+            val scene=continueTeammateScene(detectedScene,round.phase)
+            val ownExitPresentation=ownExitTracker.prepare(start,scene,round.roundId)
             val glyphs=detections.map { p -> PlayGlyph(p.card,p.confidence,GlyphBox(p.box.left,p.box.top,p.box.right,p.box.bottom)) }
             val partition=partitionGuandanHand(glyphs)
             val hand=partition.hand.map { it.card }
@@ -107,12 +118,19 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             }.toSet()
             val removed=AppState.ledger.currentHand().toMutableList()
             val subset=hand.all { removed.remove(it) }
-            val ownership=assignPlayGroups(partition.table.filter { it.box.cy<.55f },passing,if(subset && scene!=TableScene.TEAMMATE && !captured.adjusting) removed else emptyList(),scene==TableScene.TEAMMATE)
+            val ownership=assignPlayGroups(partition.table.filter { it.box.cy<.55f },passing,if(subset && scene!=TableScene.TEAMMATE && !captured.adjusting) removed else emptyList(),scene==TableScene.TEAMMATE,
+                if(scene==TableScene.TEAMMATE) ownExitPresentation else emptyList())
+            val selfGlyphs=ownership.seats.getValue(Seat.SELF)
             val evidenceStart=SystemClock.elapsedRealtime()
             val emptyEvidence=emptyGuard.evaluate(bitmap,scene,hand.size,ownership.seats,AppState.ledger.snapshot().roundId,normalizedMasks)
+            if(!captured.adjusting && emptyEvidence.getValue(Seat.SELF).observed)
+                ownExitTracker.observe(start,round.phase,AppState.ledger.currentHand(),hand,selfGlyphs)
+            ownExitTracker.emptySurface(emptyEvidence.getValue(Seat.SELF).reason=="table_surface_visible" &&
+                emptyEvidence.getValue(Seat.SELF).observed,selfGlyphs.isNotEmpty())
             fun rounded(value: Float)=kotlin.math.round(value*10000f)/10000f
             trace.write(JSONObject().put("type","frame").put("frame",frameNumber).put("imageTimestampNs",captured.imageTimestampNs).put("elapsedMs",start)
                 .put("width",captured.width).put("height",captured.height).put("scene",scene.name).put("backend",referenceDetector?.backend ?: detector.backend)
+                .put("detectedScene",detectedScene.name)
                 .put("sourceWidth",captured.sourceWidth).put("sourceHeight",captured.sourceHeight)
                 .put("convertMs",captured.preparedElapsedMs-start).put("queueMs",converted-captured.preparedElapsedMs)
                 .put("preprocessMs",referenceDetector?.preprocessMs ?: detector.preprocessMs).put("inferenceMs",referenceDetector?.inferenceMs ?: detector.inferenceMs).put("decodeMs",referenceDetector?.decodeMs ?: detector.decodeMs)

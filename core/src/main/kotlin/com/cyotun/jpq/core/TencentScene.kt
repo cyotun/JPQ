@@ -2,6 +2,10 @@ package com.cyotun.jpq.core
 
 data class SceneHint(val text: String,val box: GlyphBox?)
 
+/** Completion persists through an OCR gap; new-round/result scenes keep their boundaries. */
+fun continueTeammateScene(detected: TableScene,phase: RoundPhase)=
+    if(phase==RoundPhase.SELF_FINISHED && detected==TableScene.TABLE) TableScene.TEAMMATE else detected
+
 /** Only completed-player UI slots, never nickname lines or an unpositioned OCR word. */
 private fun completionSeat(box: GlyphBox?): Seat? {
     val b=box ?: return null
