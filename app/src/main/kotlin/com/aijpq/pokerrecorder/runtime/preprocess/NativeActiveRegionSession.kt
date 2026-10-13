@@ -60,6 +60,22 @@ class NativeActiveRegionSession: AutoCloseable {
         }
     }
 
+    /** Original special-area scan uses the sampling state of this exact update. */
+    @Synchronized
+    fun detectHandRegions(frameIndex: Long, timestampMs: Long, relativeRect: DoubleArray): NativePreprocessResult {
+        check(handle != 0L && lastSource != null) { "A matching native update is required" }
+        require(frameIndex == lastFrameIndex && timestampMs == lastTimestampMs)
+        require(relativeRect.size == 4 && relativeRect.all { it.isFinite() })
+        val (x,y,w,h)=relativeRect
+        require(x >= 0 && y >= 0 && w > 0 && h > 0 && x+w <= 1 && y+h <= 1)
+        val result=nativeDetectSpecialAreaRegions(handle,frameIndex,timestampMs,
+            "dealer_hand","hand_active_region_1fps",relativeRect)
+        val source=checkNotNull(lastSource)
+        check(result.frameWidth == source.width && result.frameHeight == source.height)
+        check(result.frameIndex == frameIndex && result.timestampMs == timestampMs)
+        return result
+    }
+
     @Synchronized
     fun reset(reason: String) {
         check(handle != 0L) { "Reference native session is closed" }
@@ -73,7 +89,7 @@ class NativeActiveRegionSession: AutoCloseable {
         if(previous != 0L) nativeRelease(previous)
     }
 
-    // Unused detect* branches are deliberately absent: their DTOs are not integrated.
+    // Colour-bootstrap and white-connection branches need additional audited DTOs.
     private external fun nativeCreate(): Long
     private external fun nativeUpdate(handle: Long, source: Bitmap, frameIndex: Long, timestampMs: Long,
         sampleLongSidePoints: Int, holdSeconds: Double, suppressionPropagationSeconds: Double,
@@ -84,6 +100,8 @@ class NativeActiveRegionSession: AutoCloseable {
         excludedRects: DoubleArray, activeRules: IntArray, negativeRingRuleIds: Array<String>,
         negativeRingColors: IntArray): NativePreprocessResult
     private external fun nativeComposePacked(handle: Long, source: Bitmap, target: Bitmap, manifest: PackingManifest): PreprocessMetrics
+    private external fun nativeDetectSpecialAreaRegions(handle: Long,frameIndex: Long,timestampMs: Long,
+        areaType: String,source: String,relativeRect: DoubleArray): NativePreprocessResult
     private external fun nativeReset(handle: Long, reason: String)
     private external fun nativeRelease(handle: Long)
 }

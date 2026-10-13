@@ -21,6 +21,13 @@ class DeviceEvidenceTest {
         assumeTrue(arguments.getString("exportEvidence")=="true" || arguments.getString("armCaptureProbe")=="true")
         check(!AppState.running) { "Stop capture after the user confirms the game ended" }
         val context=InstrumentationRegistry.getInstrumentation().targetContext
+        // Keep the explicitly requested exporter visible; some OEMs suspend large
+        // background file exports even while instrumentation remains registered.
+        if(arguments.getString("exportEvidence")=="true") {
+            val intent=android.content.Intent(context,com.cyotun.jpq.MainActivity::class.java)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("page","home")
+            InstrumentationRegistry.getInstrumentation().startActivitySync(intent)
+        }
         val output=File(context.getExternalFilesDir(null),"phone-preflight").apply { mkdirs() }
         val store=ConfigStore(context)
         File(output,"display-before.json").writeText(store.export())
@@ -34,6 +41,16 @@ class DeviceEvidenceTest {
         }
         if(arguments.getString("armCaptureProbe")=="true")
             check(context.getSharedPreferences("jpq-diagnostics",0).edit().putBoolean("enabled",true).putInt("captureProbeRemaining",3).commit())
+        // Explicit local test selection only. The operator must first review the
+        // fixture and continuous replay reports; this exporter is not certification.
+        arguments.getString("enableReferencePipeline")?.let { enabled ->
+            require(enabled in setOf("true","false"))
+            val edit=context.getSharedPreferences("jpq-runtime",0).edit()
+            if(enabled=="true") edit.putString("referencePipelineFingerprint",android.os.Build.FINGERPRINT)
+                .putString("referencePipelineVersion",ReferenceCardDetector.PIPELINE_VERSION)
+            else edit.remove("referencePipelineFingerprint").remove("referencePipelineVersion")
+            check(edit.commit())
+        }
         arguments.getString("captureProfile")?.let { profile ->
             require(profile in setOf("reference","adaptive_scaled"))
             check(context.getSharedPreferences("jpq-runtime",0).edit().putString("captureProfile",profile).commit())

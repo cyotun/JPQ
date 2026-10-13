@@ -6,13 +6,16 @@ import com.aijpq.pokerrecorder.runtime.preprocess.*
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.ceil
 
 /** Opt-in native update/compose adapter. No existing recognition path constructs this. */
 class ReferenceRegionPreprocessor(
     private val session: NativeActiveRegionSession,
     private val nativeConfig: NativePreprocessConfig = NativePreprocessConfig(),
-    private val packingConfig: PackingConfig = PackingConfig()
+    private val packingConfig: PackingConfig = PackingConfig(),
+    handSeed: DoubleArray? = null
 ): AutoCloseable {
+    private val handSeed=handSeed?.copyOf()
     enum class Route { PACKED_320, PACKED_640, FULL_FALLBACK, NO_ACTIVE }
     data class PackingConfig(
         val effectiveMinSamplePoints: Int = 304,
@@ -21,17 +24,22 @@ class ReferenceRegionPreprocessor(
         val tileGap: Int = 8,
         val allowCompact320: Boolean = false,
         val overlaySplit: Boolean = true,
-        val overlapPx: Int = 48
+        val overlapPx: Int = 48,
+        val maxRoiScale: Double = 2.0
     )
+    data class ScaleAttempt(val canvasSize: Int, val minimumScale: Double,
+        val extraDownscale: Boolean, val accepted: Boolean, val reason: String?)
     data class Plan(
         val route: Route, val manifest: PackingManifest?, val inputRegionCount: Int,
         val acceptedRegionIds: List<String>, val filteredRegionIds: List<String>,
         val invalidRegionIds: List<String>, val overflowRegionIds: List<String>,
-        val reason: String?, val variant: String = "reference_shelf_subset"
+        val reason: String?, val variant: String = "reference_java_scale_search",
+        val scaleAttempts: List<ScaleAttempt> = emptyList()
     ) {
         val requiresFallback: Boolean get() = route == Route.FULL_FALLBACK
     }
-    data class Preparation(val native: NativePreprocessResult?, val plan: Plan, val packed: PackedFrame?): AutoCloseable {
+    data class Preparation(val native: NativePreprocessResult?, val plan: Plan, val packed: PackedFrame?,
+                           val specialHandScanMs: Double = 0.0): AutoCloseable {
         override fun close() { packed?.close() }
     }
     data class ProjectedDetection(val detection: CardDetection, val tile: PackedTile)
@@ -44,9 +52,26 @@ class ReferenceRegionPreprocessor(
         var result: NativePreprocessResult? = null
         return try {
             result=session.update(source,frameIndex,timestampMs,nativeConfig)
-            val plan=plan(result.regions,source.width,source.height,packingConfig)
+            var handScanMs=0.0
+            handSeed?.let { seed ->
+                // The original native scan follows white components beyond the seed,
+                // preserving tall stacked cards that global active regions can miss.
+                // Scan this frame rather than reusing a one-second-old hand observation.
+                val hand=session.detectHandRegions(frameIndex,timestampMs,seed)
+                handScanMs=hand.metrics.totalMs
+                val effectiveHand=hand.regions.filter { it.samplePointCount>=packingConfig.effectiveMinSamplePoints }
+                val global=checkNotNull(result)
+                val remaining=global.regions.filterNot { normal -> effectiveHand.any { special ->
+                    val a=normal.bbox; val b=special.bbox
+                    b.left<=a.left && b.top<=a.top && b.right>=a.right && b.bottom>=a.bottom
+                } }
+                result=NativePreprocessResult(global.frameWidth,global.frameHeight,global.frameIndex,global.timestampMs,
+                    remaining+hand.regions,global.metrics,global.negativeUiRingMatches,global.negativeUiRingScanMs)
+            }
+            val combined=checkNotNull(result)
+            val plan=plan(combined.regions,source.width,source.height,packingConfig)
             val packed=plan.manifest?.let { session.composePacked(source,it) }
-            Preparation(result,plan,packed)
+            Preparation(combined,plan,packed,handScanMs)
         } catch (error: LinkageError) {
             Preparation(result,failure(result,"native_linkage:${error.javaClass.simpleName}"),null)
         } catch (error: Exception) {
@@ -61,11 +86,17 @@ class ReferenceRegionPreprocessor(
     override fun close() = session.close()
 
     companion object {
+        private const val MIN_GLOBAL_SCALE=.25
+        private const val SCALE_EPSILON=1e-6
+        private const val SCALE_SEARCH_STEPS=12
         private data class SourceTile(
             val region: ActiveRegion, val box: IntBox, val splitGroup: String? = null,
             val part: String? = null, val overlayGroup: String? = null,
-            val overlayIndex: Int? = null, val overlayCount: Int? = null, val overlap: Int? = null
+            val overlayIndex: Int? = null, val overlayCount: Int? = null, val overlap: Int? = null,
+            val tileId: String = ""
         )
+        private data class ScaledTile(val source: SourceTile,val scale: Double,val width: Int,val height: Int)
+        private data class CanvasAttempt(val manifest: PackingManifest?,val summary: ScaleAttempt)
 
         /** Pure geometry. It can be exercised without constructing/loading the native session. */
         fun plan(regions: List<ActiveRegion>, sourceWidth: Int, sourceHeight: Int,
@@ -73,6 +104,7 @@ class ReferenceRegionPreprocessor(
             require(sourceWidth > 0 && sourceHeight > 0)
             require(config.effectiveMinSamplePoints >= 0 && config.sourcePadding >= 0)
             require(config.outerPadding in 0..64 && config.tileGap in 0..64 && config.overlapPx >= 0)
+            require(config.maxRoiScale.isFinite() && config.maxRoiScale > 0)
             // Lua uses the area>=400 source-pixel fallback only when sample_point_count is
             // absent/non-numeric. Native snapshots always expose an int samplePointCount,
             // and the original Java post-filter compares that count alone (not an OR).
@@ -85,20 +117,32 @@ class ReferenceRegionPreprocessor(
                     b.right <= b.left || b.bottom <= b.top
             }.map { it.regionId }.toMutableList()
             invalid.addAll(accepted.groupBy { it.regionId }.filterValues { it.size > 1 }.keys)
+            val attempts=ArrayList<ScaleAttempt>()
             fun outcome(route: Route, manifest: PackingManifest?, reason: String?, overflow: List<String> = emptyList()) =
-                Plan(route,manifest,regions.size,accepted.map { it.regionId },filtered.map { it.regionId },invalid.distinct(),overflow.distinct(),reason)
+                Plan(route,manifest,regions.size,accepted.map { it.regionId },filtered.map { it.regionId },invalid.distinct(),overflow.distinct(),reason,
+                    scaleAttempts=attempts.toList())
             if(invalid.isNotEmpty()) return outcome(Route.FULL_FALLBACK,null,"invalid_source_regions")
             if(accepted.isEmpty()) return outcome(Route.NO_ACTIVE,null,"no_effective_regions")
             val canonical=canonicalFrame(sourceWidth,sourceHeight)
             val tiles=accepted.flatMap { split(it,sourceWidth,sourceHeight,config) }
+                .mapIndexed { index,tile -> tile.copy(tileId="tile-$index") }
             if(tiles.any { it.box.width <= 0 || it.box.height <= 0 })
                 return outcome(Route.FULL_FALLBACK,null,"invalid_split_geometry",accepted.map { it.regionId })
-            // Prove complete placement at 640 first; never drop a tile to make a canvas fit.
-            val large=layout(tiles,640,canonical,config)
+            if(!coversExpandedRegions(tiles,accepted,sourceWidth,sourceHeight,config))
+                return outcome(Route.FULL_FALLBACK,null,"split_coverage_gap",accepted.map { it.regionId })
+            // Keep the explicit 640 preference. Each attempt restores the original Java
+            // per-tile scale bounds, ceil dimensions, orderings and 12-step ratio search.
+            fun attempt(canvas: Int,extra: Boolean): PackingManifest? {
+                val result=evaluateCanvas(tiles,canvas,canonical,config,extra)
+                attempts.add(result.summary)
+                return result.manifest
+            }
+            val normal640=attempt(640,false)
+            val compact=if(config.allowCompact320 && normal640 != null) attempt(320,false) else null
+            // The original planner permits the below-canonical search only at 640,
+            // and never below .25. It retains every source tile throughout the search.
+            val manifest=compact ?: normal640 ?: attempt(640,true)
                 ?: return outcome(Route.FULL_FALLBACK,null,"packing_overflow_640",accepted.map { it.regionId })
-            // The 320 attempt uses exactly the same source scale, without extra downsampling.
-            val compact=if(config.allowCompact320) layout(tiles,320,canonical,config) else null
-            val manifest=compact ?: large
             val represented=manifest.tiles.map { it.sourceRegionId }.toSet()
             val missing=accepted.map { it.regionId }.filter { it !in represented }
             if(missing.isNotEmpty()) return outcome(Route.FULL_FALLBACK,null,"packing_missing_regions",missing)
@@ -114,11 +158,30 @@ class ReferenceRegionPreprocessor(
                 fit,max(.25,fit),fit < .25)
         }
 
-        private fun split(region: ActiveRegion,width: Int,height: Int,config: PackingConfig): List<SourceTile> {
+        private fun expandedBox(region: ActiveRegion,width: Int,height: Int,config: PackingConfig): IntBox {
             val b=region.bbox; val p=config.sourcePadding.toLong()
-            val box=IntBox((b.left.toLong()-p).coerceAtLeast(0).toInt(),(b.top.toLong()-p).coerceAtLeast(0).toInt(),
+            return IntBox((b.left.toLong()-p).coerceAtLeast(0).toInt(),(b.top.toLong()-p).coerceAtLeast(0).toInt(),
                 (b.right.toLong()+p).coerceAtMost(width.toLong()).toInt(),(b.bottom.toLong()+p).coerceAtMost(height.toLong()).toInt())
+        }
+
+        private fun coversExpandedRegions(tiles: List<SourceTile>,regions: List<ActiveRegion>,width: Int,height: Int,
+                                          config: PackingConfig): Boolean = regions.all { region ->
+            val expected=expandedBox(region,width,height,config)
+            val parts=tiles.filter { it.region.regionId == region.regionId }.map { it.box }.sortedBy { it.left }
+            var right=expected.left
+            parts.isNotEmpty() && parts.all { part ->
+                val valid=part.top == expected.top && part.bottom == expected.bottom &&
+                    part.left >= expected.left && part.right <= expected.right && part.left <= right
+                right=max(right,part.right)
+                valid
+            } && right == expected.right
+        }
+
+        private fun split(region: ActiveRegion,width: Int,height: Int,config: PackingConfig): List<SourceTile> {
+            val box=expandedBox(region,width,height,config)
             if(!config.overlaySplit) return listOf(SourceTile(region,box))
+            // These are original explicit special-area markers; position alone never
+            // promotes a global active region to dealer_hand.
             val hand=region.source == "hand_active_region_1fps" || region.areaType == "dealer_hand"
             val aspect=box.width.toDouble()/box.height
             if(aspect < (if(hand) 2.0 else 4.0) || box.width.toDouble()/width < (if(hand) .2 else .45))
@@ -136,33 +199,68 @@ class ReferenceRegionPreprocessor(
             }
         }
 
-        /** Audited shelf placement with several safe orderings; no extra scale search/upscaling. */
-        private fun layout(source: List<SourceTile>,canvas: Int,canonical: CanonicalPackingFrame,config: PackingConfig): PackingManifest? {
-            val orderings=listOf(source,source.sortedWith(compareByDescending<SourceTile> { it.box.height }.thenByDescending { it.box.width }),
-                source.sortedByDescending { it.box.area },source.sortedByDescending { it.box.width })
+        /** PackedRegionPlanner.evaluateCanvas: separate maximum scale for every tile. */
+        private fun evaluateCanvas(source: List<SourceTile>,canvas: Int,canonical: CanonicalPackingFrame,
+                                   config: PackingConfig,extraDownscale: Boolean): CanvasAttempt {
+            val minimum=if(extraDownscale) MIN_GLOBAL_SCALE else canonical.scale
+            fun rejected(reason: String)=CanvasAttempt(null,ScaleAttempt(canvas,minimum,extraDownscale,false,reason))
+            val inner=canvas-2*config.outerPadding
+            if(inner <= 0) return rejected("invalid_canvas")
+            val sourceCap=max(SCALE_EPSILON,min(1.0,config.maxRoiScale))
+            val upper=source.map { tile -> max(SCALE_EPSILON,min(sourceCap,
+                min(inner.toDouble()/max(1,tile.box.width),inner.toDouble()/max(1,tile.box.height)))) }
+            if(upper.any { it+SCALE_EPSILON < minimum })
+                return rejected(if(extraDownscale) "tile_below_min_scale" else "requires_below_canonical_scale")
+            var best=layoutAtRatio(source,upper,minimum,0.0,canvas,canonical,config,extraDownscale)
+                ?: return rejected(if(extraDownscale) "layout_overflow" else "requires_below_canonical_scale")
+            var low=0.0; var high=1.0
+            repeat(SCALE_SEARCH_STEPS) {
+                val ratio=(low+high)/2
+                val candidate=layoutAtRatio(source,upper,minimum,ratio,canvas,canonical,config,extraDownscale)
+                if(candidate == null) high=ratio else { low=ratio; best=candidate }
+            }
+            val full=layoutAtRatio(source,upper,minimum,1.0,canvas,canonical,config,extraDownscale)
+            return CanvasAttempt(full ?: best,ScaleAttempt(canvas,minimum,extraDownscale,true,null))
+        }
+
+        private fun layoutAtRatio(source: List<SourceTile>,upper: List<Double>,minimum: Double,ratio: Double,
+                                  canvas: Int,canonical: CanonicalPackingFrame,config: PackingConfig,
+                                  extraDownscale: Boolean): PackingManifest? {
+            val scaled=source.mapIndexed { index,tile ->
+                val scale=minimum+(upper[index]-minimum)*ratio.coerceIn(0.0,1.0)
+                ScaledTile(tile,scale,ceil(max(1,tile.box.width)*scale).toInt().coerceAtLeast(1),
+                    ceil(max(1,tile.box.height)*scale).toInt().coerceAtLeast(1))
+            }
+            // Original orderings are descending packed area, longest side, width, height.
+            val orderings=listOf(scaled.sortedByDescending { it.width.toLong()*it.height },
+                scaled.sortedByDescending { max(it.width,it.height) },scaled.sortedByDescending { it.width },
+                scaled.sortedByDescending { it.height }).distinct()
             val candidates=orderings.mapNotNull { order ->
                 var x=config.outerPadding; var y=config.outerPadding; var rowHeight=0
                 val packed=ArrayList<PackedTile>()
-                for((index,tile) in order.withIndex()) {
-                    val w=(tile.box.width*canonical.scale).roundToInt().coerceAtLeast(1)
-                    val h=(tile.box.height*canonical.scale).roundToInt().coerceAtLeast(1)
+                for(scaledTile in order) {
+                    val tile=scaledTile.source; val w=scaledTile.width; val h=scaledTile.height
                     if(w > canvas-2*config.outerPadding || h > canvas-2*config.outerPadding) return@mapNotNull null
                     if(x+w > canvas-config.outerPadding && x > config.outerPadding) {
                         x=config.outerPadding; y+=rowHeight+config.tileGap; rowHeight=0
                     }
                     if(y+h > canvas-config.outerPadding) return@mapNotNull null
                     val r=tile.region
-                    packed.add(PackedTile("tile-$index",r.regionId,tile.box,IntBox(x,y,x+w,y+h),canonical.scale,
+                    packed.add(PackedTile(tile.tileId,r.regionId,tile.box,IntBox(x,y,x+w,y+h),scaledTile.scale,
                         tile.splitGroup,tile.part,r.trackId,r.recordState,r.source,r.areaType,r.observationId,
                         tile.overlayGroup,tile.overlayIndex,tile.overlayCount,tile.overlap))
                     x+=w+config.tileGap; rowHeight=max(rowHeight,h)
                 }
                 val bounds=IntBox(packed.minOf { it.packedBBox.left },packed.minOf { it.packedBBox.top },
                     packed.maxOf { it.packedBBox.right },packed.maxOf { it.packedBBox.bottom })
-                PackingManifest(canvas,packed,canonical.scale,"canonical_frame_fit",canonical,bounds,
+                val mode=if(extraDownscale) "canonical_extra_downscale" else if(canonical.scale >= 1.0) "original" else "canonical_frame_fit"
+                PackingManifest(canvas,packed,packed.minOf { it.scale },mode,canonical,bounds,
                     packed.sumOf { it.packedBBox.area.toLong() }.toDouble()/(canvas.toLong()*canvas))
             }
-            return candidates.minByOrNull { it.layoutBounds!!.area }
+            // Original compact score prioritizes used height, then width, then area.
+            return candidates.minWithOrNull(compareBy<PackingManifest> {
+                it.layoutBounds!!.height.toLong()*canvas+it.layoutBounds!!.width
+            }.thenBy { it.layoutBounds!!.area })
         }
 
         /** Detections must already be normalized to the packed Bitmap, after model letterbox reversal. */

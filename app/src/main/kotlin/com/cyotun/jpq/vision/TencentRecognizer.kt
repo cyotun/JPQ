@@ -15,6 +15,12 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     private val diagnosticFolder=java.io.File(context.filesDir,"diagnostic")
     private var lastDiagnostic=0L
     private val detector=VisionRuntime.getDetector(context)
+    private val referenceDetector=context.getSharedPreferences("jpq-runtime",Context.MODE_PRIVATE).let { prefs ->
+        if(prefs.getString("referencePipelineFingerprint","")==android.os.Build.FINGERPRINT &&
+            prefs.getString("referencePipelineVersion","")==ReferenceCardDetector.PIPELINE_VERSION)
+            ReferenceCardDetector(context,detector) else null
+    }
+    private var referenceEpoch: Long?=null
     private val ocr=SceneOcr()
     private val trace=SessionTrace(context)
     private val evidenceIo=java.util.concurrent.Executors.newSingleThreadExecutor()
@@ -80,7 +86,10 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         val normalizedMasks=captured.masks
         try {
             val converted=SystemClock.elapsedRealtime()
-            val rawDetections=detector.detect(bitmap)
+            referenceDetector?.let { prepared ->
+                if(referenceEpoch!=activeVisibilityEpoch) { prepared.reset("visibility_epoch"); referenceEpoch=activeVisibilityEpoch }
+            }
+            val rawDetections=referenceDetector?.detect(bitmap,start) ?: detector.detect(bitmap)
             val detections=rawDetections.filter { it.box.centerY()>.13f && it.box.centerX() in .10f.. .88f && it.box.width()<.12f && it.box.height()>.02f }
             captured.probeFolder?.let { saveProbeInput(it,bitmap,captured.imageTimestampNs,rawDetections,detections.size) }
             ocr.request(bitmap,start,activeVisibilityEpoch)
@@ -103,12 +112,17 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             val emptyEvidence=emptyGuard.evaluate(bitmap,scene,hand.size,ownership.seats,AppState.ledger.snapshot().roundId,normalizedMasks)
             fun rounded(value: Float)=kotlin.math.round(value*10000f)/10000f
             trace.write(JSONObject().put("type","frame").put("frame",frameNumber).put("imageTimestampNs",captured.imageTimestampNs).put("elapsedMs",start)
-                .put("width",captured.width).put("height",captured.height).put("scene",scene.name).put("backend",detector.backend)
+                .put("width",captured.width).put("height",captured.height).put("scene",scene.name).put("backend",referenceDetector?.backend ?: detector.backend)
                 .put("sourceWidth",captured.sourceWidth).put("sourceHeight",captured.sourceHeight)
                 .put("convertMs",captured.preparedElapsedMs-start).put("queueMs",converted-captured.preparedElapsedMs)
-                .put("preprocessMs",detector.preprocessMs).put("inferenceMs",detector.inferenceMs).put("decodeMs",detector.decodeMs)
-                .put("rawDetectionCount",rawDetections.size).put("filteredDetectionCount",detections.size).put("maxClassScore",detector.maxClassScore)
-                .put("modelInputUnchanged",detector.cacheHit).put("inferenceCount",detector.inferenceCount)
+                .put("preprocessMs",referenceDetector?.preprocessMs ?: detector.preprocessMs).put("inferenceMs",referenceDetector?.inferenceMs ?: detector.inferenceMs).put("decodeMs",referenceDetector?.decodeMs ?: detector.decodeMs)
+                .put("detectorProfile",referenceDetector?.selectedProfile?.name ?: DetectorProfile.FULL.name)
+                .put("nativeMs",referenceDetector?.nativeMs ?: 0.0).put("packMs",referenceDetector?.packMs ?: 0.0)
+                .put("coverageGuardMs",referenceDetector?.coverageGuardMs ?: 0L)
+                .put("detectorFallback",referenceDetector?.fallbackReason ?: JSONObject.NULL)
+                .put("nativeRegionCount",referenceDetector?.nativeRegionCount ?: 0).put("packedTileCount",referenceDetector?.packedTileCount ?: 0)
+                .put("rawDetectionCount",rawDetections.size).put("filteredDetectionCount",detections.size).put("maxClassScore",referenceDetector?.maxClassScore ?: detector.maxClassScore)
+                .put("modelInputUnchanged",referenceDetector?.cacheHit ?: detector.cacheHit).put("inferenceCount",referenceDetector?.inferenceCount ?: detector.inferenceCount)
                 .put("ocrAgeMs",if(text==null) JSONObject.NULL else SystemClock.elapsedRealtime()-text.timeMs)
                 .put("emptyEvidenceMs",SystemClock.elapsedRealtime()-evidenceStart)
                 .put("overlayMasks",JSONArray(normalizedMasks.map { b -> JSONArray(listOf(rounded(b.left),rounded(b.top),rounded(b.right),rounded(b.bottom))) }))
@@ -179,11 +193,12 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         try {
             val ownedMasked=checkNotNull(bitmap.copy(Bitmap.Config.ARGB_8888,false))
             masked=ownedMasked
-            val ownedInput=detector.copyInputForProbe()
+            val ownedInput=referenceDetector?.copyInputForProbe() ?: detector.copyInputForProbe()
             modelInput=ownedInput
             val data=JSONObject().put("frame",frameNumber).put("imageTimestampNs",imageTimestampNs)
                 .put("rawDetectionCount",detections.size).put("filteredDetectionCount",filteredCount)
-                .put("maxClassScore",detector.maxClassScore)
+                .put("maxClassScore",referenceDetector?.maxClassScore ?: detector.maxClassScore)
+                .put("detectorProfile",referenceDetector?.selectedProfile?.name ?: DetectorProfile.FULL.name)
                 .put("detections",JSONArray(detections.map { p -> JSONObject().put("card",p.card.colorKey()).put("score",p.confidence)
                     .put("box",JSONArray(listOf(p.box.left,p.box.top,p.box.right,p.box.bottom))) }))
             evidenceIo.execute {
@@ -206,6 +221,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         closed=true
         runCatching { repository.save(AppState.ledger) }; runCatching { repository.close() }
         runCatching { ocr.close() }
+        runCatching { referenceDetector?.close() }
         runCatching { trace.close() }; evidenceIo.shutdown()
     }
 }

@@ -17,6 +17,7 @@ import com.cyotun.jpq.core.partitionGuandanHand
 import com.cyotun.jpq.core.colorKey
 import java.io.File
 import java.lang.reflect.Modifier
+import kotlin.math.ceil
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -57,8 +58,8 @@ class ReferenceNativePreprocessTest {
     }
 
     @Test fun packingNeverSilentlyDropsOverflowOrInvalidRegions() {
-        val giant=region("giant",IntBox(0,0,1000,500))
-        val overflow=ReferenceRegionPreprocessor.plan(listOf(giant),1000,500,
+        val giant=region("giant",IntBox(0,0,4000,4000))
+        val overflow=ReferenceRegionPreprocessor.plan(listOf(giant),4000,4000,
             ReferenceRegionPreprocessor.PackingConfig(overlaySplit=false))
         assertEquals(ReferenceRegionPreprocessor.Route.FULL_FALLBACK,overflow.route)
         assertEquals(listOf("giant"),overflow.overflowRegionIds)
@@ -110,13 +111,70 @@ class ReferenceNativePreprocessTest {
             ReferenceRegionPreprocessor.plan(listOf(zero),1000,500).route)
     }
 
+    @Test fun originalPerTileSearchFitsTheExportedSpreadRegionWithoutLosingCoverage() {
+        // Source-pixel boxes and sample counts from the explicitly exported native probe.
+        val active=listOf(nativeRegion("region-track-2",IntBox(931,50,979,87),67,1,.6567164179104478),
+            nativeRegion("region-track-3",IntBox(118,445,1771,787),21809,2170,.47246549589618964),
+            nativeRegion("region-track-4",IntBox(756,825,859,858),123,24,.42276422764227645))
+        val plan=ReferenceRegionPreprocessor.plan(active,1920,882)
+        assertEquals(ReferenceRegionPreprocessor.Route.PACKED_640,plan.route)
+        assertEquals(listOf("region-track-3"),plan.acceptedRegionIds)
+        assertEquals(setOf("region-track-2","region-track-4"),plan.filteredRegionIds.toSet())
+        val manifest=checkNotNull(plan.manifest)
+        assertEquals(2,manifest.tiles.size)
+        assertEquals("canonical_extra_downscale",manifest.scaleMode)
+        assertTrue(plan.scaleAttempts.any { !it.accepted && !it.extraDownscale })
+        assertTrue(plan.scaleAttempts.any { it.accepted && it.extraDownscale })
+        val sourceBoxes=manifest.tiles.map { it.sourceBBox }.sortedBy { it.left }
+        assertEquals(listOf(98,425,945,807),listOf(sourceBoxes[0].left,sourceBoxes[0].top,sourceBoxes[0].right,sourceBoxes[0].bottom))
+        assertEquals(listOf(849,425,1791,807),listOf(sourceBoxes[1].left,sourceBoxes[1].top,sourceBoxes[1].right,sourceBoxes[1].bottom))
+        // The two tiles have different individual maximum scales; a single canonical
+        // scale would make the second tile exceed the available 624 pixels.
+        assertTrue(manifest.tiles.map { it.scale }.distinct().size > 1)
+        assertManifestCoverage(manifest,listOf(active[1]),1920,882)
+        assertInteriorProjection(manifest,1920,882)
+    }
+
+    @Test fun originalExtraDownscaleFitsTheExportedGroupedRegionWithoutInventingHandOwnership() {
+        val active=listOf(nativeRegion("region-track-1",IntBox(931,50,979,87),67,1,.6716417910447762),
+            nativeRegion("region-track-2",IntBox(1655,50,1703,77),47,4,.425531914893617),
+            nativeRegion("region-track-3",IntBox(822,227,958,259),162,41,.41358024691358025),
+            nativeRegion("region-track-6",IntBox(383,329,1537,787),20475,1826,.43462759462759465),
+            nativeRegion("region-track-8",IntBox(756,825,859,858),123,24,.42276422764227645))
+        val plan=ReferenceRegionPreprocessor.plan(active,1920,882)
+        assertEquals(ReferenceRegionPreprocessor.Route.PACKED_640,plan.route)
+        assertEquals(listOf("region-track-6"),plan.acceptedRegionIds)
+        val manifest=checkNotNull(plan.manifest)
+        assertEquals(1,manifest.tiles.size)
+        assertEquals("canonical_extra_downscale",manifest.scaleMode)
+        assertTrue(manifest.globalScale > .5 && manifest.globalScale < .54)
+        assertNull(manifest.tiles.single().areaType)
+        assertNull(manifest.tiles.single().overlayGroupId)
+        assertManifestCoverage(manifest,listOf(active[3]),1920,882)
+        assertInteriorProjection(manifest,1920,882)
+    }
+
+    @Test fun explicitHandMetadataSelectsTheOriginalMultiTileSplitPolicy() {
+        val box=IntBox(383,329,1537,787)
+        for((source,area) in listOf("normal_active_region" to "dealer_hand","hand_active_region_1fps" to null)) {
+            val hand=ActiveRegion("known-hand",null,box,.5,0,"active",20475,1826,source,area,null,null,null,null,null)
+            val plan=ReferenceRegionPreprocessor.plan(listOf(hand),1920,882)
+            assertEquals(ReferenceRegionPreprocessor.Route.PACKED_640,plan.route)
+            val manifest=checkNotNull(plan.manifest)
+            assertTrue(manifest.tiles.size >= 2)
+            assertTrue(manifest.tiles.all { it.overlayGroupId == "overlay-known-hand" && it.regionSource == source && it.areaType == area })
+            assertManifestCoverage(manifest,listOf(hand),1920,882)
+            assertInteriorProjection(manifest,1920,882)
+        }
+    }
+
     @Test fun nativeFixtureUpdateAndComposeWriteLocalEvidence() {
         val instrumentation=InstrumentationRegistry.getInstrumentation()
         val arguments=InstrumentationRegistry.getArguments()
         val fixturePath=checkNotNull(arguments.getString("fixturePath")) { "Explicit fixturePath is required" }
         val fixture=File(fixturePath)
         require(fixture.isAbsolute && fixture.isFile && fixture.extension.lowercase() in setOf("png","jpg","jpeg"))
-        val folder=File(instrumentation.targetContext.filesDir,"reference-native-probe/${System.currentTimeMillis()}")
+        val folder=File(instrumentation.targetContext.getExternalFilesDir(null),"reference-native-probe/${System.currentTimeMillis()}")
         check(folder.mkdirs())
         val summary=JSONArray()
         // Missing libraries/ABI errors deliberately fail this explicitly requested probe.
@@ -258,6 +316,52 @@ class ReferenceNativePreprocessTest {
     private fun region(id: String,box: IntBox,samplePointCount: Int=1000)=ActiveRegion(id,null,box,1.0,3,"stable",samplePointCount,1,
         "manual_fixture_compose",null,null,null,null,null,null)
 
+    // The export omitted stableFrameCount; zero is a test placeholder and is not used
+    // by the packing geometry, rather than an assertion about the native runtime value.
+    private fun nativeRegion(id: String,box: IntBox,samples: Int,evidence: Int,support: Double)=
+        ActiveRegion(id,null,box,support,0,"active",samples,evidence,"normal_active_region",null,null,null,null,null,null)
+
+    private fun assertManifestCoverage(manifest: PackingManifest,regions: List<ActiveRegion>,width: Int,height: Int) {
+        assertEquals(regions.map { it.regionId }.toSet(),manifest.tiles.map { it.sourceRegionId }.toSet())
+        for(tile in manifest.tiles) {
+            assertTrue(tile.scale >= .25-1e-6 && tile.scale <= 1.0+1e-6)
+            assertEquals(ceil(tile.sourceBBox.width*tile.scale).toInt(),tile.packedBBox.width)
+            assertEquals(ceil(tile.sourceBBox.height*tile.scale).toInt(),tile.packedBBox.height)
+            assertTrue(tile.sourceBBox.left >= 0 && tile.sourceBBox.top >= 0 && tile.sourceBBox.right <= width && tile.sourceBBox.bottom <= height)
+            assertTrue(tile.packedBBox.left >= 0 && tile.packedBBox.top >= 0 && tile.packedBBox.right <= manifest.canvasSize && tile.packedBBox.bottom <= manifest.canvasSize)
+        }
+        for(region in regions) {
+            val boxes=manifest.tiles.filter { it.sourceRegionId == region.regionId }.map { it.sourceBBox }.sortedBy { it.left }
+            assertTrue(boxes.first().left <= region.bbox.left)
+            var right=boxes.first().right
+            for(box in boxes) {
+                assertTrue(box.left <= right && box.top <= region.bbox.top && box.bottom >= region.bbox.bottom)
+                right=maxOf(right,box.right)
+            }
+            assertTrue(right >= region.bbox.right)
+        }
+        for((index,a) in manifest.tiles.withIndex()) for(b in manifest.tiles.drop(index+1)) {
+            val x=minOf(a.packedBBox.right,b.packedBBox.right)-maxOf(a.packedBBox.left,b.packedBBox.left)
+            val y=minOf(a.packedBBox.bottom,b.packedBBox.bottom)-maxOf(a.packedBBox.top,b.packedBBox.top)
+            assertFalse("Packed tiles overlap",x > 0 && y > 0)
+        }
+    }
+
+    private fun assertInteriorProjection(manifest: PackingManifest,width: Int,height: Int) {
+        val detections=manifest.tiles.map { tile ->
+            val p=tile.packedBBox; val size=manifest.canvasSize.toFloat()
+            CardDetection(Card(Rank.A,Suit.RED),.9f,RectF((p.left+2)/size,(p.top+2)/size,(p.right-2)/size,(p.bottom-2)/size))
+        }
+        val projected=ReferenceRegionPreprocessor.project(detections,manifest,width,height)
+        assertEquals(detections.size,projected.detections.size)
+        assertFalse(projected.requiresFallback)
+        for(result in projected.detections) {
+            val b=result.detection.box; val source=result.tile.sourceBBox
+            assertTrue(b.left*width >= source.left-1 && b.top*height >= source.top-1)
+            assertTrue(b.right*width <= source.right+1 && b.bottom*height <= source.bottom+1)
+        }
+    }
+
     private fun writePng(file: File,bitmap: Bitmap) = file.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG,100,it)) }
     private fun bbox(box: IntBox)=JSONArray(listOf(box.left,box.top,box.right,box.bottom))
     private fun planJson(plan: ReferenceRegionPreprocessor.Plan): JSONObject {
@@ -265,6 +369,9 @@ class ReferenceNativePreprocessTest {
             .put("reason",plan.reason ?: JSONObject.NULL).put("inputRegionCount",plan.inputRegionCount)
             .put("acceptedRegionIds",JSONArray(plan.acceptedRegionIds)).put("filteredRegionIds",JSONArray(plan.filteredRegionIds))
             .put("invalidRegionIds",JSONArray(plan.invalidRegionIds)).put("overflowRegionIds",JSONArray(plan.overflowRegionIds))
+            .put("scaleAttempts",JSONArray(plan.scaleAttempts.map { attempt -> JSONObject().put("canvasSize",attempt.canvasSize)
+                .put("minimumScale",attempt.minimumScale).put("extraDownscale",attempt.extraDownscale)
+                .put("accepted",attempt.accepted).put("reason",attempt.reason ?: JSONObject.NULL) }))
         plan.manifest?.let { manifest ->
             data.put("canvasSize",manifest.canvasSize).put("globalScale",manifest.globalScale)
                 .put("tiles",JSONArray(manifest.tiles.map { tile -> JSONObject().put("tileId",tile.tileId)

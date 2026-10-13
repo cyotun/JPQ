@@ -1,12 +1,11 @@
 package com.cyotun.jpq
 
 import android.app.AlertDialog
-import android.content.*
+import android.content.Context
 import android.content.res.Configuration
 import android.graphics.*
 import android.os.Build
 import android.view.*
-import android.widget.*
 import com.cyotun.jpq.core.*
 import kotlin.math.*
 
@@ -40,8 +39,6 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private var size=OverlaySize(0f,0f,0f,0f)
     private var barHeight=44f
     private var left=0f
-    private var adjustment: AdjustmentOverlay?=null
-    private var draftPreview: DisplayConfig?=null
     private val dialogs=linkedSetOf<AlertDialog>()
     fun show() {
         check(!disposed)
@@ -57,7 +54,6 @@ class OverlayController(private val context: Context,private val preview: Boolea
         AppState.unsubscribe(listener)
         dialogs.toList().forEach { runCatching { it.dismiss() }; AppState.endOverlayOcclusion(it) }
         dialogs.clear()
-        adjustment?.close(); adjustment=null
         val wasAdded=added; added=false
         if(wasAdded) runCatching { wm.removeView(view) }
         if(!preview) AppState.barMask=null
@@ -69,7 +65,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
         if(disposed) return
         if(touch) { changedDuringTouch=true; view.invalidate(); return }
         val previous=config
-        config=draftPreview ?: configSource?.invoke() ?: store.load()
+        config=configSource?.invoke() ?: store.load()
         val screen=bounds()
         val keepAnchor=added && oldBounds==screen && previous.x==config.x && previous.y==config.y
         oldBounds=Rect(screen)
@@ -130,31 +126,18 @@ class OverlayController(private val context: Context,private val preview: Boolea
             .setNegativeButton("取消",null).create()
         showDialog(dialog)
     }
-    private fun tools() {
-        val choices=arrayOf("尺寸调整","牌序调整",if(config.showHistory) "关闭三家出牌记录" else "显示三家出牌记录","重置本局","停止记牌")
-        val dialog=AlertDialog.Builder(context).setTitle("记牌工具").setItems(choices) { _,which ->
-            when(which) {
-                0,1 -> {
-                    adjustment?.close()
-                    adjustment=AdjustmentOverlay(context,if(which==0) "size" else "order") { value -> draftPreview=value; refresh() }.also { it.show() }
-                }
-                2 -> { store.save(config.copy(showHistory=!config.showHistory)); refresh() }
-                3 -> reset()
-                4 -> context.startService(Intent(context,CaptureService::class.java).setAction("STOP"))
-            }
-        }.setNegativeButton("关闭",null).create()
-        showDialog(dialog)
-    }
     private inner class BarView: View(context) {
         private val p=Paint(Paint.ANTI_ALIAS_FLAG)
         private var originX=0; private var originY=0
         private var downX=0f; private var downY=0f; private var moved=false
+        private var doubleTapPending=false
         private var downTarget=0
         private val slop=ViewConfiguration.get(context).scaledTouchSlop
         private var detector=makeDetector()
         private fun makeDetector()=GestureDetector(context,object: GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: android.view.MotionEvent)=true
             override fun onSingleTapUp(e: android.view.MotionEvent): Boolean {
+                if(consumeLongTouch(e)) return true
                 performClick()
                 if(hidden) { hidden=false; post { detectorCancel(); refresh() }; return true }
                 if(downTarget==1) { post { hide() }; return true }
@@ -162,14 +145,31 @@ class OverlayController(private val context: Context,private val preview: Boolea
                 return true
             }
             override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
-                if(!hidden && config.doubleTapHide && downTarget==0 && !moved) post { hide() }
+                // Wait for release: a second DOWN followed by a drag is not a double tap.
+                doubleTapPending=!hidden && config.doubleTapHide && downTarget==0 && !moved
                 return true
             }
-            override fun onLongPress(e: android.view.MotionEvent) {
-                if(!hidden && downTarget==0 && !moved) { post { tools(); cancelGesture() } }
+            override fun onDoubleTapEvent(e: android.view.MotionEvent): Boolean {
+                if(e.actionMasked==MotionEvent.ACTION_UP) {
+                    if(!consumeLongTouch(e) && doubleTapPending && !hidden && config.doubleTapHide && downTarget==0 && !moved) post { hide() }
+                    doubleTapPending=false
+                }
+                return true
             }
-        })
-        fun cancelGesture() { detector=makeDetector(); touch=false; moved=false }
+        }).apply { setIsLongpressEnabled(false) }
+        private fun consumeLongTouch(event: MotionEvent): Boolean {
+            if(event.eventTime-event.downTime < ViewConfiguration.getLongPressTimeout()) return false
+            post { cancelGesture() }
+            return true
+        }
+        private fun cancelTapDetector() {
+            val now=android.os.SystemClock.uptimeMillis()
+            val event=MotionEvent.obtain(now,now,MotionEvent.ACTION_CANCEL,0f,0f,0)
+            try { detector.onTouchEvent(event) } finally { event.recycle() }
+            doubleTapPending=false
+            detector=makeDetector()
+        }
+        fun cancelGesture() { cancelTapDetector(); touch=false; moved=false }
         override fun onSizeChanged(w: Int,h: Int,oldw: Int,oldh: Int) {
             super.onSizeChanged(w,h,oldw,oldh)
             if(!preview) post { publishMask() }
@@ -187,9 +187,13 @@ class OverlayController(private val context: Context,private val preview: Boolea
                     else -> 0
                 }
             }
-            if(event.actionMasked==MotionEvent.ACTION_MOVE && downTarget==0 && !hidden) {
+            if(event.actionMasked==MotionEvent.ACTION_MOVE && (downTarget==0 || downTarget==3)) {
                 val dx=event.rawX-downX; val dy=event.rawY-downY
-                if(abs(dx)+abs(dy)>slop) moved=true
+                if(!moved && abs(dx)+abs(dy)>slop) {
+                    moved=true
+                    // Cancel tap history immediately, including a pending double tap.
+                    cancelTapDetector()
+                }
                 if(moved) {
                     params.x=(originX+dx).roundToInt().coerceIn(0,max(0,bounds().width()-params.width))
                     params.y=(originY+dy).roundToInt().coerceIn(0,max(0,bounds().height()-params.height))
@@ -202,7 +206,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
                 touch=false
                 if(moved) {
                     detectorCancel()
-                    config=config.copy(x=params.x.toFloat()/max(1,bounds().width()-params.width),y=params.y.toFloat()/max(1,bounds().height()-params.height))
+                    config=store.load().copy(x=params.x.toFloat()/max(1,bounds().width()-params.width),y=params.y.toFloat()/max(1,bounds().height()-params.height))
                     store.save(config)
                 }
                 if(changedDuringTouch) post { refresh() }
