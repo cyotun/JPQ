@@ -10,7 +10,8 @@ android {
         applicationId="com.cyotun.jpq.tests"
         minSdk=28
         targetSdk=36
-        versionCode=11
+        // Match Android's default version 0 for the normal instrumentation APK,
+        // so restoring that APK does not require a version downgrade.
         versionName="1.0-local-preflight"
     }
     compileOptions { sourceCompatibility=JavaVersion.VERSION_17; targetCompatibility=JavaVersion.VERSION_17 }

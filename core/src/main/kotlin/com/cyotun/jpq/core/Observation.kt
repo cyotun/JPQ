@@ -22,7 +22,12 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         fun duration(time: Long)=if(count==0) 0 else time-first
     }
     private class Presentation(var cards: List<Card>,var glyphs: List<PlayGlyph>,var lastSeen: Long,var eventId: String?=null,
-                               var unobservedSince: Long?=null)
+                               var unobservedSince: Long?=null) {
+        // An immutable-card presentation can reappear after a short effect. This
+        // position anchor is separate from the stricter expansion association.
+        var colorReturnAnchor=glyphs.toList()
+        var colorReturnSeen=lastSeen
+    }
     private val handVote=Vote(3)
     private val tributeVote=Vote(2)
     private val playVotes=Seat.entries.associateWith { Vote(4) }
@@ -176,9 +181,24 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             val previous=previousGlyphs[seat]!!
             if(geometric && key(previous.map { it.card })==k && !containsTracked(p.glyphs,previous)) playVotes[seat]!!.clear()
             previousGlyphs[seat]=if(geometric) p.glyphs else emptyList()
-            if(k==visible[seat]) {
+            val sameConfirmedRanks=presentation?.eventId!=null && p.cards.size>1 &&
+                p.cards.map { it.rank }.sorted()==presentation.cards.map { it.rank }.sorted() &&
+                frame.timeMs-presentation.colorReturnSeen<=1500 && hasGeometry(p) &&
+                p.glyphs.size==presentation.colorReturnAnchor.size &&
+                containsTracked(p.glyphs,presentation.colorReturnAnchor,compareColor=false)
+            // A confirmed displayed group does not become another play when the
+            // classifier's auxiliary red/black class flickers during an effect.
+            // Keep the reference's single-card exception: different colours can
+            // represent distinct single plays and are not suppressed here.
+            // A positive empty boundary clears the old presentation first; then
+            // another same-rank group still needs its normal four colour votes.
+            if(k==visible[seat] || sameConfirmedRanks) {
                 if(presentation!=null && geometric && containsTracked(p.glyphs,presentation.glyphs)) {
                     presentation.glyphs=p.glyphs.toList(); presentation.lastSeen=frame.timeMs
+                    presentation.colorReturnAnchor=p.glyphs.toList(); presentation.colorReturnSeen=frame.timeMs
+                }
+                if(sameConfirmedRanks) {
+                    presentation!!.colorReturnAnchor=p.glyphs.toList(); presentation.colorReturnSeen=frame.timeMs
                 }
                 playVotes[seat]!!.clear(); continue
             }
@@ -197,6 +217,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                             emit()
                         }
                         presentation.cards=p.cards.toList(); presentation.glyphs=p.glyphs.toList(); presentation.lastSeen=frame.timeMs
+                        presentation.colorReturnAnchor=p.glyphs.toList(); presentation.colorReturnSeen=frame.timeMs
                         visible[seat]=k; playVotes[seat]!!.clear()
                     } else if(playVotes[seat]!!.duration(frame.timeMs)>=900) {
                         interrupted("出牌变化无法完整确认，等待下一局"); return
@@ -221,11 +242,11 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     private fun hasGeometry(play: ObservedPlay)=play.glyphs.size==play.cards.size && key(play.glyphs.map { it.card })==key(play.cards) &&
         play.glyphs.all { it.box.width>0 && it.box.height>0 }
     /** One-to-one adjacent-frame association; rank/color equality alone is never a track. */
-    private fun containsTracked(current: List<PlayGlyph>,tracked: List<PlayGlyph>): Boolean {
+    private fun containsTracked(current: List<PlayGlyph>,tracked: List<PlayGlyph>,compareColor: Boolean=true): Boolean {
         if(tracked.isEmpty()) return false
         val remaining=current.toMutableList()
         for(old in tracked.sortedBy { it.box.cx }) {
-            val match=remaining.filter { p -> p.card==old.card &&
+            val match=remaining.filter { p -> (if(compareColor) p.card==old.card else p.card.rank==old.card.rank) &&
                 kotlin.math.abs(p.box.cx-old.box.cx)<=minOf(p.box.width,old.box.width)*.35f &&
                 kotlin.math.abs(p.box.cy-old.box.cy)<=minOf(p.box.height,old.box.height)*.35f &&
                 maxOf(p.box.width,old.box.width)<=minOf(p.box.width,old.box.width)*1.4f &&
