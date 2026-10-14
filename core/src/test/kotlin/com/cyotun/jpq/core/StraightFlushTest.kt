@@ -294,4 +294,66 @@ class StraightFlushTest {
         assertEquals(StraightFlushState.IMPOSSIBLE,
             StraightFlushEvaluator.evaluate(consumedLeaving(cards.take(4)),emptySet(),true,4).state)
     }
+
+    @Test fun fiveRunCardsSpreadAcrossOnlyFourCardHandsCannotKeepTheIconLit() {
+        val cards=listOf(Rank.A,Rank.TWO,Rank.THREE,Rank.FOUR,Rank.FIVE).map { card(it) }+
+            listOf(card(Rank.K,Suit.CLUB),card(Rank.Q,Suit.DIAMOND),card(Rank.J,Suit.HEART))
+        val consumed=consumedLeaving(cards)
+        val split=StraightFlushEvaluator.evaluate(consumed,emptySet(),true,0,listOf(4,4,0))
+        assertEquals(StraightFlushState.IMPOSSIBLE,split.state)
+        assertEquals("insufficient_seat_hand",split.reason)
+        // Capacity is a necessary constraint, not a claim of the actual deal.
+        assertEquals(StraightFlushState.POSSIBLE,
+            StraightFlushEvaluator.evaluate(consumed,emptySet(),true,0,listOf(5,3,0)).state)
+    }
+
+    @Test fun twelveTotalCardsWithNoPlayerHoldingFiveAreExcludedEvenWithUnknownWildcards() {
+        val cards=deck.takeLast(12)
+        val result=StraightFlushEvaluator.evaluate(consumedLeaving(cards),null,false,4,listOf(4,4,4))
+        assertEquals(StraightFlushState.IMPOSSIBLE,result.state)
+        assertEquals("insufficient_seat_hand",result.reason)
+        // Trusted ledger cardinalities remain decisive if suit annotations conflict.
+        assertEquals(StraightFlushState.IMPOSSIBLE,
+            StraightFlushEvaluator.evaluate(List(96) { card(Rank.A) },null,false,4,listOf(4,4,4)).state)
+    }
+
+    @Test fun insufficientOrdinaryCardsCannotBeRescuedByJokersOrSubstitutionAllowance() {
+        val cards=listOf(Rank.A,Rank.TWO,Rank.THREE,Rank.FOUR).map { card(it) }+
+            listOf(Card(Rank.BIG,Suit.NONE),Card(Rank.SMALL,Suit.NONE))
+        assertEquals(StraightFlushState.IMPOSSIBLE,
+            StraightFlushEvaluator.evaluate(consumedLeaving(cards),emptySet(),true,4,listOf(5,1,0)).state)
+    }
+
+    @Test fun malformedSeatCountsDoNotTurnUncertaintyIntoAnAbsenceClaim() {
+        val cards=listOf(Rank.A,Rank.TWO,Rank.THREE,Rank.FOUR,Rank.FIVE).map { card(it) }
+        for(counts in listOf(listOf(4,0,0),listOf(4,1),listOf(-1,3,3),listOf(28,0,0))) {
+            val result=StraightFlushEvaluator.evaluate(consumedLeaving(cards),emptySet(),true,0,counts)
+            assertEquals(StraightFlushState.UNKNOWN,result.state)
+            assertEquals("invalid_hand_capacity",result.reason)
+        }
+    }
+
+    @Test fun unresolvedRenderedCardsAreBoundedByPhysicalWildcardsRatherThanEveryPlay() {
+        assertEquals(2,tencentUnresolvedReplacementBound(70,WildcardMode.SINGLE))
+        assertEquals(4,tencentUnresolvedReplacementBound(70,WildcardMode.DOUBLE))
+        assertEquals(4,tencentUnresolvedReplacementBound(70,WildcardMode.UNKNOWN))
+        assertEquals(1,tencentUnresolvedReplacementBound(1,WildcardMode.UNKNOWN))
+        assertEquals(0,tencentUnresolvedReplacementBound(0,WildcardMode.SINGLE))
+        assertFailsWith<IllegalArgumentException> { tencentUnresolvedReplacementBound(-1,WildcardMode.UNKNOWN) }
+    }
+
+    @Test fun everySmallExactPoolWithHandCapacityMatchesTheIndependentSlotOracle() {
+        val candidates=listOf(Rank.A,Rank.TWO,Rank.THREE,Rank.FOUR,Rank.FIVE).map { card(it) }+
+            listOf(card(Rank.SEVEN,Suit.HEART),card(Rank.K,Suit.DIAMOND))
+        for(mask in 0 until (1 shl candidates.size)) {
+            val remaining=candidates.filterIndexed { i,_ -> mask and (1 shl i)!=0 }
+            for(a in 0..remaining.size) for(b in 0..remaining.size-a) {
+                val counts=listOf(a,b,remaining.size-a-b)
+                val expected=if(counts.maxOrNull()!!>=5 && oracleCanBuild(remaining,setOf(Rank.SEVEN)))
+                    StraightFlushState.POSSIBLE else StraightFlushState.IMPOSSIBLE
+                assertEquals(expected,StraightFlushEvaluator.evaluate(consumedLeaving(remaining),setOf(Rank.SEVEN),true,0,counts).state,
+                    "pool=$remaining hands=$counts")
+            }
+        }
+    }
 }

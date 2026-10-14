@@ -34,15 +34,20 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
     private var lastGradeTrace=""
     private val repository=RoundRepository(context)
     private var lastCheckpoint: String?=null
+    private var lastCapacityTrace: String?=null
     private var workerGeneration=-1L
     private var workerRound: String?=null
     private var lastRound: String?=null
     private var lastOffer=-10000L
     private var lastEpoch: Long?=null
     private var enabled=true
+    private var counterKey=""
+    private var cachedCounter=GradeCounterState()
     @Volatile private var closed=false
 
     fun onLedgerChanged(snapshot: RoundSnapshot) {
+        AppState.publishCounterState(GradeCounterState(snapshot.roundId,
+            cachedGrade.ranks.orEmpty().takeIf { cachedGrade.confirmed }.orEmpty(),reason="awaiting_physical_evidence"))
         if(snapshot.roundId!=lastRound || snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) {
             val begins=snapshot.roundId!=lastRound && snapshot.phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)
             if(begins) {
@@ -54,10 +59,26 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
             lastRound=snapshot.roundId; generation.incrementAndGet()
             publishUnknown()
         }
+        val countProof=straightFlushHandCapacityExclusion(snapshot)
+        if(countProof!=null) {
+            // Publish immediately with the committed counts, even when the suit
+            // worker is busy or the final table presentation is clearing.
+            publishUnknown()
+            val hands=straightFlushRemainingHandSizes(snapshot).orEmpty()
+            val fingerprint="${snapshot.roundId}:$hands:${snapshot.phase}"
+            if(fingerprint!=lastCapacityTrace) {
+                lastCapacityTrace=fingerprint
+                report(JSONObject().put("type","straight_flush").put("elapsedMs",SystemClock.elapsedRealtime())
+                    .put("roundId",snapshot.roundId).put("state",countProof.state.name)
+                    .put("reason",countProof.reason).put("calculationScope","COUNT_BOUND")
+                    .put("remainingHands",JSONArray(hands)).put("analysisSource","seat_capacity"))
+            }
+        } else lastCapacityTrace=null
     }
     private fun resetGrade() {
         gradeTracker.reset(); gradeReader.reset(); cachedGrade=WildcardRuleEvidence(null,false)
         cornerGrades=emptySet(); lastGradeTrace=""
+        AppState.publishCounterState(GradeCounterState())
     }
     /** Called on the vision owner thread even before the 27-card baseline exists. */
     fun observeGrade(bitmap: Bitmap,time: Long,epoch: Long,scene: TableScene,
@@ -77,15 +98,20 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
         }) }
         val source=gradeReader.read(bitmap,time,text,masks,scene,cornerGrades,tencentWildcardMode(lines))
         val rule=gradeTracker.observe(time,source.sourceTime,source.reading)
-        if(cachedGrade!=rule) { cachedGrade=rule; generation.incrementAndGet(); publishUnknown() }
+        if(cachedGrade!=rule) {
+            cachedGrade=rule; generation.incrementAndGet(); publishUnknown()
+            AppState.publishCounterState(GradeCounterState(lastRound,rule.ranks.orEmpty().takeIf { rule.confirmed }.orEmpty(),reason="awaiting_physical_evidence"))
+        }
         if(AppState.gradeRegion!=source.hudRegion) {
             AppState.gradeRegion=source.hudRegion; AppState.notifyChanged()
         }
-        val fingerprint="${source.reading.source}:${rule.ranks}:${rule.confirmed}:${source.obscured}"
+        val fingerprint="${source.reading.source}:${rule.ranks}:${rule.confirmed}:${source.obscured}:${source.activeHudTeams}"
         if(fingerprint!=lastGradeTrace) {
             lastGradeTrace=fingerprint
             report(JSONObject().put("type","grade").put("elapsedMs",time).put("roundId",lastRound ?: JSONObject.NULL)
                 .put("source",source.reading.source).put("confirmed",rule.confirmed)
+                .put("activeHudTeams",JSONArray(source.activeHudTeams.map { it.name }))
+                .put("hudRegion",source.hudRegion?.let { JSONArray(listOf(it.left,it.top,it.right,it.bottom)) } ?: JSONObject.NULL)
                 .put("ranks",JSONArray(rule.ranks.orEmpty().map { it.name })).put("obscured",source.obscured))
         }
         } catch(error: Exception) {
@@ -95,8 +121,9 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
         }
     }
     private fun publishUnknown() {
-        if(AppState.straightFlushState!=StraightFlushState.UNKNOWN || AppState.straightFlushIncludesWildcards) {
-            AppState.straightFlushState=StraightFlushState.UNKNOWN
+        val fallback=straightFlushHandCapacityExclusion(AppState.ledger.snapshot())?.state ?: StraightFlushState.UNKNOWN
+        if(AppState.straightFlushState!=fallback || AppState.straightFlushIncludesWildcards) {
+            AppState.straightFlushState=fallback
             AppState.straightFlushIncludesWildcards=false; AppState.notifyChanged()
         }
     }
@@ -108,8 +135,9 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
         }
         val nowEnabled=store.load().showStraightFlush
         if(nowEnabled!=enabled) { enabled=nowEnabled; generation.incrementAndGet(); publishUnknown() }
-        if(!enabled || snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED) ||
+        if((!enabled && !cachedGrade.confirmed) || snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED) ||
             snapshot.roundId==null || initial.size!=27) return
+        if(straightFlushHandCapacityExclusion(snapshot)!=null && !cachedGrade.confirmed) { publishUnknown(); return }
         if(!busy.compareAndSet(false,true)) return
         lastOffer=time
         val requestGeneration=generation.get()
@@ -138,6 +166,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                 try {
                     if(closed || !alive() || requestGeneration!=generation.get() || visibilityEpoch()!=epoch) return@execute
                     if(workerGeneration!=requestGeneration) {
+                        counterKey=""; cachedCounter=GradeCounterState()
                         if(workerRound!=snapshot.roundId) { evidence.reset(); ruleTracker.reset(); workerRound=snapshot.roundId }
                         else { evidence.clearCandidateVotes(); ruleTracker.clearCandidateVotes() }
                         workerGeneration=requestGeneration; lastCheckpoint=null
@@ -145,13 +174,17 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                     val started=SystemClock.elapsedRealtimeNanos()
                     val observations=mutableListOf<Pair<Input,SuitSymbolObservation>>()
                     fun classify(inputs: List<Input>): SuitedGroup {
+                        val physical=mutableListOf<Boolean?>()
                         val cards=inputs.map { input ->
-                            if(input.glyph.card.rank.isJoker) input.glyph.card else {
+                            if(input.glyph.card.rank.isJoker) { physical.add(false); input.glyph.card } else {
                                 val result=reader.classify(input.pixels); observations.add(input to result)
+                                // A gold heart is positive physical wildcard evidence.
+                                // A normal table symbol alone cannot disprove a declared replacement.
+                                physical.add(if(result.goldHeart) true else null)
                                 Card(input.glyph.card.rank,result.suit ?: input.glyph.card.suit)
                             }
                         }
-                        return SuitedGroup(cards,inputs.map { it.glyph.box })
+                        return SuitedGroup(cards,inputs.map { it.glyph.box },physical)
                     }
                     val ownRead=classify(own)
                     val others=other.mapValues { classify(it.value) }
@@ -171,14 +204,26 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                     // Persist that scope so natural-only absence cannot be presented as
                     // proof that wildcard combinations are also absent.
                     val playedOrdinary=snapshot.plays.values.flatten().filter { it.seat!=Seat.SELF }.sumOf { event -> event.cards.count { !it.rank.isJoker } }
-                    // Without a complete qualified rule, allow every ordinary
-                    // presentation to have substituted for a physical card.
+                    // Without a complete qualified rule, a displayed substitute
+                    // can only come from at most two/four physical heart wildcards.
                     // Restorations retain natural-card possibilities; they do not
                     // construct a wildcard run in this natural-only policy.
-                    val replacementBound=playedOrdinary
+                    val replacementBound=tencentUnresolvedReplacementBound(playedOrdinary,mode)
                     val calculationRule=if(rule.confirmed) rule else WildcardRuleEvidence(emptySet(),true,replacementBound)
                     val result=evidence.update(time,snapshot,initialCopy,
                         ownRead.takeIf { snapshot.phase==RoundPhase.ACTIVE },others,calculationRule)
+                    val identity="${snapshot.roundId}:${rule}:${evidence.initialCards}:${evidence.physicalEventCards}"
+                    if(identity!=counterKey) {
+                        cachedCounter=GradeCardCounter.evaluate(snapshot,evidence.initialCards,evidence.physicalEventCards,rule)
+                        counterKey=identity
+                    }
+                    val counter=cachedCounter
+                    fun bounds(value: GradeCountBounds?): Any=value?.let {
+                        JSONObject().put("minimum",it.minimum).put("maximum",it.maximum).put("exact",it.exact ?: JSONObject.NULL)
+                    } ?: JSONObject.NULL
+                    val counterMetadata=JSONObject().put("reason",counter.reason ?: JSONObject.NULL)
+                        .put("hearts",bounds(counter.heartCount))
+                        .put("ordinary",JSONObject().apply { counter.ordinaryCounts.forEach { (rank,value) -> put(rank.name,bounds(value)) } })
                     val analysisMs=(SystemClock.elapsedRealtimeNanos()-started)/1000000.0
                     var accepted=false
                     val metadata=JSONObject().put("schemaVersion",1).put("roundId",snapshot.roundId)
@@ -186,11 +231,14 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                         .put("ruleConfirmed",rule.confirmed).put("wildcardRanks",JSONArray(rule.ranks.orEmpty().map { it.name }))
                         .put("calculationScope",if(rule.confirmed) "WITH_WILDCARDS" else "NATURAL_ONLY")
                         .put("unresolvedReplacementCards",calculationRule.unresolvedReplacements)
+                        .put("remainingHands",JSONArray(straightFlushRemainingHandSizes(snapshot).orEmpty()))
+                        .put("physicalCounter",counterMetadata)
                         .put("poolMeaning","initial physical cards plus three seats rendered cards; substitutions preserve a conservative ability bound")
                         .put("initial",cards(evidence.initialCards))
                         .put("events",JSONArray(snapshot.plays.values.flatten().filter { it.seat!=Seat.SELF }.sortedBy { it.sequence }.map { event ->
                             JSONObject().put("id",event.eventId).put("seat",event.seat.name).put("sequence",event.sequence)
                                 .put("renderedCards",cards(evidence.eventCards[event.eventId] ?: event.cards))
+                                .put("physicalWildcards",JSONArray(evidence.physicalEventCards[event.eventId].orEmpty().map { it.wildcard ?: JSONObject.NULL }))
                         }))
                     synchronized(sessionGuard) {
                         val current=AppState.ledger.snapshot()
@@ -198,6 +246,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                             current.roundId!=snapshot.roundId || current.phase!=snapshot.phase ||
                             current.plays!=snapshot.plays) return@synchronized
                         accepted=true
+                        AppState.publishCounterState(counter)
                         cornerGrades=ruleTracker.observedRanks
                         if(AppState.straightFlushState!=result.state || AppState.straightFlushIncludesWildcards!=rule.confirmed) {
                             AppState.straightFlushState=result.state
@@ -208,6 +257,9 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                             .put("reason",result.reason ?: JSONObject.NULL).put("ruleConfirmed",rule.confirmed)
                             .put("wildcardRanks",JSONArray(rule.ranks.orEmpty().map { it.name }))
                             .put("calculationScope",if(rule.confirmed) "WITH_WILDCARDS" else "NATURAL_ONLY")
+                            .put("remainingHands",JSONArray(straightFlushRemainingHandSizes(snapshot).orEmpty()))
+                            .put("physicalCounter",counterMetadata)
+                            .put("unresolvedReplacementCards",calculationRule.unresolvedReplacements)
                             .put("gradeCandidates",JSONArray(gradeRanks.map { it.name })).put("observedMode",mode.name)
                             .put("handSource",if(snapshot.phase==RoundPhase.SELF_FINISHED) "teammate" else "self")
                             .put("knownSuitCards",evidence.consumed.count { it.suit !in setOf(Suit.RED,Suit.BLACK) && !it.rank.isJoker })

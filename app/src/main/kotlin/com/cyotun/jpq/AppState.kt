@@ -28,6 +28,11 @@ object AppState {
     @Volatile var recognitionReady = false
     @Volatile var straightFlushState = StraightFlushState.UNKNOWN
     @Volatile var straightFlushIncludesWildcards = false
+    @Volatile var counterState=GradeCounterState()
+        private set
+    fun publishCounterState(value: GradeCounterState) {
+        if(counterState!=value) { counterState=value; notifyChanged() }
+    }
     private val main = Handler(Looper.getMainLooper())
     private val listeners = linkedSetOf<() -> Unit>()
     private val notificationPending=AtomicBoolean(false)

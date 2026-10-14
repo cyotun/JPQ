@@ -38,19 +38,20 @@ class HistoryWidth {
     private var geometry: List<Float>? = null
     fun newRound() { expanded = 0f }
     /** All values dp. Typeface-dependent occupied text width supplied by UI. */
-    fun measure(config: DisplayConfig, textWidth: Float, available: Float): OverlaySize {
+    fun measure(config: DisplayConfig, textWidth: Float, available: Float,minimumGrid: Float=0f): OverlaySize {
         config.validate()
         require(textWidth.isFinite() && textWidth >= 0 && available.isFinite() && available > 0)
+        require(minimumGrid.isFinite() && minimumGrid>=0)
         val newGeometry = listOf(config.widthScale,config.gridRatio,config.detailText,
             if(config.showHistory) 1f else 0f,if(config.showHistoryDetails) 1f else 0f,
             if(config.showStraightFlush) 1f else 0f)
         if (geometry != newGeometry) { expanded = 0f; geometry = newGeometry }
         val inner = 552 * config.widthScale - 3
-        val requestedGrid = inner * config.gridRatio
+        val requestedGrid = maxOf(inner * config.gridRatio,minimumGrid)
         val controls = (if (config.doubleTapHide) 0 else 48) + (if (config.showReset) 48 else 0)
         val indicator = if(config.showStraightFlush) STRAIGHT_FLUSH_SLOT else 0f
         if (!config.showHistory || !config.showHistoryDetails) {
-            val requestedCompactGrid=235.577047f*config.countWidthScale
+            val requestedCompactGrid=maxOf(235.577047f*config.countWidthScale,minimumGrid)
             // Count mode ends just after the two 14dp seat/count cells. It does
             // not inherit a previous round's expanded text or a detail gutter.
             val record=if(config.showHistory) 32f else 0f

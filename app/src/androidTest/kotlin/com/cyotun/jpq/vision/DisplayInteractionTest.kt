@@ -293,7 +293,7 @@ class DisplayInteractionTest {
     }
 
     @Test fun gradeHintMoveUsesATopSafeAnchorAndSavesItWithoutChangingTheRound() {
-        withStoppedSyntheticOverlay(DisplayConfig(showHistory=false,showReset=true,doubleTapHide=false,x=0f,y=0f)) {
+        withStoppedSyntheticOverlay(DisplayConfig(showHistory=false,showReset=true,doubleTapHide=false,x=0f,y=.1f,positionIsScreenRelative=true)) {
                 instrument,context,store,overlay,view,before ->
             assumeTrue(Build.VERSION.SDK_INT>=29)
             val originalGrade=AppState.gradeRegion
@@ -303,14 +303,15 @@ class DisplayInteractionTest {
             try {
                 instrument.runOnMainSync {
                     AppState.running=true; activated=true
-                    AppState.gradeRegion=GlyphBox(.05f,0f,.17f,.1f)
+                    AppState.gradeRegion=GlyphBox(.05f,0f,.17f,.14f)
                     overlay.refresh()
                 }
                 waitFor(instrument) { AppState.gradeTipMask!=null }
                 val hint=checkNotNull(AppState.gradeTipMask)
                 val originalBar=Rect(checkNotNull(AppState.barMask).rectangle)
-                assertTrue(hint.rectangle.right<=hint.screenWidth*.40f)
-                assertTrue(hint.rectangle.bottom<=hint.screenHeight*.24f)
+                assertEquals(originalBar.left+(48*context.resources.displayMetrics.density).roundToInt(),hint.rectangle.left)
+                assertTrue(hint.rectangle.right<=originalBar.right)
+                assertTrue(hint.rectangle.bottom<=hint.screenHeight*.13f)
                 assertEquals(originalBar,AppState.barMask!!.rectangle)
                 assertFalse(AppState.adjusting); assertNull(AppState.adjustmentMask)
                 clickGradeAction(instrument,"grade-occlusion-move")
@@ -330,7 +331,7 @@ class DisplayInteractionTest {
     }
 
     @Test fun gradeHintIgnoreLastsThroughSettingsAndRoundChangesButNotANewCaptureController() {
-        withStoppedSyntheticOverlay(DisplayConfig(showHistory=false,showReset=false,doubleTapHide=true,x=0f,y=0f)) {
+        withStoppedSyntheticOverlay(DisplayConfig(showHistory=false,showReset=false,doubleTapHide=true,x=0f,y=.1f,positionIsScreenRelative=true)) {
                 instrument,context,store,overlay,view,before ->
             assumeTrue(Build.VERSION.SDK_INT>=29)
             val originalGrade=AppState.gradeRegion
@@ -341,7 +342,7 @@ class DisplayInteractionTest {
             try {
                 instrument.runOnMainSync {
                     AppState.running=true; activated=true
-                    AppState.gradeRegion=GlyphBox(.05f,0f,.17f,.1f)
+                    AppState.gradeRegion=GlyphBox(.05f,0f,.17f,.14f)
                     overlay.refresh()
                 }
                 waitFor(instrument) { AppState.gradeTipMask!=null }
@@ -350,7 +351,7 @@ class DisplayInteractionTest {
                 for(enabled in listOf(false,true)) {
                     store.save(store.load().copy(showGradeOcclusionTip=enabled))
                     instrument.runOnMainSync {
-                        AppState.gradeRegion=GlyphBox(.06f,0f,.22f,.1f); overlay.refresh()
+                        AppState.gradeRegion=GlyphBox(.06f,0f,.22f,.14f); overlay.refresh()
                     }
                     instrument.waitForIdleSync()
                     assertNull(AppState.gradeTipMask)

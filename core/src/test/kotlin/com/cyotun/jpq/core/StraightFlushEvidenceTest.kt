@@ -35,6 +35,47 @@ class StraightFlushEvidenceTest {
         listOf(start, start + 250, start + 500).forEach { update(tracker, it, snapshot, own, groups, baseline) }
     }
 
+    @Test fun reportedLiveRoundFourFourFourThenFourFourZeroUsesEachSeatsCapacity() {
+        // e37 round1681225336-4, 21:54:05 on2026-10-14: a previous
+        // UNKNOWN rendered-substitution result persisted while every seat had4.
+        // SELF_FINISHED is authoritative; SELF event history may total23, not27.
+        val outside=deck.drop(27)
+        fun remainingHands(counts: List<Int>): RoundSnapshot {
+            val seats=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT)
+            val events=seats.mapIndexed { index,seat -> event("played-$seat",outside.drop(index*27).take(27-counts[index]),seat,index+1L) }+
+                event("own-before-reveal",initial.take(23),Seat.SELF,4)
+            return snapshot(events,RoundPhase.SELF_FINISHED)
+        }
+        val twelve=remainingHands(listOf(4,4,4))
+        assertEquals(listOf(4,4,4),straightFlushRemainingHandSizes(twelve))
+        assertEquals("insufficient_seat_hand",straightFlushHandCapacityExclusion(twelve)?.reason)
+        assertEquals(StraightFlushState.IMPOSSIBLE,
+            StraightFlushEvidenceTracker().update(0,twelve,neutral(initial),null,emptyMap(),WildcardRuleEvidence(null,false,4)).state)
+        val eight=remainingHands(listOf(0,4,4))
+        assertEquals(listOf(0,4,4),straightFlushRemainingHandSizes(eight))
+        assertEquals(StraightFlushState.IMPOSSIBLE,straightFlushHandCapacityExclusion(eight)?.state)
+        assertEquals(StraightFlushState.IMPOSSIBLE,straightFlushHandCapacityExclusion(eight.copy(phase=RoundPhase.FINISHED))?.state)
+        assertNull(straightFlushHandCapacityExclusion(eight.copy(phase=RoundPhase.WAITING,roundId=null)))
+        assertNull(straightFlushHandCapacityExclusion(eight.copy(phase=RoundPhase.UNAVAILABLE)))
+    }
+
+    @Test fun jokerRemainderCannotKeepAnEightCardHandLitWhenOnlyFourOrdinaryCardsRemain() {
+        val outside=deck.drop(27)
+        val events=listOf(event("previous",outside.take(27),Seat.PREVIOUS),
+            event("opposite",outside.drop(27).take(27),Seat.OPPOSITE,2),
+            event("next",outside.drop(54).take(19),Seat.NEXT,3))
+        val remaining=Rank.entries.associateWith { rank -> when(rank) {
+            Rank.BIG,Rank.SMALL -> 2
+            Rank.TWO -> 4
+            else -> 0
+        } }
+        val snap=snapshot(events,RoundPhase.SELF_FINISHED).copy(remaining=remaining)
+        assertEquals(listOf(0,0,8),straightFlushRemainingHandSizes(snap))
+        assertEquals("insufficient_ordinary_cards",straightFlushHandCapacityExclusion(snap)?.reason)
+        // A malformed or incomplete rank map cannot establish this proof.
+        assertNull(straightFlushHandCapacityExclusion(snap.copy(remaining=remaining.filterKeys { it!=Rank.BIG })))
+    }
+
     @Test fun initial27IsNeutralUntilThreeDistinctFramesSpanHalfASecond() {
         val tracker = StraightFlushEvidenceTracker()
         val own = group(initial)
@@ -46,6 +87,36 @@ class StraightFlushEvidenceTest {
         assertEquals(neutral(initial), tracker.consumed)
         update(tracker, 500, own = own)
         assertEquals(initial, tracker.consumed)
+    }
+
+    @Test fun physicalWildcardProofStabilizesWithItsCardAndSurvivesAnAbstention() {
+        val tracker=StraightFlushEvidenceTracker()
+        val cards=listOf(Card(Rank.K,Suit.HEART),Card(Rank.K,Suit.SPADE))
+        val snap=snapshot(listOf(event("pair",cards)))
+        val read=group(cards).copy(physicalWildcards=listOf(true,false))
+        update(tracker,0,snap,groups=mapOf(Seat.PREVIOUS to read))
+        update(tracker,250,snap,groups=mapOf(Seat.PREVIOUS to read))
+        assertTrue(tracker.physicalEventCards.getValue("pair").all { it.wildcard==null })
+        // Input order changes without moving a card or its marker.
+        val reversed=SuitedGroup(read.cards.reversed(),read.boxes.reversed(),read.physicalWildcards.reversed())
+        update(tracker,500,snap,groups=mapOf(Seat.PREVIOUS to reversed))
+        assertEquals(listOf(true,false),tracker.physicalEventCards.getValue("pair").map { it.wildcard })
+        vote(tracker,750,snap,groups=mapOf(Seat.PREVIOUS to read.copy(physicalWildcards=emptyList())))
+        assertEquals(listOf(true,false),tracker.physicalEventCards.getValue("pair").map { it.wildcard })
+    }
+
+    @Test fun contradictoryPhysicalIdentityIsWithdrawnUntilANewRound() {
+        val tracker=StraightFlushEvidenceTracker()
+        val cards=listOf(Card(Rank.K,Suit.HEART),Card(Rank.K,Suit.SPADE))
+        val snap=snapshot(listOf(event("pair",cards)))
+        val read=group(cards).copy(physicalWildcards=listOf(true,false))
+        vote(tracker,0,snap,groups=mapOf(Seat.PREVIOUS to read))
+        vote(tracker,750,snap,groups=mapOf(Seat.PREVIOUS to read.copy(physicalWildcards=listOf(false,false))))
+        assertTrue(tracker.physicalEventCards.getValue("pair").all { it.wildcard==null })
+        vote(tracker,1500,snap,groups=mapOf(Seat.PREVIOUS to read))
+        assertTrue(tracker.physicalEventCards.getValue("pair").all { it.wildcard==null })
+        vote(tracker,2250,snapshot(listOf(event("pair",cards,round="r2")),round="r2"),groups=mapOf(Seat.PREVIOUS to read))
+        assertEquals(listOf(true,false),tracker.physicalEventCards.getValue("pair").map { it.wildcard })
     }
 
     @Test fun ownPlaysAreNotConsumedAgainAndCannotRefineTheInitialHand() {

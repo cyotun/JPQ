@@ -1,6 +1,6 @@
 package com.cyotun.jpq.core
 
-/** Possibility in the combined three-player pool, not proof of any particular player's hand. */
+/** Possibility under each remaining player's capacity, not proof of their actual cards. */
 enum class StraightFlushState { UNKNOWN, POSSIBLE, IMPOSSIBLE }
 
 data class StraightFlushWitness(
@@ -14,6 +14,31 @@ data class StraightFlushResult(
     val witness: StraightFlushWitness? = null,
     val reason: String? = null,
 )
+
+/** Accepted ledger counts are independent of uncertain suit/substitution metadata. */
+fun straightFlushRemainingHandSizes(snapshot: RoundSnapshot): List<Int>? {
+    if(snapshot.roundId==null || snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED,RoundPhase.FINISHED)) return null
+    val counts=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).map { 27-snapshot.played(it) }
+    if(counts.any { it !in 0..27 }) return null
+    if(snapshot.remaining!=null && snapshot.remaining.values.sum()!=counts.sum()) return null
+    return counts
+}
+
+fun straightFlushHandCapacityExclusion(snapshot: RoundSnapshot): StraightFlushResult? {
+    val hands=straightFlushRemainingHandSizes(snapshot) ?: return null
+    if(hands.maxOrNull()!!<5) return StraightFlushResult(StraightFlushState.IMPOSSIBLE,reason="insufficient_seat_hand")
+    val ranks=snapshot.remaining
+    if(ranks!=null && ranks.keys==Rank.entries.toSet() && ranks.all { (rank,n) -> n in 0..rank.capacity } &&
+        ranks.filterKeys { !it.isJoker }.values.sum()<5)
+        return StraightFlushResult(StraightFlushState.IMPOSSIBLE,reason="insufficient_ordinary_cards")
+    return null
+}
+
+/** A deal has at most two physical heart wildcards per effective rank. */
+fun tencentUnresolvedReplacementBound(playedOrdinary: Int,mode: WildcardMode): Int {
+    require(playedOrdinary>=0)
+    return minOf(playedOrdinary,if(mode==WildcardMode.SINGLE) 2 else 4)
+}
 
 /**
  * Side-channel analysis only: consumed must be the immutable initial own hand plus confirmed plays
@@ -45,7 +70,17 @@ object StraightFlushEvaluator {
         wildcardRanks: Set<Rank>?,
         ruleConfirmed: Boolean,
         unresolvedReplacements: Int = 0,
+        remainingHandSizes: List<Int>? = null,
     ): StraightFlushResult {
+        if(remainingHandSizes!=null) {
+            if(remainingHandSizes.size!=3 || remainingHandSizes.any { it !in 0..27 } ||
+                remainingHandSizes.sum()!=108-consumed.size)
+                return StraightFlushResult(StraightFlushState.UNKNOWN,reason="invalid_hand_capacity")
+            // This count proof does not require a grade, suit or logical-wildcard
+            // face. Three separate four-card hands cannot supply one five-card run.
+            if(remainingHandSizes.maxOrNull()!!<5)
+                return StraightFlushResult(StraightFlushState.IMPOSSIBLE,reason="insufficient_seat_hand")
+        }
         if(unresolvedReplacements !in 0..104) return StraightFlushResult(StraightFlushState.UNKNOWN,reason="invalid_replacement_bound")
         if(wildcardRanks?.any { it.isJoker }==true) return StraightFlushResult(StraightFlushState.UNKNOWN,reason="unsupported_wildcard_rank")
         val counts = consumed.groupingBy { it }.eachCount()

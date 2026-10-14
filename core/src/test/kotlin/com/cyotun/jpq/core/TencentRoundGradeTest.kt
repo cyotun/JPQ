@@ -7,6 +7,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TencentRoundGradeTest {
+    private fun read(hints: List<SceneHint>,corners: Set<Rank> = emptySet(),mode: WildcardMode = WildcardMode.UNKNOWN,
+        active: Set<TencentGradeTeam> = TencentGradeTeam.entries.toSet()) =
+        tencentRoundGradeReading(hints,corners,mode,active)
     private fun hud(own: String = "3", other: String = own): List<SceneHint> = listOf(
         SceneHint("我方", GlyphBox(.081f,.008f,.119f,.034f)),
         SceneHint(own, GlyphBox(.091f,.043f,.109f,.089f)),
@@ -22,7 +25,7 @@ class TencentRoundGradeTest {
 
     @Test fun sameHudScoresDeclareOneHeartGradeForEveryOrdinaryRank() {
         for (rank in Rank.entries.filterNot { it.isJoker }) {
-            val result=tencentRoundGradeReading(hud(rank.label))
+            val result=read(hud(rank.label))
             assertEquals(setOf(rank),result.ranks)
             assertEquals("HUD_EQUAL",result.source)
             assertFalse(result.conflict)
@@ -36,13 +39,13 @@ class TencentRoundGradeTest {
         fun box(l: Int,t: Int,r: Int,b: Int)=GlyphBox(l/2089f,t/1094f,r/2089f,b/1094f)
         val source=listOf(SceneHint("我方",box(159,5,247,43)),SceneHint("3",box(185,55,222,101)),
             SceneHint("对方",box(259,5,347,43)),SceneHint("3",box(289,55,328,101)))
-        val result=tencentRoundGradeReading(source)
+        val result=read(source)
         assertEquals(setOf(Rank.THREE),result.ranks)
         assertTrue(result.hudRegion!!.left <= 159/2089f)
         assertTrue(result.hudRegion.right >= 347/2089f)
         assertTrue(result.hudRegion.bottom >= 101/1094f)
     }
-    @Test fun differentHudTeamLevelsAloneDoNotDeclareTwoWildRanks() {
+    @Test fun differentHudTeamLevelsWithoutColorEvidenceDoNotDeclareTwoWildRanks() {
         for (mode in WildcardMode.entries) {
             val result=tencentRoundGradeReading(hud("3","7"),mode=mode)
             assertNull(result.ranks)
@@ -51,7 +54,7 @@ class TencentRoundGradeTest {
     }
     @Test fun productionMlkitNarrowThreeElementsUnderMergedLabelsReadBothTeams() {
         // Actual production OCR output on the reviewed teammate screenshot.
-        val result=tencentRoundGradeReading(listOf(
+        val result=read(listOf(
             SceneHint("我方对方",GlyphBox(.09739264f,.011666667f,.1767638f,.043333333f)),
             SceneHint("33",GlyphBox(.125f,.0475f,.1690951f,.104166664f)),
             SceneHint("3",GlyphBox(.125f,.0475f,.13228528f,.104166664f)),
@@ -61,80 +64,116 @@ class TencentRoundGradeTest {
         assertEquals("HUD_EQUAL",result.source)
     }
     @Test fun aSingleDigitCenteredBetweenMergedLabelsCannotCountAsBothTeamGrades() {
-        val result=tencentRoundGradeReading(listOf(
+        val result=read(listOf(
             SceneHint("我方对方",GlyphBox(.09739264f,.011666667f,.1767638f,.043333333f)),
             SceneHint("3",GlyphBox(.133f,.0475f,.14115f,.104166664f)),
         ))
         assertNull(result.ranks)
     }
     @Test fun differentHudLevelsRequireCardCornerAndExplicitModeAgreement() {
-        assertEquals(setOf(Rank.SEVEN),tencentRoundGradeReading(hud("3","7"),
-            setOf(Rank.SEVEN),WildcardMode.SINGLE).ranks)
-        assertEquals(setOf(Rank.THREE,Rank.SEVEN),tencentRoundGradeReading(hud("3","7"),
+        assertEquals(setOf(Rank.SEVEN),read(hud("3","7"),
+            setOf(Rank.SEVEN),WildcardMode.SINGLE,setOf(TencentGradeTeam.OTHER)).ranks)
+        assertEquals(setOf(Rank.THREE,Rank.SEVEN),read(hud("3","7"),
             setOf(Rank.THREE,Rank.SEVEN),WildcardMode.DOUBLE).ranks)
-        assertNull(tencentRoundGradeReading(hud("3","7"),setOf(Rank.THREE,Rank.SEVEN),WildcardMode.UNKNOWN).ranks)
-        assertEquals(setOf(Rank.THREE,Rank.FIVE),tencentRoundGradeReading(hud("3","7"),
-            setOf(Rank.THREE,Rank.FIVE),WildcardMode.DOUBLE).ranks)
-        assertNull(tencentRoundGradeReading(hud("3","7"),setOf(Rank.THREE),WildcardMode.DOUBLE).ranks)
+        assertNull(read(hud("3","7"),setOf(Rank.THREE,Rank.SEVEN),WildcardMode.UNKNOWN).ranks)
+        assertTrue(read(hud("3","7"),setOf(Rank.THREE,Rank.FIVE),WildcardMode.DOUBLE).conflict)
+        assertNull(read(hud("3","7"),setOf(Rank.THREE),WildcardMode.DOUBLE).ranks)
     }
     @Test fun aQualifiedSingleCornerCanEstablishGradeWhenHudIsHidden() {
-        assertEquals(setOf(Rank.K),tencentRoundGradeReading(emptyList(),setOf(Rank.K),WildcardMode.SINGLE).ranks)
-        assertNull(tencentRoundGradeReading(emptyList(),setOf(Rank.K),WildcardMode.UNKNOWN).ranks)
-        assertNull(tencentRoundGradeReading(emptyList(),setOf(Rank.K),WildcardMode.DOUBLE).ranks)
+        assertEquals(setOf(Rank.K),read(emptyList(),setOf(Rank.K),WildcardMode.SINGLE).ranks)
+        assertNull(read(emptyList(),setOf(Rank.K),WildcardMode.UNKNOWN).ranks)
+        assertNull(read(emptyList(),setOf(Rank.K),WildcardMode.DOUBLE).ranks)
     }
     @Test fun equalDualLevelsHaveOnlyOneDistinctPhysicalHeartGrade() {
-        assertEquals(setOf(Rank.A),tencentRoundGradeReading(hud("A"),setOf(Rank.A),WildcardMode.DOUBLE).ranks)
+        assertEquals(setOf(Rank.A),read(hud("A"),setOf(Rank.A),WildcardMode.DOUBLE).ranks)
     }
     @Test fun currentDealAnnouncementOverridesUpgradeScoresInRandomGradeMode() {
         for (text in listOf("本局级牌:7","本局随机级牌为7","本局打7","本轮级牌是7","本局随机打7")) {
-            val result=tencentRoundGradeReading(hud()+announce(text))
+            val result=read(hud()+announce(text))
             assertEquals(setOf(Rank.SEVEN),result.ranks,text)
             assertEquals("ANNOUNCEMENT",result.source)
         }
-        assertEquals(setOf(Rank.TEN),tencentRoundGradeReading(listOf(announce("本 局 级 牌：10"))).ranks)
-        assertEquals(setOf(Rank.K),tencentRoundGradeReading(listOf(announce("本局打k"))).ranks)
+        assertEquals(setOf(Rank.TEN),read(listOf(announce("本 局 级 牌：10"))).ranks)
+        assertEquals(setOf(Rank.K),read(listOf(announce("本局打k"))).ranks)
     }
     @Test fun explicitTwoPointAnnouncementsNeedNoGuessFromTeamLevels() {
         for (text in listOf("本局级牌3、7","本局级牌3/7","本局级牌3和7"))
-            assertEquals(setOf(Rank.THREE,Rank.SEVEN),tencentRoundGradeReading(listOf(announce(text))).ranks)
+            assertEquals(setOf(Rank.THREE,Rank.SEVEN),read(listOf(announce(text))).ranks)
     }
     @Test fun contradictoryAnnouncementsOrActualCornersWithdrawTheRule() {
-        assertTrue(tencentRoundGradeReading(listOf(announce("本局级牌3"),announce("本局级牌7"))).conflict)
-        assertTrue(tencentRoundGradeReading(listOf(announce("本局级牌3")),setOf(Rank.SEVEN)).conflict)
-        assertTrue(tencentRoundGradeReading(hud(),setOf(Rank.SEVEN)).conflict)
-        assertEquals(setOf(Rank.SEVEN),tencentRoundGradeReading(hud(),setOf(Rank.SEVEN),WildcardMode.SINGLE).ranks)
+        assertTrue(read(listOf(announce("本局级牌3"),announce("本局级牌7"))).conflict)
+        assertTrue(read(listOf(announce("本局级牌3")),setOf(Rank.SEVEN)).conflict)
+        assertTrue(read(hud(),setOf(Rank.SEVEN)).conflict)
+        assertTrue(read(hud(),setOf(Rank.SEVEN),WildcardMode.SINGLE).conflict)
     }
     @Test fun missingLabelsNicknamesArbitraryDigitsAndIllegalPointsAreRejected() {
         for (text in listOf("3","本局级牌1","本局级牌大","本局级牌33","本局级牌3分","本局打3的高手","级牌3"))
-            assertNull(tencentRoundGradeReading(listOf(announce(text))).ranks,text)
-        assertNull(tencentRoundGradeReading(hud().filter { it.text != "我方" }).ranks)
-        assertNull(tencentRoundGradeReading(hud("0")).ranks)
-        assertNull(tencentRoundGradeReading(hud("11")).ranks)
+            assertNull(read(listOf(announce(text))).ranks,text)
+        assertNull(read(hud().filter { it.text != "我方" }).ranks)
+        assertNull(read(hud("0")).ranks)
+        assertNull(read(hud("11")).ranks)
     }
     @Test fun upperLeftCompactMergedHudTokensAreAllowedButExtraTextIsNot() {
         val tokens=listOf(SceneHint("我方10",GlyphBox(.08f,.008f,.12f,.10f)),
             SceneHint("对方10",GlyphBox(.13f,.008f,.17f,.10f)))
-        assertEquals(setOf(Rank.TEN),tencentRoundGradeReading(tokens).ranks)
-        assertNull(tencentRoundGradeReading(tokens.map { it.copy(text=it.text+"号") }).ranks)
+        assertEquals(setOf(Rank.TEN),read(tokens).ranks)
+        assertNull(read(tokens.map { it.copy(text=it.text+"号") }).ranks)
         val mergedLabels=SceneHint("我方对方",GlyphBox(.081f,.008f,.169f,.034f))
-        assertEquals(setOf(Rank.THREE),tencentRoundGradeReading(listOf(mergedLabels)+hud().filter {
+        assertEquals(setOf(Rank.THREE),read(listOf(mergedLabels)+hud().filter {
             it.text == "3"
         }).ranks)
     }
     @Test fun qualifiedPhysicalCornerCanBeARandomPointDifferentFromBothTeamLevels() {
-        assertEquals(setOf(Rank.K),tencentRoundGradeReading(hud("3","7"),setOf(Rank.K),WildcardMode.SINGLE).ranks)
+        assertEquals(setOf(Rank.K),read(hud("3","7"),setOf(Rank.K),WildcardMode.SINGLE,emptySet()).ranks)
     }
     @Test fun ambiguousDigitAssignmentsDoNotSelectOneGrade() {
         val hints=hud()+SceneHint("7",GlyphBox(.09f,.045f,.11f,.088f))
-        assertNull(tencentRoundGradeReading(hints).ranks)
-        assertEquals(setOf(Rank.THREE),tencentRoundGradeReading(hud()+hud()).ranks)
+        assertNull(read(hints).ranks)
+        assertEquals(setOf(Rank.THREE),read(hud()+hud()).ranks)
     }
     @Test fun wrongPositionsAndInvalidBoxesDoNotDeclareGrades() {
         val shifted=hud().map { hint -> val b=hint.box!!; hint.copy(box=GlyphBox(b.left+.3f,b.top+.4f,b.right+.3f,b.bottom+.4f)) }
-        assertNull(tencentRoundGradeReading(shifted).ranks)
+        assertNull(read(shifted).ranks)
         for (box in listOf(null,GlyphBox(.1f,.02f,.2f,.08f),GlyphBox(.35f,.8f,.65f,.86f),
             GlyphBox(Float.NaN,.20f,.65f,.27f),GlyphBox(.65f,.20f,.35f,.27f),GlyphBox(-.1f,.20f,.65f,.27f)))
-            assertNull(tencentRoundGradeReading(listOf(announce("本局级牌3",box))).ranks)
+            assertNull(read(listOf(announce("本局级牌3",box))).ranks)
+    }
+    @Test fun userGrayOwnFiveAndRedOtherQueenSelectOnlyTheActualQueenGrade() {
+        // 2026-10-15 screenshot 770837d9: grey own 5, red other Q,
+        // and a physical gold-heart Q in the teammate's four-card reveal.
+        val result=read(hud("5","Q"),active=setOf(TencentGradeTeam.OTHER))
+        assertEquals(setOf(Rank.Q),result.ranks)
+        assertEquals("HUD_ACTIVE",result.source)
+        assertTrue(result.hudRegion!!.left>.119f)
+        assertEquals(setOf(Rank.Q),read(hud("5","Q"),setOf(Rank.Q),WildcardMode.SINGLE,
+            setOf(TencentGradeTeam.OTHER)).ranks)
+    }
+    @Test fun blueOwnGradeDoesNotAdoptItsGreyOtherNeighbour() {
+        val result=read(hud("J","A"),active=setOf(TencentGradeTeam.OWN))
+        assertEquals(setOf(Rank.J),result.ranks)
+        assertTrue(result.hudRegion!!.right<.131f)
+        assertNull(read(hud("3"),active=emptySet()).ranks)
+        assertNull(read(hud("3"),active=emptySet()).hudRegion)
+    }
+    @Test fun twoActiveDifferentGradesNeedAnExplicitDoubleGradeMode() {
+        assertEquals(setOf(Rank.THREE,Rank.SEVEN),read(hud("3","7"),mode=WildcardMode.DOUBLE).ranks)
+        assertNull(read(hud("3","7"),mode=WildcardMode.UNKNOWN).ranks)
+        assertNull(read(hud("3","7"),mode=WildcardMode.SINGLE).ranks)
+        assertNull(read(hud("3","7"),mode=WildcardMode.DOUBLE,active=setOf(TencentGradeTeam.OTHER)).ranks)
+    }
+    @Test fun greyWhiteAndGreenHeaderPixelsCannotPretendToBeAnActiveTeam() {
+        val width=30; val height=16
+        fun solid(color: Int)=tencentGradeHeaderTone(width,height,IntArray(width*height) { color })
+        assertEquals(TencentGradeHeaderTone.ACTIVE,solid(0xff2484a6.toInt()))
+        assertEquals(TencentGradeHeaderTone.ACTIVE,solid(0xffc2342d.toInt()))
+        assertEquals(TencentGradeHeaderTone.INACTIVE,solid(0xff929a95.toInt()))
+        assertEquals(TencentGradeHeaderTone.UNKNOWN,solid(0xffffffff.toInt()))
+        assertEquals(TencentGradeHeaderTone.UNKNOWN,solid(0xff096c61.toInt()))
+        val whiteLetters=IntArray(width*height) { if(it%4==0) 0xffffffff.toInt() else 0xff2484a6.toInt() }
+        assertEquals(TencentGradeHeaderTone.ACTIVE,tencentGradeHeaderTone(width,height,whiteLetters))
+        val blueGlyphOnGrey=IntArray(width*height) { if(it<12) 0xff2484a6.toInt() else 0xff929a95.toInt() }
+        assertEquals(TencentGradeHeaderTone.INACTIVE,tencentGradeHeaderTone(width,height,blueGlyphOnGrey))
+        assertEquals(TencentGradeHeaderTone.UNKNOWN,tencentGradeHeaderTone(1,1,intArrayOf(0xff2484a6.toInt())))
     }
     @Test fun oneCachedOcrCannotProvideThreeVotes() {
         val tracker=RoundGradeTracker()
@@ -252,11 +291,11 @@ class TencentRoundGradeTest {
     @Test fun aCorrectRandomPhysicalCornerDoesNotLetProgressHudWithdrawItsAnnouncement() {
         val tracker=RoundGradeTracker()
         for (time in listOf(0L,250L,500L)) tracker.observe(time,time,reading(Rank.J,"ANNOUNCEMENT"))
-        val later=tencentRoundGradeReading(hud(),setOf(Rank.J),WildcardMode.UNKNOWN)
+        val later=read(hud(),setOf(Rank.J),WildcardMode.UNKNOWN)
         assertTrue(later.conflict)
         tracker.observe(750,750,later)
         assertEquals(setOf(Rank.J),tracker.current().ranks)
-        tracker.observe(1000,1000,tencentRoundGradeReading(hud(),setOf(Rank.K),WildcardMode.UNKNOWN))
+        tracker.observe(1000,1000,read(hud(),setOf(Rank.K),WildcardMode.UNKNOWN))
         assertFalse(tracker.current().confirmed)
     }
 }

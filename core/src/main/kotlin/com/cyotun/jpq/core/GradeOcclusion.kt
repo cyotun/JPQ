@@ -43,19 +43,22 @@ object GradeOcclusionGeometry {
         }?.let { OverlayPoint(it,0) }
     }
 
-    /** Below-bar hint stays left of central played cards; its label may ellipsize. */
+    /** A helper window must stay entirely above the .13 card-region boundary. */
     fun hintPosition(screenWidth: Int,screenHeight: Int,bar: GradeOcclusionRect,
-        desiredWidth: Int,hintHeight: Int,bodyOffset: Int,gap: Int): GradeOcclusionRect? {
+        desiredWidth: Int,hintHeight: Int,bodyOffset: Int,gap: Int,bodyRightInset: Int=0): GradeOcclusionRect? {
         require(screenWidth>0 && screenHeight>0 && desiredWidth>0 && hintHeight>0 && bodyOffset>=0 && gap>=0)
         if(screenWidth<screenHeight) return null
-        // Below 24% of the table, side players' card areas are also occupied.
-        // Try the approved below-bar position first, then an above-bar position.
+        // The diagnostic reminder is itself masked from recognition. Placing it
+        // below .13 would hide a possible side/opposite play and invalidate the
+        // round. Do not create that obstruction just to display a warning.
         val y=listOf(bar.bottom+gap,bar.top-gap-hintHeight).firstOrNull {
-            it>=0 && it+hintHeight<=screenHeight*.24f
+            it>=0 && it+hintHeight<=screenHeight*.13f
         } ?: return null
-        val leftBand=(screenWidth*.40f).toInt()
-        val w=minOf(desiredWidth,leftBand)
-        val x=(bar.left+bodyOffset).coerceIn(0,maxOf(0,leftBand-w))
+        require(bodyRightInset>=0)
+        val x=bar.left+bodyOffset
+        if(x<0 || x>=screenWidth) return null
+        val w=minOf(desiredWidth,bar.right-bodyRightInset-x,screenWidth-x)
+        if(w<=0) return null
         return GradeOcclusionRect(x,y,x+w,y+hintHeight)
     }
 }

@@ -2,7 +2,7 @@ package com.cyotun.jpq.core
 
 import kotlin.math.abs
 
-data class SuitedGroup(val cards: List<Card>, val boxes: List<GlyphBox>)
+data class SuitedGroup(val cards: List<Card>, val boxes: List<GlyphBox>,val physicalWildcards: List<Boolean?> = emptyList())
 data class WildcardRuleEvidence(val ranks: Set<Rank>?, val confirmed: Boolean,
     val unresolvedReplacements: Int = 0)
 
@@ -10,7 +10,7 @@ data class WildcardRuleEvidence(val ranks: Set<Rank>?, val confirmed: Boolean,
 class StraightFlushEvidenceTracker {
     private class Votes {
         private var key: String? = null
-        private var presentation = emptyList<Pair<Card, GlyphBox>>()
+        private var presentation = emptyList<Triple<Card, GlyphBox,Boolean?>>()
         private var count = 0
         private var first = 0L
         private var last = -1L
@@ -19,11 +19,12 @@ class StraightFlushEvidenceTracker {
             if (!valid(group) || time < 0) { clear(); return false }
             if (time <= last) return false
             // A frame's card and box remain paired, even if its input ordering changes.
-            val fresh = group.cards.zip(group.boxes).sortedWith(compareBy({ it.second.cx }, { it.second.cy }))
+            val fresh = group.cards.indices.map { Triple(group.cards[it],group.boxes[it],group.physicalWildcards.getOrNull(it)) }
+                .sortedWith(compareBy({ it.second.cx }, { it.second.cy }))
             val same = key == eventKey && presentation.size == fresh.size &&
                 presentation.zip(fresh).all { (previous, current) ->
-                    val (aCard, a) = previous; val (bCard, b) = current
-                    aCard == bCard && abs(a.cx - b.cx) <= minOf(a.width, b.width) * .35f &&
+                    val (aCard, a,aWild) = previous; val (bCard, b,bWild) = current
+                    aCard == bCard && aWild==bWild && abs(a.cx - b.cx) <= minOf(a.width, b.width) * .35f &&
                         abs(a.cy - b.cy) <= minOf(a.height, b.height) * .35f &&
                         maxOf(a.width, b.width) <= minOf(a.width, b.width) * 1.4f &&
                         maxOf(a.height, b.height) <= minOf(a.height, b.height) * 1.4f
@@ -47,6 +48,8 @@ class StraightFlushEvidenceTracker {
     private var currentEvents = emptyList<PlayEvent>()
     private var initialConflict = false
     private val annotations = mutableMapOf<String, List<Card>>()
+    private val physicalFlags=mutableMapOf<String,List<Boolean?>>()
+    private val physicalConflicts=mutableSetOf<String>()
     private val conflicts = mutableSetOf<String>()
     private val votes = Seat.entries.associateWith { Votes() }
     var consumed = emptyList<Card>(); private set
@@ -56,10 +59,13 @@ class StraightFlushEvidenceTracker {
         event.eventId to (annotations[event.eventId]?.takeIf { colors(it) == colors(event.cards) }
             ?: neutral(event.cards)).toList()
     }
+    val physicalEventCards: Map<String,List<PhysicalPlayedCard>> get()=eventCards.mapValues { (id,cards) ->
+        cards.mapIndexed { index,card -> PhysicalPlayedCard(card,physicalFlags[id]?.getOrNull(index)) }
+    }
 
     fun reset() {
         roundId = null; initial = emptyList(); currentEvents = emptyList()
-        annotations.clear(); conflicts.clear(); initialConflict = false
+        annotations.clear(); physicalFlags.clear(); physicalConflicts.clear(); conflicts.clear(); initialConflict = false
         votes.values.forEach { it.clear() }; consumed = emptyList()
     }
     /** Visibility gaps interrupt candidates, not accepted evidence from the same round. */
@@ -136,10 +142,19 @@ class StraightFlushEvidenceTracker {
         val others = snapshot.plays.values.flatten().filter { it.seat != Seat.SELF }
         currentEvents = others.map { it.copy(cards = it.cards.toList()) }
         val eventIds = others.map { it.eventId }.toSet()
-        annotations.keys.retainAll(eventIds); conflicts.retainAll(eventIds)
+        annotations.keys.retainAll(eventIds); physicalFlags.keys.retainAll(eventIds)
+        physicalConflicts.retainAll(eventIds); conflicts.retainAll(eventIds)
         for (seat in listOf(Seat.PREVIOUS, Seat.OPPOSITE, Seat.NEXT)) {
             val seatVotes = votes.getValue(seat)
-            val group = groups[seat]
+            // Preserve the card/physical-marker pairing when a detector returns
+            // the same boxes in a different list order.
+            val group = groups[seat]?.let { raw ->
+                if(raw.cards.size!=raw.boxes.size) raw else {
+                    val order=raw.cards.indices.sortedWith(compareBy({raw.boxes[it].cx},{raw.boxes[it].cy}))
+                    SuitedGroup(order.map { raw.cards[it] },order.map { raw.boxes[it] },
+                        order.map { raw.physicalWildcards.getOrNull(it) })
+                }
+            }
             val event = snapshot.plays[seat].orEmpty().lastOrNull()
             if (group == null || event == null || group.cards.isEmpty() ||
                 colors(group.cards) != colors(event.cards) || event.eventId in conflicts) {
@@ -149,19 +164,36 @@ class StraightFlushEvidenceTracker {
                 val old = annotations[event.eventId]
                 // A current presentation can expand, but cannot silently replace known physical suits.
                 if (old != null && !compatible(old, group.cards)) {
-                    conflicts.add(event.eventId); annotations[event.eventId] = neutral(event.cards)
-                } else annotations[event.eventId] = if (old == null) group.cards.toList() else merge(old, group.cards)
+                    conflicts.add(event.eventId); annotations[event.eventId] = neutral(event.cards); physicalFlags.remove(event.eventId)
+                } else {
+                    val merged=if (old == null) group.cards.toList() else merge(old, group.cards)
+                    val previous=physicalFlags[event.eventId]
+                    val fresh=group.cards.indices.map { group.physicalWildcards.getOrNull(it) }
+                    // A stable abstention may retain proof only when the exact
+                    // card ordering still matches. Conflicting positive/negative
+                    // claims withdraw physical identity for this event.
+                    if(old==merged && previous!=null && previous.zip(fresh).any { (a,b) -> a!=null && b!=null && a!=b })
+                        physicalConflicts.add(event.eventId)
+                    physicalFlags[event.eventId]=when {
+                        event.eventId in physicalConflicts -> List(merged.size) { null }
+                        old==merged && merged==group.cards && previous!=null -> fresh.mapIndexed { i,value -> value ?: previous.getOrNull(i) }
+                        merged==group.cards -> fresh
+                        else -> List(merged.size) { null }
+                    }
+                    annotations[event.eventId] = merged
+                }
             }
         }
         consumed = initial + others.flatMap { event -> annotations[event.eventId]
             ?.takeIf { colors(it) == colors(event.cards) } ?: neutral(event.cards) }
-        return StraightFlushEvaluator.evaluate(consumed, rule.ranks, rule.confirmed,rule.unresolvedReplacements)
+        return StraightFlushEvaluator.evaluate(consumed, rule.ranks, rule.confirmed,rule.unresolvedReplacements,
+            straightFlushRemainingHandSizes(snapshot))
     }
 }
 
 enum class WildcardMode { UNKNOWN, SINGLE, DOUBLE }
 
-/** Rule evidence is local to one round; HUD team levels are not effective wildcard ranks. */
+/** Corner/mode votes are local to one round; coloured HUD evidence is handled by RoundGradeTracker. */
 class WildcardRuleTracker {
     private data class RankVote(var count: Int, var first: Long, var last: Long)
     private var mode = WildcardMode.UNKNOWN

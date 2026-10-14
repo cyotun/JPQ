@@ -1,5 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:label="记牌器手机测试" android:allowBackup="false" />
+    <application android:label="记牌器手机测试" android:allowBackup="false">
+        <activity android:name="com.cyotun.jpq.vision.PhoneFrameProbeActivity"
+            android:exported="true" android:launchMode="singleTop" />
+    </application>
     <instrumentation android:name="com.cyotun.jpq.vision.PhoneCaptureUiDriver"
         android:targetPackage="com.cyotun.jpq.tests" android:functionalTest="false" />
 </manifest>

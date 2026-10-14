@@ -1,16 +1,18 @@
 # 记牌器 · JPQ
 
-面向个人使用的 Android 本地记牌工具。首版完整适配腾讯独立应用「大掼蛋」，通过用户授权的屏幕采集识别已显示的牌面，使用悬浮窗显示手牌外剩余牌和三家出牌记录。
+面向个人使用的 Android 本地记牌工具。首版目标为适配腾讯独立应用「大掼蛋」，通过用户授权的屏幕采集识别已显示的牌面，使用悬浮窗显示手牌外剩余牌和三家出牌记录。
 
-**当前阶段：0.2.13 测试包已安装到手机，级牌读取、同花顺判断和遮挡提示的对局前检查已完成。完整真实牌局尚待验收，不能称为稳定完整版。**
+**当前阶段：0.2.15-regression 已构建，308 项核心检查通过。已接入确认的黑金首页、级牌三角标与独立逢人配格，并修复附件中提醒窗口遮住采牌区、灰色级牌误用和尾局同花顺未熄灭的路径。当前尚未安装到手机验收，不能称为稳定完整版，也没有证明 99.9% 对局稳定性。**
 
-工程与构建说明见 [Android 工程](app/README.md)，本轮结果见 [0.2.13 手机检查](docs/development/phone-preflight-0.2.13.md)，功能实现见 [0.2.12 开发记录](docs/development/grade-and-straight-flush-0.2.12.md)，此前记录见 [识别适配与真机记录](docs/development/adaptation.md)。当前安装包为个人适配测试版，尚未作为稳定更新发布。
+工程与构建说明见 [Android 工程](app/README.md)，本轮范围和待测项见 [0.2.15 修复记录](docs/development/repair-0.2.15.md)，故障证据见 [用户诊断 ZIP 分析](docs/development/diagnostic-export-review-20261015.md) 和 [0.2.13 整局失败](docs/development/live-round-failure-0.2.13.md)。当前安装包为个人适配测试版，尚未作为稳定更新发布。
 
 更新服务：[jpq.240438457.workers.dev](https://jpq.240438457.workers.dev/)。健康检查已通过，未发布安装包时版本接口返回 204。部署与验证记录见 [Cloudflare 状态](docs/deployment/cloudflare-status.md)。
 
 ## 设计资料
 
 设计基线：[已确认的设计稿 v4](docs/design/PRD.md) 与 [六张静态设计图](docs/design/review/README.md)。应用名「记牌器」。右侧基础 320dp，超长记录才自动扩展，左侧/字体保持原样。保留按钮开关与双击隐藏、全自动零错漏验收、原 APK 外观和 Cloudflare 应用自动更新。用户已整体确认 D1–D4，无需再次申请开发许可。
+
+2026-10-15 确认的布局覆盖旧图中的冲突项：[首页与级牌样式](docs/design/home-redesign/README.md)、[视觉核对记录](docs/design/home-redesign/design-qa.md)。服务器仅保留更新功能，不接收诊断日志、图片或录像。
 
 用户已选定 [1 号黑金图标](docs/design/icons/README.md)；设计源图与其余候选已保存。
 

@@ -11,6 +11,40 @@ data class TencentGradeReading(
     val physicalCornerRanks: Set<Rank> = emptySet(),
 )
 
+enum class TencentGradeTeam(val label: String) { OWN("我方"), OTHER("对方") }
+enum class TencentGradeHeaderTone { ACTIVE, INACTIVE, UNKNOWN }
+
+fun tencentGradeHeaderPixelColour(pixel: Int): Int {
+    val r=pixel ushr 16 and 255; val g=pixel ushr 8 and 255; val b=pixel and 255
+    if((pixel ushr 24 and 255)<200 || minOf(r,g,b)>210 || maxOf(r,g,b)<70) return 0
+    if(r>=120 && r>g*1.25f && r>b*1.15f) return 2
+    if(b>=100 && b>r*1.3f && b>=g*1.02f && maxOf(r,g,b)-minOf(r,g,b)>=45) return 1
+    return 0
+}
+
+/** White lettering does not establish a header colour; its background must agree. */
+fun tencentGradeHeaderTone(width: Int,height: Int,argb: IntArray): TencentGradeHeaderTone {
+    if(width<4 || height<3 || width*height!=argb.size) return TencentGradeHeaderTone.UNKNOWN
+    var eligible=0; var active=0; var gray=0; var coloredRows=0
+    for(y in 0 until height) {
+        var rowActive=0
+        for(x in 0 until width) {
+            val p=argb[y*width+x]; val r=p ushr 16 and 255; val g=p ushr 8 and 255; val b=p and 255
+            if((p ushr 24 and 255)<200 || minOf(r,g,b)>210 || maxOf(r,g,b)<70) continue
+            eligible++
+            if(tencentGradeHeaderPixelColour(p)!=0) { active++; rowActive++ }
+            if(maxOf(r,g,b)-minOf(r,g,b)<=25) gray++
+        }
+        if(rowActive>=width*.20f) coloredRows++
+    }
+    if(eligible<16 || eligible<argb.size*.20f) return TencentGradeHeaderTone.UNKNOWN
+    return when {
+        active>=16 && active>=eligible*.50f && coloredRows>=height*.45f -> TencentGradeHeaderTone.ACTIVE
+        gray>=eligible*.75f -> TencentGradeHeaderTone.INACTIVE
+        else -> TencentGradeHeaderTone.UNKNOWN
+    }
+}
+
 private fun validGradeBox(box: GlyphBox?) = box != null &&
     listOf(box.left, box.top, box.right, box.bottom).all { it.isFinite() } &&
     box.left >= 0f && box.top >= 0f && box.right <= 1f && box.bottom <= 1f &&
@@ -26,14 +60,16 @@ private fun gradeUnion(boxes: List<GlyphBox>): GlyphBox? = boxes.takeIf { it.isN
 }
 
 /**
- * The two upper-left scores may be team levels. Equal scores give one current
- * physical heart grade. Different scores do not by themselves declare two wild
- * ranks: a known mode and visible green card-corner evidence must agree, or a
+ * The grey upper-left panel is only a team's upgrade record. Only a blue/red
+ * active panel may supply a current physical heart grade. Different scores do
+ * not by themselves declare two wild ranks: active colours and a known mode
+ * must agree, or visible green card-corner evidence or a
  * positioned current-deal announcement must explicitly name the effective grade.
  * The random-grade announcement takes precedence over the team's upgrade scores.
  */
 fun tencentRoundGradeReading(hints: List<SceneHint>, cornerRanks: Set<Rank> = emptySet(),
-    mode: WildcardMode = WildcardMode.UNKNOWN): TencentGradeReading {
+    mode: WildcardMode = WildcardMode.UNKNOWN,
+    activeHudTeams: Set<TencentGradeTeam> = emptySet()): TencentGradeReading {
     val positioned = hints.filter { validGradeBox(it.box) }.map {
         SceneHint(it.text.filterNot(Char::isWhitespace), it.box)
     }.distinct()
@@ -55,16 +91,11 @@ fun tencentRoundGradeReading(hints: List<SceneHint>, cornerRanks: Set<Rank> = em
             SceneHint(label,GlyphBox(b.left,b.top,b.right,b.top+b.height*.35f))
         }
     }
-    val region = gradeUnion(labels.mapNotNull { it.box })?.let {
-        // One visible panel still locates its adjacent panel when a mask hides
-        // the other label; otherwise an overlay on that panel would disappear
-        // from the very region used to report its obstruction.
-        val seenOwn = labels.any { b -> b.text == "我方" }
-        val seenOther = labels.any { b -> b.text == "对方" }
-        val missingLeft = if (!seenOwn && seenOther) .05f else 0f
-        val missingRight = if (seenOwn && !seenOther) .05f else 0f
-        GlyphBox((it.left - .008f - missingLeft).coerceAtLeast(0f), (it.top - .005f).coerceAtLeast(0f),
-            (it.right + .008f + missingRight).coerceAtMost(1f), (it.bottom + .07f).coerceAtMost(.15f))
+    val region = gradeUnion(labels.filter { label -> activeHudTeams.any { it.label==label.text } }.mapNotNull { it.box })?.let {
+        // Only the actually coloured current-grade panel is an obstruction
+        // target. Its grey neighbour is a team's upgrade record, not this deal.
+        GlyphBox((it.left-.008f).coerceAtLeast(0f),(it.top-.005f).coerceAtLeast(0f),
+            (it.right+.008f).coerceAtMost(1f),(it.bottom+.07f).coerceAtMost(.15f))
     }
     val announcement = Regex("^(?:本局(?:随机)?(?:级牌|打)|本轮(?:随机)?级牌|本局随机打)(?:为|是|[:：])?([2-9AJQK]|10)(?:[、,/和与]([2-9AJQK]|10))?$")
     val announced = positioned.filter { it.box!!.cx in .25f.. .75f && it.box.cy in .10f.. .65f }
@@ -102,19 +133,30 @@ fun tencentRoundGradeReading(hints: List<SceneHint>, cornerRanks: Set<Rank> = em
         }
         return (candidates + merged).distinct().singleOrNull()
     }
-    val own = labelRank("我方"); val other = labelRank("对方")
+    val own = if(TencentGradeTeam.OWN in activeHudTeams) labelRank("我方") else null
+    val other = if(TencentGradeTeam.OTHER in activeHudTeams) labelRank("对方") else null
     val hudPoints = setOfNotNull(own, other)
+    val completeActiveHud=activeHudTeams.isNotEmpty() && activeHudTeams.all {
+        if(it==TencentGradeTeam.OWN) own!=null else other!=null
+    }
     if (mode == WildcardMode.SINGLE && corners.size == 1) {
+        if(completeActiveHud && hudPoints!=corners)
+            return TencentGradeReading(null,"HUD_CORNER_CONFLICT",region,true,corners)
         return TencentGradeReading(corners, "CORNER_SINGLE", region, physicalCornerRanks = corners)
     }
     if (mode == WildcardMode.DOUBLE && corners.size == 2) {
+        if(completeActiveHud && !corners.containsAll(hudPoints))
+            return TencentGradeReading(null,"HUD_CORNER_CONFLICT",region,true,corners)
         return TencentGradeReading(corners,
             if (own != null && other != null && hudPoints == corners) "HUD_CORNER_DOUBLE" else "CORNER_DOUBLE",
             region, physicalCornerRanks = corners)
     }
-    if (own != null && own == other && (corners.isEmpty() || corners == hudPoints))
-        return TencentGradeReading(hudPoints, "HUD_EQUAL", region, physicalCornerRanks = corners)
-    if (own != null && own == other && corners.isNotEmpty() && corners != hudPoints)
+    if(completeActiveHud && hudPoints.size==1 &&
+        (mode!=WildcardMode.DOUBLE || activeHudTeams.size==2) && (corners.isEmpty() || corners==hudPoints))
+        return TencentGradeReading(hudPoints,if(activeHudTeams.size==2) "HUD_EQUAL" else "HUD_ACTIVE",region,physicalCornerRanks=corners)
+    if(completeActiveHud && mode==WildcardMode.DOUBLE && hudPoints.size==2 && corners.isEmpty())
+        return TencentGradeReading(hudPoints,"HUD_ACTIVE_DOUBLE",region)
+    if (completeActiveHud && hudPoints.size==1 && corners.isNotEmpty() && corners != hudPoints)
         return TencentGradeReading(null, "HUD_CORNER_CONFLICT", region, true, corners)
     return TencentGradeReading(null, "UNAVAILABLE", region)
 }
@@ -143,7 +185,7 @@ class RoundGradeTracker {
     private fun priority(source: String) = when {
         source.startsWith("ANNOUNCEMENT") -> 3
         source == "CORNER_SINGLE" || source == "CORNER_DOUBLE" || source.startsWith("HUD_CORNER") -> 2
-        source == "HUD_EQUAL" -> 1
+        source == "HUD_EQUAL" || source == "HUD_ACTIVE" || source == "HUD_ACTIVE_DOUBLE" -> 1
         else -> 0
     }
 

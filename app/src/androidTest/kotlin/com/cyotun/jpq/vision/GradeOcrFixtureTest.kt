@@ -40,7 +40,7 @@ class GradeOcrFixtureTest {
             }
             val diagnostic=last?.hints?.filter { it.box!!.cx in .055f.. .23f && it.box!!.cy<=.13f }
             assertEquals("Actual HUD grade-3 OCR: source=${last?.reading?.source}, tokens=$diagnostic",setOf(Rank.THREE),tracker.current().ranks)
-            assertEquals("HUD_EQUAL",last!!.reading.source)
+            assertEquals("HUD_ACTIVE",last!!.reading.source)
             val now=SystemClock.elapsedRealtime()
             val masked=reader.read(source,now,ocr.snapshot(source.width,source.height,now),
                 listOf(GlyphBox(.06f,0f,.22f,.13f)),TableScene.TEAMMATE,emptySet(),WildcardMode.UNKNOWN)

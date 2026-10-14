@@ -51,13 +51,40 @@ class GradeOcclusionTest {
     }
 
     @Test fun belowBarHintAvoidsTheCentralAndSidePlayedCardRegions() {
-        val hint=assertNotNull(GradeOcclusionGeometry.hintPosition(2608,1200,bar,1050,90,144,12))
-        assertEquals(GradeOcclusionRect(0,150,1043,240),hint)
-        assertTrue(hint.right<=2608*.40f)
-        assertTrue(hint.top>=bar.bottom)
-        assertEquals(GradeOcclusionRect(0,98,1043,188),GradeOcclusionGeometry.hintPosition(2608,1200,bar.copy(top=200,bottom=338),1050,90,144,12))
+        val shortBar=bar.copy(bottom=60)
+        val hint=assertNotNull(GradeOcclusionGeometry.hintPosition(2608,1200,shortBar,1050,80,144,12))
+        assertEquals(GradeOcclusionRect(144,72,1194,152),hint)
+        assertEquals(shortBar.left+144,hint.left)
+        assertTrue(hint.top>=shortBar.bottom)
+        assertTrue(hint.bottom<=1200*.13f)
+        assertNull(GradeOcclusionGeometry.hintPosition(2608,1200,bar,1050,90,144,12))
+        assertEquals(GradeOcclusionRect(144,58,1194,148),GradeOcclusionGeometry.hintPosition(2608,1200,bar.copy(top=160,bottom=298),1050,90,144,12))
         assertNull(GradeOcclusionGeometry.hintPosition(2608,1200,bar.copy(top=500,bottom=638),1050,90,144,12))
         assertNull(GradeOcclusionGeometry.hintPosition(1200,2608,bar,1050,90,144,12))
+    }
+    @Test fun reminderTracksTheBodyAndNeverMovesSeparatelyToTheLeftEdge() {
+        val original=GradeOcclusionRect(300,0,2100,60)
+        val hint=assertNotNull(GradeOcclusionGeometry.hintPosition(2608,1200,original,1050,80,144,12,144))
+        assertEquals(444,hint.left)
+        val moved=assertNotNull(GradeOcclusionGeometry.hintPosition(2608,1200,original.copy(left=450,right=2250),1050,80,144,12,144))
+        assertEquals(150,moved.left-hint.left)
+        val narrow=assertNotNull(GradeOcclusionGeometry.hintPosition(2608,1200,GradeOcclusionRect(450,0,1050,60),1050,80,144,12,144))
+        assertEquals(312,narrow.width)
+        assertEquals(594,narrow.left)
+    }
+
+    @Test fun exportedReminderMaskCannotInterruptItsOwnRound() {
+        // The user's exported mask occupied .1233..2033 and interrupted all
+        // three observers. Keep actual mask checks; reject the unsafe window.
+        val rejected=GradeOcclusionGeometry.hintPosition(2608,1200,
+            GradeOcclusionRect(468,6,2040,138),1043,96,0,10)
+        assertNull(rejected)
+        val safe=assertNotNull(GradeOcclusionGeometry.hintPosition(2608,1200,
+            GradeOcclusionRect(0,0,1800,60),1043,80,0,10))
+        val evidence=EmptyRegionEvidence().evaluate(IntArray(10*10),10,10,TableScene.TABLE,27,
+            Seat.entries.associateWith { emptyList() },"safe-tip",
+            listOf(GlyphBox(safe.left/2608f,safe.top/1200f,safe.right/2608f,safe.bottom/1200f)))
+        assertTrue(evidence.values.none { it.reason=="overlay_occlusion" })
     }
 
     @Test fun paddingAndRectEdgeContactAreConservative() {

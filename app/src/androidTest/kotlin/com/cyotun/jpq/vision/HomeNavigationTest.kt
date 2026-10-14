@@ -12,6 +12,7 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import com.cyotun.jpq.AppState
 import com.cyotun.jpq.MainActivity
+import com.cyotun.jpq.HomeGameCatalog
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -25,7 +26,8 @@ class HomeNavigationTest {
         lateinit var button: Button
         instrument.runOnMainSync {
             val views=descendants(activity.window.decorView)
-            assertTrue(views.none { it is ScrollView })
+            if(activity.resources.configuration.screenHeightDp>=800 && activity.resources.configuration.fontScale<=1.3f)
+                assertTrue(views.none { it is ScrollView })
             assertTrue(views.filterIsInstance<TextView>().none { it.text.toString()=="权限" })
             button=views.filterIsInstance<Button>().single { it.text.toString()=="开始记牌" }
             // A real service publishes this flag through the same listener.
@@ -40,6 +42,46 @@ class HomeNavigationTest {
         }
         instrument.waitForIdleSync()
         instrument.runOnMainSync { assertEquals("开始记牌",button.text.toString()) }
+    }
+
+    @Test fun gameSelectionCannotStartAnUnsupportedAdapterAndUpdatesRemainReachable() = withStoppedHome { activity ->
+        val instrument=InstrumentationRegistry.getInstrumentation()
+        instrument.runOnMainSync {
+            assertTrue(HomeGameCatalog.canStart(HomeGameCatalog.DEFAULT_PLATFORM))
+            assertFalse(HomeGameCatalog.canStart("tencent-doudizhu"))
+            assertFalse(HomeGameCatalog.canStart(""))
+            assertEquals(listOf(HomeGameCatalog.DEFAULT_PLATFORM),HomeGameCatalog.search("大掼蛋").map { it.id })
+            val views=descendants(activity.window.decorView)
+            assertTrue(views.filterIsInstance<TextView>().single { it.text.toString()=="斗地主" }.isEnabled.not())
+            val cards=views.single { it.contentDescription?.toString()=="初始总牌数 108 张" } as ViewGroup
+            assertEquals(15,cards.childCount)
+            val ranks=(0 until cards.childCount).map { descendants(cards.getChildAt(it)).filterIsInstance<TextView>() }
+            assertEquals(108,ranks.sumOf { it.last().text.toString().toInt() })
+            val ten=ranks.single { it.first().text.toString()=="10" }.first()
+            val nine=ranks.single { it.first().text.toString()=="9" }.first()
+            assertEquals(nine.textSize,ten.textSize,.1f)
+            if(views.none { it is ScrollView }) {
+                val bounds=android.graphics.Rect(); cards.getGlobalVisibleRect(bounds)
+                assertEquals(cards.height,bounds.height())
+                val primary=views.filterIsInstance<Button>().single()
+                assertTrue(primary.top>=0 && primary.height>0)
+                val sample=views.single { it.contentDescription?.toString()=="悬浮记牌条样式示例" }
+                assertTrue(sample.getGlobalVisibleRect(bounds)); assertEquals(sample.height,bounds.height())
+            }
+            val settings=views.filterIsInstance<TextView>().single { it.text.toString()=="设置" }
+            assertTrue((settings.parent as View).performClick())
+        }
+        instrument.waitForIdleSync()
+        instrument.runOnMainSync {
+            val updates=descendants(activity.window.decorView).filterIsInstance<TextView>().single { it.text.toString()=="应用更新" }
+            assertTrue((updates.parent as View).performClick())
+        }
+        instrument.waitForIdleSync()
+        instrument.runOnMainSync {
+            assertTrue(descendants(activity.window.decorView).filterIsInstance<Button>().any { it.text.toString()=="检查更新" })
+            activity.onBackPressedDispatcher.onBackPressed()
+            assertTrue(descendants(activity.window.decorView).filterIsInstance<TextView>().any { it.text.toString()=="显示设置" })
+        }
     }
 
     @Test fun diagnosticToolsAreSecondaryAndPermissionsReturnToTheirSourceAfterRecreation() = withStoppedHome { initial ->

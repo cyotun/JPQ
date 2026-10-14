@@ -24,6 +24,8 @@ class CaptureService : Service() {
     private var worker: Handler? = null
     private var captureWorker: CaptureWorker?=null
     private var dispatcher: LatestFrameDispatcher<CapturedFrame>?=null
+    private var pipelineHealth: CapturePipelineHealth?=null
+    private var healthTick: Runnable?=null
     private var overlay: OverlayController? = null
     private var visualContext: Context? = null
     private var lastFrame = 0L
@@ -64,11 +66,14 @@ class CaptureService : Service() {
     private fun restoreVisibility(generation: Long,restoringEpoch: Long) {
         val capture=captureWorker ?: return
         val source=reader ?: return
+        val health=pipelineHealth?.takeIf { it.generation==generation }
         capture.handler.post {
             if(generation!=session || closed || !requestedVisible || restoringEpoch!=visibilityEpoch ||
                 capture!==captureWorker || source!==reader) return@post
             while(true) {
-                val stale=runCatching { source.acquireLatestImage() }.getOrNull() ?: break
+                val stale=try { source.acquireLatestImage().also { health?.imageAcquired(it!=null) } } catch(error: Exception) {
+                    health?.acquireFailed(error); null
+                } ?: break
                 stale.close()
             }
             synchronized(sessionGuard) {
@@ -106,21 +111,30 @@ class CaptureService : Service() {
             } else this
             worker=VisionRuntime.handler
             captureWorker=CaptureWorker(applicationContext)
+            val health=CapturePipelineHealth(applicationContext,generation).also { pipelineHealth=it }
+            startHealthReports(generation,health)
             dispatcher=LatestFrameDispatcher({ worker!!.post(it) },{ frame ->
-                if(generation==session && !closed && capturedVisible && frame.visibilityEpoch==visibilityEpoch && AppState.recognitionReady) {
-                    recognizer.observe(frame)
-                    if(generation==session && !closed) {
-                        AppState.capturedFrames++
-                        if(AppState.capturedFrames % 8L==0L) AppState.notifyChanged()
+                health.consumeStarted()
+                try {
+                    if(generation==session && !closed && capturedVisible && frame.visibilityEpoch==visibilityEpoch && AppState.recognitionReady) {
+                        recognizer.observe(frame)
+                        if(generation==session && !closed) {
+                            AppState.capturedFrames++
+                            if(AppState.capturedFrames % 8L==0L) AppState.notifyChanged()
+                        }
+                    } else {
+                        health.visionStage("discarded_gate")
                     }
-                }
+                } finally { health.consumeEnded() }
             },{ error -> frameFailed(generation,error) })
             worker!!.post {
                 if(generation==session && !closed) try {
                     // Old session observations/close must finish before clearing its ledger.
                     AppState.ledger.waitForNext()
+                    health.visionStage("recognizer_init_start")
                     val prepared=TencentRecognizer(this,{ generation==session && !closed && capturedVisible },
-                        { visibilityEpoch },sessionGuard)
+                        { visibilityEpoch },sessionGuard,health::visionStage)
+                    health.visionStage("recognizer_init_end")
                     // Publish on main, serialized with shutdown. A stopped initialization
                     // must never overwrite the next session or escape its close chain.
                     main.post {
@@ -153,6 +167,21 @@ class CaptureService : Service() {
             shutdown("本机识别组件未能启动，请稍后重试")
         }
         return START_NOT_STICKY
+    }
+    /** Independent metadata reporting; this observer never changes capture or the round. */
+    private fun startHealthReports(generation: Long,health: CapturePipelineHealth) {
+        healthTick?.let { main.removeCallbacks(it) }
+        val task=object : Runnable {
+            override fun run() {
+                if(generation!=session || closed || health!==pipelineHealth) return
+                health.report(AppState.sourceWidth,AppState.sourceHeight,AppState.capturedWidth,AppState.capturedHeight,
+                    capturedVisible,requestedVisible,AppState.recognitionReady,visibilityEpoch,
+                    captureWorker?.handler?.looper?.thread,worker?.looper?.thread)
+                if(generation==session && !closed && health===pipelineHealth) main.postDelayed(this,2500L)
+            }
+        }
+        healthTick=task
+        main.postDelayed(task,2500L)
     }
     private fun initializationFailed(generation: Long,error: Throwable) {
         android.util.Log.e("JPQCapture","recognizer_init_failed",error)
@@ -189,10 +218,16 @@ class CaptureService : Service() {
         android.util.Log.i("JPQCapture","source_size=${width}x$height capture_size=${outputWidth}x$outputHeight profile=${if(referenceCapture) "reference" else "adaptive_scaled"}")
         val capture=checkNotNull(captureWorker)
         val delivery=checkNotNull(dispatcher)
+        val health=pipelineHealth?.takeIf { it.generation==generation }
         return ImageReader.newInstance(outputWidth,outputHeight,PixelFormat.RGBA_8888,3).also { next ->
             next.setOnImageAvailableListener({ source ->
                 val epoch=visibilityEpoch
-                val image=runCatching { source.acquireLatestImage() }.getOrNull() ?: return@setOnImageAvailableListener
+                health?.imageCallback()
+                val image=try { source.acquireLatestImage().also { health?.imageAcquired(it!=null) } }
+                    catch(error: Exception) {
+                        health?.acquireFailed(error)
+                        return@setOnImageAvailableListener
+                    } ?: return@setOnImageAvailableListener
                 try {
                     val now=SystemClock.elapsedRealtime()
                     if(now-lastFrame>=33 && generation==session && source===reader && !closed && capturedVisible && epoch==visibilityEpoch && AppState.recognitionReady) {
@@ -200,13 +235,23 @@ class CaptureService : Service() {
                         val masks=listOfNotNull(AppState.barMask,AppState.adjustmentMask,AppState.gradeTipMask).map {
                             CaptureMask(android.graphics.Rect(it.rectangle),it.screenWidth,it.screenHeight)
                         }
-                        delivery.offer(capture.capture(image,AppState.sourceWidth,AppState.sourceHeight,AppState.adjusting,masks,now).also {
+                        health?.captureStage("copy_start")
+                        val frame=capture.capture(image,AppState.sourceWidth,AppState.sourceHeight,AppState.adjusting,masks,now).also {
                             it.visibilityEpoch=epoch
-                        })
+                        }
+                        health?.captureStage("copy_end")
+                        health?.offered()
+                        delivery.offer(frame)
+                    } else {
+                        health?.captureStage("discarded_gate")
                     }
                 } catch (error: Exception) {
+                    health?.captureStage("copy_failed")
                     frameFailed(generation,error)
-                } finally { image.close() }
+                } finally {
+                    image.close()
+                    health?.captureStage("image_closed")
+                }
             },capture.handler)
         }
     }
@@ -253,9 +298,12 @@ class CaptureService : Service() {
             if(AppState.ledger.snapshot().remaining!=null) AppState.ledger.invalidate(message)
         }
         android.util.Log.i("JPQCapture","session_stop reason=$message")
+        healthTick?.let { main.removeCallbacks(it) }; healthTick=null
+        pipelineHealth?.close(); pipelineHealth=null
         AppState.running=false; AppState.recognitionReady=false; AppState.message=message
         AppState.straightFlushState=StraightFlushState.UNKNOWN
         AppState.straightFlushIncludesWildcards=false
+        AppState.publishCounterState(com.cyotun.jpq.core.GradeCounterState())
         AppState.gradeRegion=null; AppState.gradeTipMask=null
         com.cyotun.jpq.updates.UpdateManager.scheduleDownload(this)
         overlay?.close(); overlay=null

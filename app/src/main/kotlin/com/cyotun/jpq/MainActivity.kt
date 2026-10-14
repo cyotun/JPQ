@@ -6,12 +6,15 @@ import android.content.*
 import android.content.pm.PackageManager
 import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.*
 import android.provider.Settings
 import android.text.TextUtils
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.*
 import android.widget.*
 import com.cyotun.jpq.core.*
@@ -32,6 +35,11 @@ class MainActivity : ComponentActivity() {
     private var capturePending=false
     private var stopPending=false
     private var preview: OverlayController?=null
+    private val appFont by lazy { Typeface.createFromAsset(assets,"overlay.ttf") }
+    private val homeControls=mutableListOf<View>()
+    private var homeState: TextView?=null
+    private val homePreferences get()=getSharedPreferences("jpq-home",MODE_PRIVATE)
+    private fun selectedPlatform()=HomeGameCatalog.platform(homePreferences.getString("platform",HomeGameCatalog.DEFAULT_PLATFORM))
     private val listener: () -> Unit = { updateState() }
     private val gold=Color.rgb(255,227,149)
     private val muted=Color.rgb(156,156,156)
@@ -90,7 +98,7 @@ class MainActivity : ComponentActivity() {
         setColor(fill); cornerRadius=dp(radius).toFloat(); if(stroke) setStroke(dp(1),gold)
     }
     private fun text(value: String,size: Float=17f,color: Int=Color.WHITE)=TextView(this).apply {
-        text=value; textSize=size; setTextColor(color); setPadding(dp(4),dp(10),dp(4),dp(10))
+        text=value; textSize=size; typeface=appFont; setTextColor(color); setPadding(dp(4),dp(10),dp(4),dp(10))
     }
     private fun row(label: String,value: String="",action: (() -> Unit)?=null): LinearLayout {
         val r=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL
@@ -100,7 +108,7 @@ class MainActivity : ComponentActivity() {
         return r
     }
     private fun button(label: String,action: () -> Unit)=Button(this).apply {
-        text=label; textSize=18f; setTextColor(Color.BLACK); background=bg(gold,26)
+        text=label; textSize=18f; typeface=appFont; setTextColor(Color.BLACK); background=bg(gold,26)
         isAllCaps=false; maxLines=1
         setAutoSizeTextTypeUniformWithConfiguration(10,18,1,android.util.TypedValue.COMPLEX_UNIT_SP)
         setOnClickListener { action() }
@@ -114,7 +122,8 @@ class MainActivity : ComponentActivity() {
         stateText=null
         captureButton=null
         preview=null
-        root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(19,20,19)); setPadding(dp(18),dp(8),dp(18),dp(12)) }
+        homeState=null; homeControls.clear()
+        root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(19,19,19)); setPadding(dp(18),dp(8),dp(18),dp(12)) }
         root.setOnApplyWindowInsetsListener { v,insets ->
             @Suppress("DEPRECATION") v.setPadding(dp(18),insets.systemWindowInsetTop+dp(8),dp(18),insets.systemWindowInsetBottom+dp(12)); insets
         }
@@ -125,9 +134,14 @@ class MainActivity : ComponentActivity() {
         head.addView(text(title,26f,gold).apply {
             maxLines=1; setAutoSizeTextTypeUniformWithConfiguration(10,26,1,android.util.TypedValue.COMPLEX_UNIT_SP)
         },LinearLayout.LayoutParams(0,dp(if(page=="home") 52 else 62),1f))
+        if(page=="home") {
+            homeState=homeText("本地记牌",12f,muted)
+            head.addView(homeState,LinearLayout.LayoutParams(-2,dp(40)))
+        }
         root.addView(head)
         val content=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
-        if(page=="home") root.addView(content,LinearLayout.LayoutParams(-1,0,1f))
+        if(page=="home" && resources.configuration.screenHeightDp>=800 && resources.configuration.fontScale<=1.3f)
+            root.addView(content,LinearLayout.LayoutParams(-1,0,1f))
         else root.addView(ScrollView(this).apply { isFillViewport=true; addView(content) },LinearLayout.LayoutParams(-1,0,1f))
         when(page) {
             "home" -> home(content)
@@ -140,18 +154,30 @@ class MainActivity : ComponentActivity() {
             "backup" -> backup(content)
         }
         if(page=="home") {
+            stateText=homeText("先开启记牌，再进入游戏房间",11f,muted).apply { gravity=Gravity.CENTER; maxLines=2 }
+            root.addView(stateText,LinearLayout.LayoutParams(-1,dp(26)))
             captureButton=button("") { if(AppState.running) stopCapture() else startCapture() }
-            add(root,captureButton!!,56)
+            captureButton!!.textSize=24f
+            captureButton!!.setAutoSizeTextTypeUniformWithConfiguration(16,24,1,android.util.TypedValue.COMPLEX_UNIT_SP)
+            val ring=FrameLayout(this).apply { background=bg(Color.rgb(48,45,32),36); setPadding(dp(6),dp(6),dp(6),dp(6)) }
+            ring.addView(captureButton,FrameLayout.LayoutParams(-1,-1))
+            root.addView(ring,LinearLayout.LayoutParams(-1,dp(66)).apply { bottomMargin=dp(14) })
             updateState()
         }
         if(page in listOf("home","settings")) {
-            val nav=LinearLayout(this)
+            val nav=LinearLayout(this).apply { background=bg(Color.rgb(25,25,25),30); setPadding(dp(2),dp(2),dp(2),dp(2)) }
             listOf("home" to "记牌","settings" to "设置").forEach { (key,label) ->
-                nav.addView(text(label,18f,if(page==key) gold else muted).apply {
-                    gravity=Gravity.CENTER; maxLines=1
-                    setAutoSizeTextTypeUniformWithConfiguration(10,18,1,android.util.TypedValue.COMPLEX_UNIT_SP)
+                val item=LinearLayout(this).apply {
+                    gravity=Gravity.CENTER; isSelected=page==key
+                    if(isSelected) background=bg(Color.rgb(37,35,29),28)
                     setOnClickListener { navigate(key) }
-                },LinearLayout.LayoutParams(0,dp(48),1f))
+                }
+                item.addView(ImageView(this).apply {
+                    setImageResource(if(key=="home") android.R.drawable.ic_menu_edit else android.R.drawable.ic_menu_preferences)
+                    setColorFilter(if(page==key) gold else muted)
+                },LinearLayout.LayoutParams(dp(18),dp(18)).apply { marginEnd=dp(7) })
+                item.addView(homeText(label,15f,if(page==key) gold else muted))
+                nav.addView(item,LinearLayout.LayoutParams(0,dp(46),1f))
             }; root.addView(nav)
         }
     }
@@ -161,31 +187,120 @@ class MainActivity : ComponentActivity() {
         page=next; render()
     }
     private fun home(c: LinearLayout) {
-        // A fixed page: every section shares the available height, including at
-        // increased system font sizes. Only secondary settings pages scroll.
-        fun compact(value: String,size: Float,color: Int=Color.WHITE,lines: Int=1)=text(value,size,color).apply {
-            gravity=Gravity.CENTER_VERTICAL; setPadding(dp(10),dp(4),dp(10),dp(4))
-            maxLines=lines; ellipsize=TextUtils.TruncateAt.END
-            setAutoSizeTextTypeUniformWithConfiguration(10,size.toInt(),1,android.util.TypedValue.COMPLEX_UNIT_SP)
+        fun section(): LinearLayout = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
+            .also { c.addView(it,LinearLayout.LayoutParams(-1,-2)) }
+        fun spacer() { c.addView(View(this),LinearLayout.LayoutParams(1,dp(8),1f)) }
+        fun heading(target: LinearLayout,label: String,note: String="") {
+            val line=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
+            line.addView(homeText(label,17f,Color.rgb(190,190,190)),LinearLayout.LayoutParams(0,dp(27),1f))
+            line.addView(homeText(note,10f,Color.rgb(112,112,112)))
+            target.addView(line)
         }
-        val summary=LinearLayout(this).apply {
-            orientation=LinearLayout.VERTICAL; background=bg(Color.rgb(38,38,38)); setPadding(dp(8),dp(8),dp(8),dp(8))
-            addView(compact("大掼蛋（腾讯）",22f,gold),LinearLayout.LayoutParams(-1,0,1f))
-            addView(compact("掼蛋 · 默认玩法",17f),LinearLayout.LayoutParams(-1,0,1f))
-            addView(compact("4 人 · 2 副牌 · 共 108 张",16f,muted),LinearLayout.LayoutParams(-1,0,1f))
+        val platform=selectedPlatform()
+        val game=section(); heading(game,"1、选择游戏平台","1 款已适配")
+        val gameRow=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
+        gameRow.addView(homeChip("＋",false,true,22f) { chooseGame() }.also { homeControls.add(it) },LinearLayout.LayoutParams(dp(44),dp(44)).apply { marginEnd=dp(9) })
+        if(platform!=null) {
+            val selected=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL; background=chipBackground(true) }
+            selected.addView(homeText(platform.label,19f,gold).apply {
+                setPadding(dp(12),0,dp(7),0); setOnClickListener { chooseGame() }; homeControls.add(this)
+            },LinearLayout.LayoutParams(-2,dp(44)))
+            selected.addView(homeText("×",23f,Color.rgb(144,131,102)).apply {
+                gravity=Gravity.CENTER; contentDescription="移除游戏平台"; homeControls.add(this)
+                setOnClickListener { if(!AppState.running && !capturePending) { homePreferences.edit().putString("platform","").apply(); render() } }
+            },LinearLayout.LayoutParams(dp(34),dp(44)))
+            gameRow.addView(selected)
+        } else gameRow.addView(homeText("请添加游戏平台",16f,muted))
+        game.addView(gameRow); spacer()
+        val play=section(); heading(play,"2、选择玩法","更多玩法待适配")
+        HomeGameCatalog.plays.chunked(5).forEachIndexed { i,items ->
+            play.addView(chipRow(items,"掼蛋"),LinearLayout.LayoutParams(-1,dp(38)).apply { if(i>0) topMargin=dp(7) })
         }
-        c.addView(summary,LinearLayout.LayoutParams(-1,0,3f).apply { bottomMargin=dp(12) })
-        c.addView(compact("每局牌数",14f,muted),LinearLayout.LayoutParams(-1,0,.7f))
-        val cards=LinearLayout(this)
-        guandanOrder.forEach { rank -> cards.addView(compact("${rank.label}\n${rank.capacity}",15f,gold,2).apply {
-            gravity=Gravity.CENTER; setPadding(dp(1),dp(2),dp(1),dp(2)); background=bg(Color.rgb(38,38,38),4)
-            setAutoSizeTextTypeUniformWithConfiguration(6,15,1,android.util.TypedValue.COMPLEX_UNIT_SP)
-        },LinearLayout.LayoutParams(0,-1,1f).apply { marginEnd=dp(1) }) }
-        c.addView(cards,LinearLayout.LayoutParams(-1,0,1.6f).apply { bottomMargin=dp(12) })
-        stateText=compact("",16f,gold,2).apply { background=bg(Color.rgb(38,38,38)) }
-        c.addView(stateText!!,LinearLayout.LayoutParams(-1,0,1.8f).apply { bottomMargin=dp(8) })
-        c.addView(compact("在游戏大厅开始记牌，再进入房间。",14f,muted,2),LinearLayout.LayoutParams(-1,0,1.2f))
+        val variant=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
+        variant.addView(homeText("细分玩法",14f,muted),LinearLayout.LayoutParams(dp(72),dp(32)))
+        HomeGameCatalog.variants.forEach { label -> variant.addView(homeChip(label,label=="默认",label=="默认",16f),
+            LinearLayout.LayoutParams(dp(66),dp(32)).apply { marginEnd=dp(8) }) }
+        play.addView(variant,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(8) }); spacer()
+        val people=section(); heading(people,"3、选择玩家人数")
+        people.addView(chipRow(HomeGameCatalog.players.map { "${it}人" },"4人"),LinearLayout.LayoutParams(-1,dp(38))); spacer()
+        val decks=section(); heading(decks,"4、几副牌","当前适配 4 人 · 2 副")
+        decks.addView(chipRow(HomeGameCatalog.decks.map { "${it}副" },"2副"),LinearLayout.LayoutParams(-1,dp(38)))
+        val cards=LinearLayout(this).apply { contentDescription="初始总牌数 108 张" }
+        store.load().order.forEachIndexed { index,rank ->
+            val cell=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
+            cell.addView(homeText(rank.label,14f,gold).apply {
+                gravity=Gravity.CENTER; background=bg(Color.rgb(87,79,55),4,true)
+            },LinearLayout.LayoutParams(-1,dp(22)))
+            cell.addView(homeText(rank.capacity.toString(),14f,Color.WHITE).apply {
+                gravity=Gravity.CENTER; background=bg(Color.rgb(39,39,39),3)
+            },LinearLayout.LayoutParams(-1,dp(23)))
+            cards.addView(cell,LinearLayout.LayoutParams(0,-1,if(rank==Rank.TEN) 1.55f else 1f).apply { if(index<14) marginEnd=dp(2) })
+        }
+        decks.addView(cards,LinearLayout.LayoutParams(-1,dp(45)).apply { topMargin=dp(10) })
+        decks.addView(homeText("初始总牌数 108 张",10f,Color.rgb(112,112,112)).apply { gravity=Gravity.END },LinearLayout.LayoutParams(-1,dp(17)))
+        spacer()
+        val sample=section()
+        val sampleHeader=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
+        sampleHeader.addView(homeText("悬浮记牌条示例",12f,muted),LinearLayout.LayoutParams(0,dp(22),1f))
+        sampleHeader.addView(homeText("预览 ›",12f,gold).apply { setOnClickListener { navigate("size") } })
+        sample.addView(sampleHeader)
+        val sampleController=OverlayController(this,preview=true)
+        val sampleView=sampleController.previewView()
+        val sampleBox=FrameLayout(this).apply { clipChildren=true; contentDescription="悬浮记牌条样式示例" }
+        sampleBox.addView(sampleView)
+        sampleBox.addOnLayoutChangeListener { _,l,_,r,_,_,_,_,_ ->
+            val original=sampleView.layoutParams.width
+            if(original>0) {
+                val scale=minOf(1f,(r-l).toFloat()/original)
+                sampleView.pivotX=0f; sampleView.pivotY=0f; sampleView.scaleX=scale; sampleView.scaleY=scale
+            }
+        }
+        sample.addView(sampleBox,LinearLayout.LayoutParams(-1,dp(44)))
         updateState()
+    }
+    private fun homeText(value: String,size: Float,color: Int)=text(value,size,color).apply {
+        setPadding(0,0,0,0); gravity=Gravity.CENTER_VERTICAL; maxLines=1
+        ellipsize=TextUtils.TruncateAt.END; includeFontPadding=false
+    }
+    private fun chipBackground(selected: Boolean)=GradientDrawable().apply {
+        setColor(if(selected) Color.rgb(37,34,27) else Color.TRANSPARENT); cornerRadius=dp(12).toFloat()
+        setStroke(dp(1).coerceAtLeast(1),if(selected) Color.rgb(231,203,129) else Color.rgb(62,62,62))
+    }
+    private fun homeChip(label: String,selected: Boolean,available: Boolean,size: Float=18f,action: (() -> Unit)?=null)=
+        homeText(label,size,if(selected) gold else if(available) Color.rgb(208,208,208) else Color.rgb(116,116,116)).apply {
+            gravity=Gravity.CENTER; background=chipBackground(selected); isSelected=selected; isEnabled=available
+            setAutoSizeTextTypeUniformWithConfiguration(12,size.toInt(),1,android.util.TypedValue.COMPLEX_UNIT_SP)
+            if(action!=null) { isClickable=true; setOnClickListener { action() } }
+        }
+    private fun chipRow(labels: List<String>,selected: String)=LinearLayout(this).apply {
+        labels.forEachIndexed { index,label -> addView(homeChip(label,label==selected,label==selected),
+            LinearLayout.LayoutParams(0,-1,1f).apply { if(index<labels.lastIndex) marginEnd=dp(7) }) }
+    }
+    private fun chooseGame() {
+        if(AppState.running || capturePending) return
+        val body=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(20),dp(12),dp(20),0) }
+        val search=EditText(this).apply { hint="搜索游戏平台"; textSize=16f; setTextColor(Color.WHITE); typeface=appFont; setSingleLine() }
+        val choices=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
+        body.addView(search); body.addView(choices)
+        val dialog=AlertDialog.Builder(this).setTitle("选择游戏平台").setView(body).setNegativeButton("完成",null).create()
+        fun list() {
+            choices.removeAllViews()
+            HomeGameCatalog.search(search.text.toString()).forEach { platform ->
+                choices.addView(homeText(platform.label+if(platform.profile==null) " · 待适配" else "",17f,if(platform.profile==null) muted else gold).apply {
+                    setPadding(dp(4),dp(14),dp(4),dp(14)); isEnabled=platform.profile!=null
+                    if(isEnabled) setOnClickListener {
+                        homePreferences.edit().putString("platform",platform.id).apply(); dialog.dismiss(); render()
+                    }
+                })
+            }
+            if(choices.childCount==0) choices.addView(homeText("没有找到匹配的游戏",15f,muted),LinearLayout.LayoutParams(-1,dp(64)))
+        }
+        search.addTextChangedListener(object: TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?,start: Int,count: Int,after: Int)=Unit
+            override fun onTextChanged(s: CharSequence?,start: Int,before: Int,count: Int) { list() }
+            override fun afterTextChanged(s: Editable?)=Unit
+        })
+        list(); dialog.show(); dialog.window?.setBackgroundDrawable(bg(Color.rgb(32,32,32),20))
     }
     private fun settings(c: LinearLayout) {
         val d=store.load()
@@ -343,6 +458,7 @@ class MainActivity : ComponentActivity() {
     private fun changed() { if(AppState.running) startService(Intent(this,CaptureService::class.java).setAction("CONFIG")) }
     private fun startCapture() {
         if(AppState.running) { stopCapture(); return }
+        if(selectedPlatform()?.profile==null) { chooseGame(); return }
         if(capturePending) return
         if(!Settings.canDrawOverlays(this)) { navigate("permissions"); Toast.makeText(this,"请先开启悬浮窗权限",Toast.LENGTH_LONG).show(); return }
         capturePending=true
@@ -363,10 +479,18 @@ class MainActivity : ComponentActivity() {
     }
     private fun updateState() {
         if(!AppState.running) stopPending=false
-        stateText?.text=AppState.message
+        stateText?.text=when {
+            page!="home" -> AppState.message
+            !AppState.running -> "先开启记牌，再进入游戏房间"
+            !AppState.recognitionReady -> "正在准备识别，稍后自动开始"
+            else -> AppState.message
+        }
+        homeState?.text=if(AppState.running) "记牌中" else "本地记牌"
+        homeState?.setTextColor(if(AppState.running) gold else muted)
+        homeControls.forEach { it.isEnabled=!AppState.running && !capturePending && !stopPending }
         captureButton?.apply {
             text=when { stopPending -> "正在停止…"; AppState.running -> "停止记牌"; capturePending -> "等待屏幕共享授权"; else -> "开始记牌" }
-            isEnabled=!capturePending && !stopPending
+            isEnabled=!capturePending && !stopPending && (AppState.running || selectedPlatform()?.profile!=null)
         }
     }
     private fun leave() {

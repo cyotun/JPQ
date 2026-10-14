@@ -1,6 +1,6 @@
 # 记牌器 Android 工程
 
-当前0.2.13-regression已安装到手机并通过对局前检查，284项核心检查通过。修复真实OCR窄字框被拒绝的问题，35项不同手机检查的范围和版本见 [0.2.13 记录](../docs/development/phone-preflight-0.2.13.md)。已接入本局级牌缓存、四种花色与逢人配的同花顺判断、会话内忽略的级牌遮挡提示。识别沿用此前适配的原APK快速管线；硬件选择与采集适配记录见 [识别适配记录](../docs/development/adaptation.md)。既有完整回放与实现限制见 [0.2.12 记录](../docs/development/grade-and-straight-flush-0.2.12.md)。新版本仍待完整真实牌局验收，按 [真机计划](../docs/development/live-test-plan.md) 由用户正常操作牌局。
+当前 0.2.15-regression（versionCode 17）已构建并校验持续签名，308 项核心检查通过，Android 测试包已编译、静态检查零错误。本轮尚未执行手机测试；详情见 [修复与验证记录](../docs/development/repair-0.2.15.md)。已实现新首页、真实彩色级牌读取、独立逢人配计数边界、单家容量排除同花顺，以及不会侵入采牌区域的遮挡提醒。识别沿用此前适配的原 APK 快速管线；硬件与采集适配见 [识别适配记录](../docs/development/adaptation.md)。0.2.13 的实际整局验收失败，原因边界见 [失败记录](../docs/development/live-round-failure-0.2.13.md)；不能以旧的对局前检查代替整局验收。下一轮按 [真机计划](../docs/development/live-test-plan.md) 由用户正常操作牌局。
 
 固定 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、compile/target SDK 36、min SDK 28，此前连接手机实际 API 37；首版 ABI arm64-v8a。界面为 Kotlin 原生 View / Canvas，内部保存使用 SharedPreferences / SQLite。
 

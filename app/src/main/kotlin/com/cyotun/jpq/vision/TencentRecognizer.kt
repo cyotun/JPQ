@@ -10,7 +10,8 @@ import org.json.JSONArray
 
 /** Bundled CPU detector and bundled Chinese OCR. No screenshot upload. */
 class TencentRecognizer(private val context: Context,private val sessionAlive: ()->Boolean = { true },
-                        private val visibilityEpoch: ()->Long = { 0L },private val sessionGuard: Any=Any()): FrameRecognizer {
+                        private val visibilityEpoch: ()->Long = { 0L },private val sessionGuard: Any=Any(),
+                        private val onPipelineStage: (String)->Unit = {}): FrameRecognizer {
     private val diagnostics=context.getSharedPreferences("jpq-diagnostics",Context.MODE_PRIVATE)
     private val diagnosticFolder=java.io.File(context.filesDir,"diagnostic")
     private var lastDiagnostic=0L
@@ -80,6 +81,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         activeVisibilityEpoch=captured.visibilityEpoch
         if(closed || !frameCurrent()) return
         if(captured.bitmap==null || !captured.completeDisplay) {
+            onPipelineStage(if(captured.bitmap==null) "null_bitmap" else "partial_capture")
             val now=captured.capturedElapsedMs
             trace.write(JSONObject().put("type","frame").put("elapsedMs",now).put("width",captured.width).put("height",captured.height)
                 .put("scene","UNKNOWN").put("reason",when {
@@ -98,7 +100,9 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             referenceDetector?.let { prepared ->
                 if(referenceEpoch!=activeVisibilityEpoch) { prepared.reset("visibility_epoch"); referenceEpoch=activeVisibilityEpoch }
             }
+            onPipelineStage("detect_start")
             val rawDetections=referenceDetector?.detect(bitmap,start) ?: detector.detect(bitmap)
+            onPipelineStage("detect_end")
             val detections=rawDetections.filter { it.box.centerY()>.13f && it.box.centerX() in .10f.. .88f && it.box.width()<.12f && it.box.height()>.02f }
             captured.probeFolder?.let { saveProbeInput(it,bitmap,captured.imageTimestampNs,rawDetections,detections.size) }
             ocr.request(bitmap,start,activeVisibilityEpoch)

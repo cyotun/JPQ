@@ -3,6 +3,22 @@ package com.cyotun.jpq.core
 import kotlin.test.*
 
 class HistoryDisplayModeTest {
+    @Test fun equalSizedTenAndHeartColumnsCanReserveTheirMeasuredGridWidthInAllModes() {
+        listOf(false to false,true to false,true to true).forEach { (history,details) ->
+            val config=DisplayConfig(showHistory=history,showHistoryDetails=details)
+            val size=HistoryWidth().measure(config,160f,1000f,minimumGrid=305f)
+            assertEquals(305f,size.grid)
+            if(!history) assertEquals(0f,size.history)
+            else if(!details) assertEquals(32f,size.history)
+            else assertTrue(size.history>32f)
+            assertTrue(size.total<=1000f)
+            val narrow=HistoryWidth().measure(config,500f,280f,minimumGrid=305f)
+            assertTrue(narrow.grid<305f)
+            assertEquals(280f,narrow.total,.001f)
+            if(history) assertEquals(32f,narrow.history)
+        }
+    }
+
     @Test fun countOnlyContainsOnlyTheSeatAndYellowCountCells() {
         val size=HistoryWidth().measure(DisplayConfig(showHistoryDetails=false,showStraightFlush=false),500f,1000f)
         assertEquals(32f,size.history)

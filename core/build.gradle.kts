@@ -27,3 +27,9 @@ tasks.register<JavaExec>("probeSuitSymbols") {
         providers.gradleProperty("suitProbeOutput").orNull?.let { args(it) }
     }
 }
+tasks.register<JavaExec>("probeGradeHeaders") {
+    dependsOn(tasks.testClasses)
+    classpath=sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.cyotun.jpq.core.TencentRoundGradeFixtureProbeKt")
+    doFirst { args(providers.gradleProperty("gradeAnnotations").get()) }
+}

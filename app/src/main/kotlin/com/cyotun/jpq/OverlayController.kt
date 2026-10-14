@@ -93,6 +93,22 @@ class OverlayController(private val context: Context,private val preview: Boolea
     }
     fun previewView(): View { refresh(); return view }
     private fun snapshot()=if(preview) PreviewData.snapshot else AppState.ledger.snapshot()
+    private fun counter(snapshot: RoundSnapshot): GradeCounterState = if(preview)
+        GradeCounterState(snapshot.roundId,setOf(Rank.EIGHT),GradeCountBounds(2,2),mapOf(Rank.EIGHT to GradeCountBounds(4,4)))
+        else AppState.counterState.takeIf { it.roundId==snapshot.roundId } ?: GradeCounterState()
+    private fun cellWeights(showHeart: Boolean)=
+        (if(showHeart) listOf(1f) else emptyList())+config.order.map { if(it==Rank.TEN) 1.55f else 1f }
+    private fun countTextSize()=16*config.valueText*(.89647275f/.96344686f)
+    private fun minimumGrid(snapshot: RoundSnapshot): Float {
+        val showHeart=counter(snapshot).gradeRanks.isNotEmpty()
+        val weights=cellWeights(showHeart)
+        val labels=(if(showHeart) listOf("♥") else emptyList())+config.order.map { it.label }
+        val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface=font; textSize=sp(16*config.headerText) }
+        val unit=labels.indices.maxOf { (if(showHeart && it==0) 12f else occupied(paint,labels[it])/d)/weights[it] }+1f
+        paint.textSize=sp(countTextSize())
+        val number=occupied(paint,"8")/d+1f
+        return max(unit,number)*weights.sum()+weights.size-1
+    }
     fun close() {
         if(disposed) return
         if(added && !preview) {
@@ -135,7 +151,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
             val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface=font; textSize=sp(14*config.detailText) }
             val longest=if(config.showHistory && config.showHistoryDetails)
                 listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).maxOf { occupied(paint,snapshot.history(it))/d } else 0f
-            size=width.measure(config,longest,space)
+            size=width.measure(config,longest,space,minimumGrid(snapshot))
             left=if(config.doubleTapHide) 0f else 48f
             barHeight=maxOf(44f,44*config.gridHeight+3,if(config.showHistory) 42*config.recordHeight+4 else 0f)
             params.width=dp(size.total).roundToInt(); params.height=dp(barHeight).roundToInt()
@@ -193,10 +209,11 @@ class OverlayController(private val context: Context,private val preview: Boolea
         GradeOcclusionGeometry.safeTopPosition(screen.width(),screen.height(),bar.width,bar.height,bar.left,grade,dp(4f).roundToInt())
     private fun updateGradeTip() {
         if(!added || disposed || preview || view.width<=0 || view.height<=0) { removeTip(); return }
+        if(snapshot().phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) { removeTip(); return }
         val screen=bounds(); val grade=gradeRect(screen); val bar=actualBarRect()
         if(!gradeSession.shouldShow(AppState.running,preview,hidden,config.showGradeOcclusionTip,bar,grade)) { removeTip(); return }
         val hint=GradeOcclusionGeometry.hintPosition(screen.width(),screen.height(),bar,dp(380f).roundToInt(),
-            dp(32f).roundToInt(),dp(left).roundToInt(),dp(4f).roundToInt())
+            dp(32f).roundToInt(),dp(left).roundToInt(),dp(4f).roundToInt(),if(config.showReset) dp(48f).roundToInt() else 0)
         // Keep actions readable on unusual displays; never enlarge the window
         // across live cards just to make a hint fit.
         if(hint==null || hint.width<dp(190f)) { removeTip(); return }
@@ -260,6 +277,12 @@ class OverlayController(private val context: Context,private val preview: Boolea
     }
     private inner class BarView: View(context) {
         private val p=Paint(Paint.ANTI_ALIAS_FLAG)
+        private val heart=Path().apply {
+            moveTo(6f,11f); cubicTo(4.5f,9.5f,0f,6f,0f,3.2f)
+            cubicTo(0f,-.3f,4f,-1f,6f,2f)
+            cubicTo(8f,-1f,12f,-.3f,12f,3.2f)
+            cubicTo(12f,6f,7.5f,9.5f,6f,11f); close()
+        }
         // The approved 12dp spade is drawn as a path, independent of a system
         // font. Its 16dp slot shares the two card rows' original grey surface.
         private val spade=Path().apply {
@@ -370,26 +393,48 @@ class OverlayController(private val context: Context,private val preview: Boolea
             val inside=RectF(body).apply { inset(dp(1f),dp(1f)) }
             p.color=Color.rgb(38,38,38); canvas.drawRoundRect(inside,dp(11f),dp(11f),p)
             canvas.save(); val clip=Path().apply { addRoundRect(inside,dp(11f),dp(11f),Path.Direction.CW) }; canvas.clipPath(clip)
-            val gridStart=start+dp(1f); val cell=(size.grid-14)/15
+            val gridStart=start+dp(1f)
+            val grades=counter(snap)
+            val weights=cellWeights(grades.gradeRanks.isNotEmpty())
+            val unit=(size.grid-(weights.size-1))/weights.sum()
             val height=22*config.gridHeight
-            config.order.forEachIndexed { index,rank ->
-                val x=gridStart+dp(index*(cell+1))
+            var cursor=gridStart
+            fun drawCell(label: String,count: Int?,weight: Float,grade: Boolean=false,rank: Rank?=null,heart: Boolean=false) {
+                val x=cursor; val cell=unit*weight
+                cursor+=dp(cell+1)
                 val header=RectF(x,dp(1f),x+dp(cell),dp(height+1))
                 p.shader=LinearGradient(0f,header.top,0f,header.bottom,Color.rgb(109,110,110),Color.rgb(67,67,67),Shader.TileMode.CLAMP)
                 canvas.drawRect(header,p); p.shader=null
                 val value=RectF(x,dp(height+2),x+dp(cell),dp(height*2+2)); p.color=Color.rgb(67,67,67); canvas.drawRect(value,p)
-                text(canvas,header,rank.label,16*config.headerText,Color.WHITE,true,false)
-                val count=snap.remaining!![rank]!!
-                val color=when(countTone(rank,count)) { CountTone.RED -> Color.rgb(255,49,64); CountTone.ZERO -> Color.rgb(95,95,95); else -> Color.WHITE }
-                text(canvas,value,count.toString(),16*config.valueText,color)
+                if(heart) {
+                    p.color=GOLD; canvas.save()
+                    canvas.translate(header.centerX()-dp(6f),header.centerY()-dp(5.5f))
+                    canvas.scale(d,d); canvas.drawPath(this@BarView.heart,p); canvas.restore()
+                } else text(canvas,header,label,16*config.headerText,Color.WHITE,true,false)
+                if(grade) {
+                    p.color=GOLD
+                    canvas.drawPath(Path().apply { moveTo(header.right-dp(5f),header.top); lineTo(header.right,header.top); lineTo(header.right,header.top+dp(5f)); close() },p)
+                }
+                val color=when(if(rank!=null) countTone(rank,count) else if(count==0) CountTone.ZERO else CountTone.WHITE) {
+                    CountTone.RED -> Color.rgb(255,49,64); CountTone.ZERO -> Color.rgb(95,95,95); else -> Color.WHITE
+                }
+                text(canvas,value,count?.toString() ?: "?",countTextSize(),color)
+            }
+            if(grades.gradeRanks.isNotEmpty()) drawCell("♥",grades.heartCount?.exact,1f,heart=true)
+            config.order.forEach { rank ->
+                val isGrade=rank in grades.gradeRanks
+                drawCell(rank.label,if(isGrade) grades.ordinaryCounts[rank]?.exact else snap.remaining!![rank],
+                    if(rank==Rank.TEN) 1.55f else 1f,isGrade,rank)
             }
             val indicatorWidth=if(config.showStraightFlush) HistoryWidth.STRAIGHT_FLUSH_SLOT else 0f
             if(config.showStraightFlush) {
-                val indicator=RectF(gridStart+dp(size.grid+1),dp(1f),
-                    gridStart+dp(size.grid+1+indicatorWidth),dp(height*2+2))
+                val indicator=RectF(gridStart+dp(size.grid),dp(1f),
+                    gridStart+dp(size.grid+indicatorWidth),dp(height*2+2))
                 p.shader=LinearGradient(0f,indicator.top,0f,dp(height+1),
                     Color.rgb(109,110,110),Color.rgb(67,67,67),Shader.TileMode.CLAMP)
                 canvas.drawRect(indicator,p); p.shader=null
+                p.color=Color.rgb(67,67,67)
+                canvas.drawRect(RectF(indicator.left,dp(height+1),indicator.right,indicator.bottom),p)
                 val state=if(preview) StraightFlushState.POSSIBLE else AppState.straightFlushState
                 // Gold means not excluded, including incomplete suit or wildcard evidence.
                 // Only a proved absence may darken the icon.
@@ -399,7 +444,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
                 canvas.drawPath(spade,p); canvas.restore()
             }
             if(config.showHistory) {
-                val rx=gridStart+dp(size.grid+1+indicatorWidth)
+                val rx=gridStart+dp(size.grid+indicatorWidth)
                 listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).forEachIndexed { i,seat ->
                     val y=dp(1+i*(14*config.recordHeight+1)); val h=dp(14*config.recordHeight)
                     val lb=RectF(rx,y,rx+dp(14f),y+h); p.color=Color.rgb(67,67,67); canvas.drawRect(lb,p); text(canvas,lb,seat.label,12f,Color.WHITE)

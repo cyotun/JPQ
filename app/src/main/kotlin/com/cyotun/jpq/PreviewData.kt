@@ -5,7 +5,7 @@ import com.cyotun.jpq.core.*
 /** Explicit adjustment-only sample. Never installed in AppState.ledger. */
 object PreviewData {
     val snapshot: RoundSnapshot by lazy {
-        val totals=listOf(1,1,4,6,5,3,0,1,1,0,0,4,4,4,6)
+        val totals=listOf(1,1,4,6,5,3,0,1,6,0,0,4,4,4,6)
         val rows=listOf("Q·6·77722·AAA99·3","9·4·小·66688·JJJ1010·大","6·99944·K·J·10101088·7")
         val used=mutableMapOf<Rank,Int>()
         var seq=0L
