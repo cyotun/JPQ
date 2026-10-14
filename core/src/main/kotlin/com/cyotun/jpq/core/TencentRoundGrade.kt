@@ -85,7 +85,12 @@ fun tencentRoundGradeReading(hints: List<SceneHint>, cornerRanks: Set<Rank> = em
             hud.filter { token ->
                 val d = token.box!!
                 gradePoint(token.text) != null && d.height in .018f.. .08f &&
-                    d.width in .008f.. .07f && abs(d.cx - b.cx) <= maxOf(.014f, b.width * .55f) &&
+                    // MLKit's tight box for a visible HUD 3 is about .0073 wide.
+                    d.width in .004f.. .07f && abs(d.cx - b.cx) <= maxOf(.014f, b.width * .55f) &&
+                    // A single point between merged labels cannot represent both teams.
+                    labels.filter { it.text != label }.none { other ->
+                        abs(d.cx-other.box!!.cx) <= abs(d.cx-b.cx)+.002f
+                    } &&
                     d.top >= b.bottom - .008f && d.cy <= b.bottom + .075f
             }.mapNotNull { gradePoint(it.text) }
         }.distinct()

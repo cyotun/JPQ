@@ -1,6 +1,5 @@
 package com.cyotun.jpq.vision
 
-import android.content.Intent
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
@@ -94,9 +93,7 @@ class HomeNavigationTest {
         assumeTrue(InstrumentationRegistry.getArguments().getString("appUiProbe")=="true")
         check(!AppState.running) { "Do not run UI probes during capture or a real match" }
         val instrument=InstrumentationRegistry.getInstrumentation()
-        val context=instrument.targetContext
-        context.startActivity(Intent(context,MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK).putExtra("page","home"))
+        launchStoppedJpqPage(instrument,"home")
         val activity=waitForActivity()
         try { action(activity) }
         finally {

@@ -1,6 +1,5 @@
 package com.cyotun.jpq.vision
 
-import android.content.Intent
 import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.Bitmap
@@ -47,8 +46,7 @@ class DisplayInteractionTest {
             }.take(27)
             AppState.ledger.begin("display-test",initial)
             val before=AppState.ledger.snapshot()
-            context.startActivity(Intent(context,MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK).putExtra("page","settings"))
+            launchStoppedJpqPage(instrument,"settings")
             waitFor(instrument) {
                 activity=androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
                     .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull()
@@ -82,7 +80,7 @@ class DisplayInteractionTest {
                 instrument.runOnMainSync {
                     val setting=descendants(activity!!.window.decorView).filterIsInstance<Switch>()
                         .single { it.text.toString()=="显示同花顺标识" }
-                    assertTrue(setting.performClick())
+                    setting.performClick() // CompoundButton can toggle while returning false.
                 }
                 instrument.waitForIdleSync()
             }
@@ -94,7 +92,7 @@ class DisplayInteractionTest {
             instrument.runOnMainSync {
                 val setting=descendants(activity!!.window.decorView).filterIsInstance<Switch>()
                     .single { it.text.toString()=="显示级牌遮挡提示" }
-                assertTrue(setting.performClick())
+                setting.performClick()
             }
             assertFalse(store.load().showGradeOcclusionTip)
             assertEquals(before,AppState.ledger.snapshot())
@@ -400,6 +398,7 @@ class DisplayInteractionTest {
         check(!AppState.running) { "Do not run UI probes during capture or a real match" }
         assumeTrue(!AppState.adjusting && AppState.adjustmentMask == null)
         val instrument=InstrumentationRegistry.getInstrumentation()
+        launchStoppedLandscapeHost(instrument)
         val context=instrument.targetContext
         assumeTrue(Settings.canDrawOverlays(context))
         val store=ConfigStore(context); val original=store.load()

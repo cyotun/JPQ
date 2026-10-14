@@ -49,6 +49,24 @@ class TencentRoundGradeTest {
             assertFalse(result.conflict)
         }
     }
+    @Test fun productionMlkitNarrowThreeElementsUnderMergedLabelsReadBothTeams() {
+        // Actual production OCR output on the reviewed teammate screenshot.
+        val result=tencentRoundGradeReading(listOf(
+            SceneHint("我方对方",GlyphBox(.09739264f,.011666667f,.1767638f,.043333333f)),
+            SceneHint("33",GlyphBox(.125f,.0475f,.1690951f,.104166664f)),
+            SceneHint("3",GlyphBox(.125f,.0475f,.13228528f,.104166664f)),
+            SceneHint("3",GlyphBox(.16142638f,.0475f,.1690951f,.104166664f)),
+        ))
+        assertEquals(setOf(Rank.THREE),result.ranks)
+        assertEquals("HUD_EQUAL",result.source)
+    }
+    @Test fun aSingleDigitCenteredBetweenMergedLabelsCannotCountAsBothTeamGrades() {
+        val result=tencentRoundGradeReading(listOf(
+            SceneHint("我方对方",GlyphBox(.09739264f,.011666667f,.1767638f,.043333333f)),
+            SceneHint("3",GlyphBox(.133f,.0475f,.14115f,.104166664f)),
+        ))
+        assertNull(result.ranks)
+    }
     @Test fun differentHudLevelsRequireCardCornerAndExplicitModeAgreement() {
         assertEquals(setOf(Rank.SEVEN),tencentRoundGradeReading(hud("3","7"),
             setOf(Rank.SEVEN),WildcardMode.SINGLE).ranks)
