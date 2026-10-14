@@ -14,7 +14,7 @@ fun main(args: Array<String>) {
     }
     var ambiguousSince: Long?=null
     File(args[0]).forEachLine { line ->
-        val fields=line.split(';',limit=7); time=fields[0].toLong(); val detectedScene=TableScene.valueOf(fields[1])
+        val fields=line.split(';',limit=8); time=fields[0].toLong(); val detectedScene=TableScene.valueOf(fields[1])
         val selfFinished=fields[2].toBoolean(); val observed=fields[3].split(',').map { it.toBoolean() }
         val selfClean=fields[4].toBoolean(); val adjusting=fields[5].toBoolean()
         val glyphs=if(fields[6].isBlank()) emptyList() else fields[6].split('|').map { value ->
@@ -22,11 +22,12 @@ fun main(args: Array<String>) {
             PlayGlyph(Card(rank,suit),g[2].toFloat(),GlyphBox(g[3].toFloat(),g[4].toFloat(),g[5].toFloat(),g[6].toFloat()))
         }
         val partition=partitionGuandanHand(glyphs); val hand=partition.hand.map { it.card }
+        val passing=fields.getOrNull(7)?.split(',')?.filter { it.isNotEmpty() }?.map { Seat.valueOf(it) }?.toSet().orEmpty()
         val snapshot=ledger.snapshot(); val previous=ledger.currentHand()
         val scene=continueTeammateScene(detectedScene,snapshot.phase)
         val removed=previous.toMutableList(); val subset=hand.all { removed.remove(it) }
         val ownProof=ownExit.prepare(time,scene,snapshot.roundId)
-        val ownership=assignPlayGroups(partition.table.filter { it.box.cy<.55f },emptySet(),
+        val ownership=assignPlayGroups(partition.table.filter { it.box.cy<.55f },passing,
             if(subset && scene!=TableScene.TEAMMATE && !adjusting) removed else emptyList(),scene==TableScene.TEAMMATE,ownProof)
         val self=ownership.seats.getValue(Seat.SELF)
         // The original trace may have classified a now-owned exit as ambiguous.
@@ -34,7 +35,10 @@ fun main(args: Array<String>) {
         // region observation; recorded empty-surface evidence applies to empty groups.
         if(!adjusting && self.isNotEmpty()) ownExit.observe(time,snapshot.phase,previous,hand,self)
         ownExit.emptySurface(selfClean,self.isNotEmpty())
-        if(ownership.ambiguous.isNotEmpty() && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)) {
+        if(confirmedRoundFinished(snapshot) && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.DEALING,TableScene.TRIBUTE)) {
+            ambiguousSince=null
+            observer.observe(TableFrame(time,scene,null))
+        } else if(ownership.ambiguous.isNotEmpty() && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)) {
             if(ambiguousSince==null) ambiguousSince=time
             if(time-ambiguousSince!!>1500 && ledger.snapshot().remaining!=null) observer.interrupted("出牌归属无法完整确认，等待下一局")
             observer.observe(TableFrame(time,scene,if(scene==TableScene.TEAMMATE || adjusting) null else hand))

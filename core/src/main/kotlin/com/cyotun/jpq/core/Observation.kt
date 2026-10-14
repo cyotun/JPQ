@@ -6,6 +6,16 @@ data class TableFrame(val timeMs: Long,val scene: TableScene,val hand: List<Card
 data class ObserverStatus(val armed: Boolean,val locked: Boolean,val baselineWindow: Boolean,val tribute: Boolean,
     val handVotes: Int,val playVotes: Map<Seat,Int>,val pendingPlays: Int,val sequence: Long)
 
+/** Only confirmed plays/completion state can establish an early double-finish. */
+fun confirmedRoundFinished(snapshot: RoundSnapshot): Boolean {
+    if(snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) return false
+    val previous=snapshot.played(Seat.PREVIOUS)==27
+    val opposite=snapshot.played(Seat.OPPOSITE)==27
+    val next=snapshot.played(Seat.NEXT)==27
+    return (previous && next) || (snapshot.phase==RoundPhase.SELF_FINISHED &&
+        (opposite || listOf(previous,opposite,next).count { it }>=2)) || (previous && opposite && next)
+}
+
 /** Short animations are candidates; only lost continuity permanently invalidates a round. */
 class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundSnapshot)->Unit = {}) {
     private class Vote(private val required: Int) {
@@ -50,6 +60,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         visible.keys.forEach { visible[it]=""; presentations[it]=null; previousGlyphs[it]=emptyList(); empty[it]=0 }; unknownSince=null
     }
     fun interrupted(reason: String) { locked=true; ledger.invalidate(reason); clearCandidates(); emit() }
+    private fun finishConfirmedRound() {
+        ledger.finish(); emit(); ledger.waitForNext(); lastRound=null; emit()
+        armed=false; baselineWindow=false; tribute=false; freshDeal=false; clearCandidates()
+    }
     fun observe(frame: TableFrame) {
         if(frame.timeMs<=lastTime) return
         var snap=ledger.snapshot()
@@ -80,6 +94,9 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             }
             sceneBeforeDeal=TableScene.DEALING
         } else if(frame.scene!=TableScene.UNKNOWN) sceneBeforeDeal=frame.scene
+        if(confirmedRoundFinished(ledger.snapshot()) && frame.scene !in setOf(TableScene.DEALING,TableScene.TRIBUTE)) {
+            finishConfirmedRound(); return
+        }
         if(frame.scene==TableScene.UNKNOWN) {
             if(unknownSince==null) unknownSince=frame.timeMs
             if(frame.timeMs-unknownSince!!>2000 && snap.remaining!=null) interrupted("画面无法完整观察，等待下一局")
@@ -98,13 +115,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         }
         if(locked || ledger.snapshot().phase==RoundPhase.UNAVAILABLE) return
         if((frame.scene==TableScene.TEAMMATE || frame.selfFinished) && ledger.snapshot().phase==RoundPhase.ACTIVE) { ledger.selfFinished(); emit() }
-        if(ledger.snapshot().phase==RoundPhase.SELF_FINISHED &&
-            (ledger.snapshot().played(Seat.OPPOSITE)==27 ||
-            listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).count { ledger.snapshot().played(it)==27 }>=2)) {
-            // Both teammates have finished, or three players have finished. The
+        if(confirmedRoundFinished(ledger.snapshot())) {
+            // Either pair of teammates has finished, or three players have finished. The
             // remaining players' revealed cards are not new table presentations.
-            ledger.finish(); emit(); ledger.waitForNext(); lastRound=null; emit()
-            armed=false; baselineWindow=false; tribute=false; freshDeal=false; clearCandidates(); return
+            finishConfirmedRound(); return
         }
         snap=ledger.snapshot()
         val hand=frame.hand
@@ -136,6 +150,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 // A short missing/raised glyph is not a card transfer. Do not invalidate the whole round here.
             }
         }
+        if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
         if(!bufferedOthers && ledger.snapshot().remaining!=null) collectOthers(frame,true)
     }
     private fun observedEmpty(play: ObservedPlay?)=play!=null && play.regionObserved && play.confidence>=.65f && play.cards.isEmpty()
@@ -219,6 +234,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                         presentation.cards=p.cards.toList(); presentation.glyphs=p.glyphs.toList(); presentation.lastSeen=frame.timeMs
                         presentation.colorReturnAnchor=p.glyphs.toList(); presentation.colorReturnSeen=frame.timeMs
                         visible[seat]=k; playVotes[seat]!!.clear()
+                        if(commitNow && confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
                     } else if(playVotes[seat]!!.duration(frame.timeMs)>=900) {
                         interrupted("出牌变化无法完整确认，等待下一局"); return
                     }
@@ -232,6 +248,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 } else pending.add(seat to next)
                 visible[seat]=k; presentations[seat]=next
                 playVotes[seat]!!.clear()
+                if(commitNow && confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
             }
         }
     }

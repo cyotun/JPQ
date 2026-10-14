@@ -16,6 +16,8 @@ data class DisplayConfig(
     val x: Float = 0f,
     val y: Float = 0f,
     val countWidthScale: Float = 1f,
+    val showHistoryDetails: Boolean = true,
+    val positionIsScreenRelative: Boolean = false,
 ) {
     fun validate(): DisplayConfig {
         require(validOrder(order))
@@ -37,14 +39,19 @@ class HistoryWidth {
     fun measure(config: DisplayConfig, textWidth: Float, available: Float): OverlaySize {
         config.validate()
         require(textWidth.isFinite() && textWidth >= 0 && available.isFinite() && available > 0)
-        val newGeometry = listOf(config.widthScale,config.gridRatio,config.detailText)
+        val newGeometry = listOf(config.widthScale,config.gridRatio,config.detailText,
+            if(config.showHistory) 1f else 0f,if(config.showHistoryDetails) 1f else 0f)
         if (geometry != newGeometry) { expanded = 0f; geometry = newGeometry }
         val inner = 552 * config.widthScale - 3
         val grid = inner * config.gridRatio
         val controls = (if (config.doubleTapHide) 0 else 48) + (if (config.showReset) 48 else 0)
-        if (!config.showHistory) {
+        if (!config.showHistory || !config.showHistoryDetails) {
             val onlyGrid=235.577047f*config.countWidthScale
-            return OverlaySize(onlyGrid, 0f, onlyGrid + 2, onlyGrid + 2 + controls)
+            // Count mode ends just after the two 14dp seat/count cells. It does
+            // not inherit a previous round's expanded text or a detail gutter.
+            val record=if(config.showHistory) 32f else 0f
+            val content=onlyGrid+record+if(config.showHistory) 3f else 2f
+            return OverlaySize(onlyGrid,record,content,content+controls)
         }
         val base = inner - grid
         expanded = maxOf(expanded, base, kotlin.math.ceil(32 + textWidth + 12))

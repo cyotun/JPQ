@@ -11,6 +11,7 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.*
 import android.provider.Settings
+import android.text.TextUtils
 import android.view.*
 import android.widget.*
 import com.cyotun.jpq.core.*
@@ -25,8 +26,11 @@ class MainActivity : ComponentActivity() {
     private var page="home"
     private var draft=DisplayConfig()
     private var restorePage="settings"
+    private var permissionsReturnPage="settings"
     private var stateText: TextView?=null
+    private var captureButton: Button?=null
     private var capturePending=false
+    private var stopPending=false
     private var preview: OverlayController?=null
     private val listener: () -> Unit = { updateState() }
     private val gold=Color.rgb(255,227,149)
@@ -38,6 +42,7 @@ class MainActivity : ComponentActivity() {
             startForegroundService(Intent(this,CaptureService::class.java).putExtra("code",result.resultCode).putExtra("data",data))
             moveTaskToBack(true)
         }
+        updateState()
     }
     private val notificationResult=registerForActivityResult(ActivityResultContracts.RequestPermission()) { requestProjection() }
     private val exportResult=registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -64,6 +69,8 @@ class MainActivity : ComponentActivity() {
         if(page in listOf("size","order")) draft=store.load()
         savedInstanceState?.getString("draft")?.let { draft=store.readDraft(it) }
         restorePage=savedInstanceState?.getString("restorePage") ?: "settings"
+        permissionsReturnPage=savedInstanceState?.getString("permissionsReturnPage") ?: "settings"
+        capturePending=savedInstanceState?.getBoolean("capturePending") ?: false
         onBackPressedDispatcher.addCallback(this,object: OnBackPressedCallback(true) {
             override fun handleOnBackPressed() { if(page=="home") finish() else leave() }
         })
@@ -73,7 +80,9 @@ class MainActivity : ComponentActivity() {
         Thread { runCatching { UpdateManager(applicationContext).check() } }.start()
     }
     override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString("page",page); outState.putString("draft",store.draftJson(draft)); outState.putString("restorePage",restorePage); super.onSaveInstanceState(outState)
+        outState.putString("page",page); outState.putString("draft",store.draftJson(draft)); outState.putString("restorePage",restorePage)
+        outState.putString("permissionsReturnPage",permissionsReturnPage); outState.putBoolean("capturePending",capturePending)
+        super.onSaveInstanceState(outState)
     }
     override fun onResume() { super.onResume(); AppState.subscribe(listener); if(page in listOf("permissions","home")) render(); updateState() }
     override fun onPause() { AppState.unsubscribe(listener); super.onPause() }
@@ -92,7 +101,9 @@ class MainActivity : ComponentActivity() {
     }
     private fun button(label: String,action: () -> Unit)=Button(this).apply {
         text=label; textSize=18f; setTextColor(Color.BLACK); background=bg(gold,26)
-        isAllCaps=false; setOnClickListener { action() }
+        isAllCaps=false; maxLines=1
+        setAutoSizeTextTypeUniformWithConfiguration(10,18,1,android.util.TypedValue.COMPLEX_UNIT_SP)
+        setOnClickListener { action() }
     }
     private fun add(parent: LinearLayout,view: View,height: Int=ViewGroup.LayoutParams.WRAP_CONTENT) {
         parent.addView(view,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,if(height<0) height else dp(height)).apply { bottomMargin=dp(10) })
@@ -101,59 +112,85 @@ class MainActivity : ComponentActivity() {
         val layoutOrientation=if(page in listOf("size","order")) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         if(requestedOrientation!=layoutOrientation) requestedOrientation=layoutOrientation
         stateText=null
+        captureButton=null
         preview=null
         root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(19,20,19)); setPadding(dp(18),dp(8),dp(18),dp(12)) }
         root.setOnApplyWindowInsetsListener { v,insets ->
             @Suppress("DEPRECATION") v.setPadding(dp(18),insets.systemWindowInsetTop+dp(8),dp(18),insets.systemWindowInsetBottom+dp(12)); insets
         }
         setContentView(root)
-        val title=when(page) { "settings" -> "设置"; "permissions" -> "权限设置"; "size" -> "尺寸调整"; "order" -> "牌序调整"; "update" -> "应用更新"; "backup" -> "配置备份"; else -> "记牌器" }
+        val title=when(page) { "settings" -> "设置"; "permissions" -> "权限设置"; "diagnostics" -> "牌局与诊断"; "size" -> "尺寸调整"; "order" -> "牌序调整"; "update" -> "应用更新"; "backup" -> "配置备份"; else -> "记牌器" }
         val head=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
         if(page !in listOf("home","settings")) head.addView(text("‹",32f,gold).apply { setOnClickListener { leave() } })
-        head.addView(text(title,26f,gold),LinearLayout.LayoutParams(0,dp(62),1f))
-        if(page=="home") head.addView(text("权限",15f,gold).apply { setOnClickListener { navigate("permissions") } })
+        head.addView(text(title,26f,gold).apply {
+            maxLines=1; setAutoSizeTextTypeUniformWithConfiguration(10,26,1,android.util.TypedValue.COMPLEX_UNIT_SP)
+        },LinearLayout.LayoutParams(0,dp(if(page=="home") 52 else 62),1f))
         root.addView(head)
         val content=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
-        val scroll=ScrollView(this).apply { isFillViewport=true; addView(content) }
-        root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
+        if(page=="home") root.addView(content,LinearLayout.LayoutParams(-1,0,1f))
+        else root.addView(ScrollView(this).apply { isFillViewport=true; addView(content) },LinearLayout.LayoutParams(-1,0,1f))
         when(page) {
             "home" -> home(content)
             "settings" -> settings(content)
             "permissions" -> permissions(content)
+            "diagnostics" -> diagnostics(content)
             "size" -> size(content)
             "order" -> order(content)
             "update" -> updates(content)
             "backup" -> backup(content)
         }
-        if(page=="home") add(root,button(if(AppState.running) "返回记牌" else "开始记牌") { startCapture() },58)
+        if(page=="home") {
+            captureButton=button("") { if(AppState.running) stopCapture() else startCapture() }
+            add(root,captureButton!!,56)
+            updateState()
+        }
         if(page in listOf("home","settings")) {
             val nav=LinearLayout(this)
             listOf("home" to "记牌","settings" to "设置").forEach { (key,label) ->
-                nav.addView(text(label,18f,if(page==key) gold else muted).apply { gravity=Gravity.CENTER; setOnClickListener { navigate(key) } },LinearLayout.LayoutParams(0,dp(52),1f))
+                nav.addView(text(label,18f,if(page==key) gold else muted).apply {
+                    gravity=Gravity.CENTER; maxLines=1
+                    setAutoSizeTextTypeUniformWithConfiguration(10,18,1,android.util.TypedValue.COMPLEX_UNIT_SP)
+                    setOnClickListener { navigate(key) }
+                },LinearLayout.LayoutParams(0,dp(48),1f))
             }; root.addView(nav)
         }
     }
     private fun navigate(next: String) {
         if(next in listOf("size","order") && page !in listOf("size","order")) { draft=store.load(); restorePage=page }
+        if(next=="permissions" && page!="permissions") permissionsReturnPage=page
         page=next; render()
     }
     private fun home(c: LinearLayout) {
-        add(c,text("本地运行 · 个人使用",14f,muted))
-        add(c,text("1、选择游戏平台")); add(c,row("大掼蛋（腾讯）","本地识别"))
-        add(c,text("2、选择玩法")); add(c,row("掼蛋","默认"))
-        add(c,text("3、选择玩家人数")); add(c,row("4 人","✓"))
-        add(c,text("4、几副牌")); add(c,row("2 副","✓"))
+        // A fixed page: every section shares the available height, including at
+        // increased system font sizes. Only secondary settings pages scroll.
+        fun compact(value: String,size: Float,color: Int=Color.WHITE,lines: Int=1)=text(value,size,color).apply {
+            gravity=Gravity.CENTER_VERTICAL; setPadding(dp(10),dp(4),dp(10),dp(4))
+            maxLines=lines; ellipsize=TextUtils.TruncateAt.END
+            setAutoSizeTextTypeUniformWithConfiguration(10,size.toInt(),1,android.util.TypedValue.COMPLEX_UNIT_SP)
+        }
+        val summary=LinearLayout(this).apply {
+            orientation=LinearLayout.VERTICAL; background=bg(Color.rgb(38,38,38)); setPadding(dp(8),dp(8),dp(8),dp(8))
+            addView(compact("大掼蛋（腾讯）",22f,gold),LinearLayout.LayoutParams(-1,0,1f))
+            addView(compact("掼蛋 · 默认玩法",17f),LinearLayout.LayoutParams(-1,0,1f))
+            addView(compact("4 人 · 2 副牌 · 共 108 张",16f,muted),LinearLayout.LayoutParams(-1,0,1f))
+        }
+        c.addView(summary,LinearLayout.LayoutParams(-1,0,3f).apply { bottomMargin=dp(12) })
+        c.addView(compact("每局牌数",14f,muted),LinearLayout.LayoutParams(-1,0,.7f))
         val cards=LinearLayout(this)
-        guandanOrder.forEach { rank -> cards.addView(text("${rank.label}\n${rank.capacity}",13f,gold).apply { gravity=Gravity.CENTER; background=bg(Color.rgb(38,38,38),4) },LinearLayout.LayoutParams(0,dp(64),1f)) }
-        add(c,cards)
-        stateText=text("",14f,muted); add(c,stateText!!); updateState()
-        if(AppState.running) add(c,row("停止记牌","›") { stopCapture() })
-        add(c,text("请在大厅开始记牌，再进入房间。牌面无法完整确认时等待下一局。当前适配版仍需连续牌局验证。",14f,muted))
+        guandanOrder.forEach { rank -> cards.addView(compact("${rank.label}\n${rank.capacity}",15f,gold,2).apply {
+            gravity=Gravity.CENTER; setPadding(dp(1),dp(2),dp(1),dp(2)); background=bg(Color.rgb(38,38,38),4)
+            setAutoSizeTextTypeUniformWithConfiguration(6,15,1,android.util.TypedValue.COMPLEX_UNIT_SP)
+        },LinearLayout.LayoutParams(0,-1,1f).apply { marginEnd=dp(1) }) }
+        c.addView(cards,LinearLayout.LayoutParams(-1,0,1.6f).apply { bottomMargin=dp(12) })
+        stateText=compact("",16f,gold,2).apply { background=bg(Color.rgb(38,38,38)) }
+        c.addView(stateText!!,LinearLayout.LayoutParams(-1,0,1.8f).apply { bottomMargin=dp(8) })
+        c.addView(compact("在游戏大厅开始记牌，再进入房间。",14f,muted,2),LinearLayout.LayoutParams(-1,0,1.2f))
+        updateState()
     }
     private fun settings(c: LinearLayout) {
         val d=store.load()
         add(c,text("显示设置",15f,muted))
-        switch(c,"显示三家出牌记录",d.showHistory) { store.save(store.load().copy(showHistory=it)); changed() }
+        add(c,row("三家出牌显示",historyLabel(d)) { selectHistoryMode() })
         switch(c,"显示重置按钮",d.showReset) { store.save(store.load().copy(showReset=it)); changed() }
         switch(c,"双击记牌条隐藏",d.doubleTapHide) { store.save(store.load().copy(doubleTapHide=it)); changed() }
         add(c,text("双击开启后移除隐藏按钮；隐藏后只显示恢复按钮。",13f,muted))
@@ -161,6 +198,23 @@ class MainActivity : ComponentActivity() {
         add(c,text("应用设置",15f,muted))
         add(c,row("权限设置","›") { navigate("permissions") }); add(c,row("应用更新","›") { navigate("update") })
         add(c,row("配置备份","›") { navigate("backup") })
+        add(c,row("牌局与诊断","›") { navigate("diagnostics") })
+        add(c,row("关于记牌器",BuildConfig.VERSION_NAME) {
+            AlertDialog.Builder(this).setTitle("记牌器").setMessage("个人本地使用，无账号、会员或收费。牌面识别在本机完成；当前适配版尚未完成连续真机牌局验收。\n\n版本：${BuildConfig.VERSION_NAME}") .setPositiveButton("知道了",null).show()
+        })
+    }
+    private fun historyLabel(config: DisplayConfig)=if(!config.showHistory) "隐藏" else if(config.showHistoryDetails) "数量和详情" else "仅数量"
+    private fun selectHistoryMode() {
+        val config=store.load()
+        val selected=if(!config.showHistory) 0 else if(!config.showHistoryDetails) 1 else 2
+        AlertDialog.Builder(this).setTitle("三家出牌显示")
+            .setSingleChoiceItems(arrayOf("隐藏","仅数量","数量和详情"),selected) { dialog,which ->
+                store.save(store.load().copy(showHistory=which!=0,showHistoryDetails=which==2))
+                changed(); dialog.dismiss(); render()
+            }.setNegativeButton("取消",null).show()
+    }
+    private fun diagnostics(c: LinearLayout) {
+        add(c,text("用于本机回看与排查记牌问题。",14f,muted))
         add(c,row("最近牌局","查看") { RoundRepository(this).use { db -> AlertDialog.Builder(this).setTitle("最近牌局").setMessage(db.summary()).setPositiveButton("关闭",null).show() } })
         add(c,row("导出牌局诊断","仅保存到本机") { diagnosticResult.launch("记牌器牌局诊断.json") })
         add(c,row("导出完整测试日志","日志和诊断画面") {
@@ -174,9 +228,6 @@ class MainActivity : ComponentActivity() {
             AlertDialog.Builder(this).setMessage("清理已保存的本机记录和诊断画面？正在记牌时不可清理。").setPositiveButton("清理") { _,_ ->
                 if(!AppState.running) { RoundRepository(this).use { it.clear() }; java.io.File(filesDir,"diagnostic").listFiles()?.filter { it.isFile }?.forEach { it.delete() } }
             }.setNegativeButton("取消",null).show()
-        })
-        add(c,row("关于记牌器",BuildConfig.VERSION_NAME) {
-            AlertDialog.Builder(this).setTitle("记牌器").setMessage("个人本地使用，无账号、会员或收费。牌面识别在本机完成；当前适配版尚未完成连续真机牌局验收。\n\n版本：${BuildConfig.VERSION_NAME}") .setPositiveButton("知道了",null).show()
         })
     }
     private fun switch(c: LinearLayout,label: String,on: Boolean,change: (Boolean)->Unit) {
@@ -208,16 +259,17 @@ class MainActivity : ComponentActivity() {
         groups.forEach { columns.addView(it,LinearLayout.LayoutParams(0,-2,1f)) }
         add(c,columns)
         add(groups[0],text("窗口",16f,gold)); add(groups[1],text("行高",16f,gold)); add(groups[2],text("左侧字体",16f,gold)); add(groups[3],text("右侧字体",16f,gold))
-        slider(groups[0],"总宽度",if(draft.showHistory) draft.widthScale else draft.countWidthScale,.8f,1.35f) {
-            draft=if(draft.showHistory) draft.copy(widthScale=it) else draft.copy(countWidthScale=it)
+        val details=draft.showHistory && draft.showHistoryDetails
+        slider(groups[0],"总宽度",if(details) draft.widthScale else draft.countWidthScale,.8f,1.35f) {
+            draft=if(details) draft.copy(widthScale=it) else draft.copy(countWidthScale=it)
         }
-        slider(groups[0],"左右比例",draft.gridRatio,.3f,.6f,draft.showHistory) { draft=draft.copy(gridRatio=it) }
+        slider(groups[0],"左右比例",draft.gridRatio,.3f,.6f,details) { draft=draft.copy(gridRatio=it) }
         slider(groups[1],"牌格高度",draft.gridHeight,.85f,1.3f) { draft=draft.copy(gridHeight=it) }
         slider(groups[1],"记录行高",draft.recordHeight,.85f,1.3f,draft.showHistory) { draft=draft.copy(recordHeight=it) }
         slider(groups[2],"标题字号",draft.headerText,.8f,1.35f) { draft=draft.copy(headerText=it) }
         slider(groups[2],"数值字号",draft.valueText,.8f,1.35f) { draft=draft.copy(valueText=it) }
         slider(groups[3],"计数字号",draft.counterText,.8f,1.35f,draft.showHistory) { draft=draft.copy(counterText=it) }
-        slider(groups[3],"详情字号",draft.detailText,.8f,1.35f,draft.showHistory) { draft=draft.copy(detailText=it) }
+        slider(groups[3],"详情字号",draft.detailText,.8f,1.35f,details) { draft=draft.copy(detailText=it) }
         saveBar(c)
     }
     private fun slider(c: LinearLayout,label: String,value: Float,min: Float,max: Float,enabled: Boolean=true,change: (Float)->Unit) {
@@ -255,7 +307,7 @@ class MainActivity : ComponentActivity() {
     private fun saveBar(c: LinearLayout) {
         add(c,row("重置当前调整","恢复默认") {
             val defaults=DisplayConfig()
-            draft=if(page=="order") draft.copy(order=guandanOrder) else defaults.copy(showHistory=draft.showHistory,showReset=draft.showReset,doubleTapHide=draft.doubleTapHide,order=draft.order,x=draft.x,y=draft.y)
+            draft=if(page=="order") draft.copy(order=guandanOrder) else defaults.copy(showHistory=draft.showHistory,showHistoryDetails=draft.showHistoryDetails,showReset=draft.showReset,doubleTapHide=draft.doubleTapHide,order=draft.order,x=draft.x,y=draft.y,positionIsScreenRelative=draft.positionIsScreenRelative)
             render()
         })
         add(c,button("保存并退出") { store.save(draft.validate()); changed(); page=restorePage; render() },56)
@@ -286,10 +338,11 @@ class MainActivity : ComponentActivity() {
     }
     private fun changed() { if(AppState.running) startService(Intent(this,CaptureService::class.java).setAction("CONFIG")) }
     private fun startCapture() {
-        if(AppState.running) { moveTaskToBack(true); return }
+        if(AppState.running) { stopCapture(); return }
         if(capturePending) return
         if(!Settings.canDrawOverlays(this)) { navigate("permissions"); Toast.makeText(this,"请先开启悬浮窗权限",Toast.LENGTH_LONG).show(); return }
         capturePending=true
+        updateState()
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
             notificationResult.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else requestProjection()
@@ -299,9 +352,23 @@ class MainActivity : ComponentActivity() {
         val request=if(Build.VERSION.SDK_INT>=34) manager.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()) else manager.createScreenCaptureIntent()
         captureResult.launch(request)
     }
-    private fun stopCapture() { startService(Intent(this,CaptureService::class.java).setAction("STOP")); Handler(Looper.getMainLooper()).postDelayed({ render() },300) }
-    private fun updateState() { stateText?.text=if(AppState.running) "${AppState.message}\n${AppState.capturedWidth} × ${AppState.capturedHeight} · ${AppState.capturedFrames} 帧" else AppState.message }
-    private fun leave() { page=if(page in listOf("size","order")) restorePage else "settings"; render() }
+    private fun stopCapture() {
+        if(stopPending) return
+        stopPending=true; updateState()
+        startService(Intent(this,CaptureService::class.java).setAction("STOP"))
+    }
+    private fun updateState() {
+        if(!AppState.running) stopPending=false
+        stateText?.text=AppState.message
+        captureButton?.apply {
+            text=when { stopPending -> "正在停止…"; AppState.running -> "停止记牌"; capturePending -> "等待屏幕共享授权"; else -> "开始记牌" }
+            isEnabled=!capturePending && !stopPending
+        }
+    }
+    private fun leave() {
+        page=when(page) { "size","order" -> restorePage; "permissions" -> permissionsReturnPage; "settings" -> "home"; else -> "settings" }
+        render()
+    }
     private fun importConfig(uri: Uri) {
         runCatching {
                 val bytes=contentResolver.openInputStream(uri)!!.use { input ->

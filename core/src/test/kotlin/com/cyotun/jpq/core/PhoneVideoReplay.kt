@@ -45,7 +45,10 @@ fun main(args: Array<String>) {
         if(seen.getValue(Seat.SELF).observed) ownExit.observe(time,round.phase,previous,hand,self)
         ownExit.emptySurface(seen.getValue(Seat.SELF).observed && seen.getValue(Seat.SELF).reason=="table_surface_visible",self.isNotEmpty())
         trace?.appendLine("{\"timeMs\":$time,\"scene\":${quote(scene.name)},\"hand\":${cards(hand)},\"phase\":${quote(ledger.snapshot().phase.name)},\"groups\":{${owned.seats.entries.joinToString(",") { (seat,g) -> "${quote(seat.name)}:${cards(g.map { it.card })}" }}},\"empty\":{${seen.entries.joinToString(",") { (seat,e) -> "${quote(seat.name)}:{\"observed\":${e.observed},\"reason\":${quote(e.reason)}}" }}}" + "}")
-        if(owned.ambiguous.isNotEmpty() && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)) {
+        if(confirmedRoundFinished(round) && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.DEALING,TableScene.TRIBUTE)) {
+            ambiguousSince=null
+            observer.observe(TableFrame(time,scene,null))
+        } else if(owned.ambiguous.isNotEmpty() && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)) {
             if(ambiguousSince==null) ambiguousSince=time
             if(time-ambiguousSince!!>1500 && ledger.snapshot().remaining!=null) observer.interrupted("出牌归属无法完整确认，等待下一局")
             ambiguous++; observer.observe(TableFrame(time,scene,if(scene==TableScene.TEAMMATE) null else hand,selfFinished=f[6].toBoolean()))

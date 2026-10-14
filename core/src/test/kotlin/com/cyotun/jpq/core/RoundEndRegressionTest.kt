@@ -63,13 +63,14 @@ class RoundEndRegressionTest {
         assertTrue(fixture.ledger.snapshot().plays.values.all { it.isEmpty() })
     }
 
-    @Test fun twoCompletedOpponentsWithoutSelfFinishDoNotStopGenuinePlays() {
+    @Test fun twoCompletedPlayersOnDifferentTeamsContinueUntilTheThirdFinishes() {
         val fixture=Fixture(27,27,22)
-        fixture.show(Seat.NEXT,shownRemainder)
         assertEquals(RoundPhase.ACTIVE,fixture.ledger.snapshot().phase)
-        assertEquals(27,fixture.ledger.snapshot().played(Seat.NEXT))
-        assertEquals(0,fixture.ledger.snapshot().remaining!!.values.sum())
-        assertTrue(fixture.snapshots.none { it.phase==RoundPhase.FINISHED })
+        fixture.show(Seat.NEXT,shownRemainder)
+        val finished=fixture.snapshots.single { it.phase==RoundPhase.FINISHED }
+        assertEquals(27,finished.played(Seat.NEXT))
+        assertEquals(0,finished.remaining!!.values.sum())
+        assertEquals(RoundPhase.WAITING,fixture.ledger.snapshot().phase)
     }
 
     @Test fun selfFinishWithTwoPlayersStillPlayingContinuesWithoutInventingSelfEvents() {
@@ -91,14 +92,15 @@ class RoundEndRegressionTest {
         assertTrue(fixture.snapshots.none { it.phase==RoundPhase.FINISHED })
     }
 
-    @Test fun theFrameAfterTheSecondOpponentFinishesStopsTheRevealedHand() {
+    @Test fun theSecondTeammateFinalPlayFinishesWithinItsConfirmedFrame() {
         val fixture=Fixture(27,26,22)
         val lastOppositeCard=opposite.last()
         fixture.show(Seat.OPPOSITE,listOf(lastOppositeCard),finished=true)
-        assertEquals(27,fixture.ledger.snapshot().played(Seat.OPPOSITE))
-        fixture.tick(mapOf(Seat.NEXT to ObservedPlay(shownRemainder,.99f)),finished=true)
         val finished=fixture.snapshots.single { it.phase==RoundPhase.FINISHED }
+        assertEquals(27,finished.played(Seat.OPPOSITE))
         assertEquals(5,finished.remaining!!.values.sum()); assertEquals(22,finished.played(Seat.NEXT))
+        assertEquals(RoundPhase.WAITING,fixture.ledger.snapshot().phase)
+        fixture.tick(mapOf(Seat.NEXT to ObservedPlay(shownRemainder,.99f)),finished=true)
         assertEquals(RoundPhase.WAITING,fixture.ledger.snapshot().phase)
     }
 

@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import android.view.ViewConfiguration
 import android.view.inspector.WindowInspector
 import android.widget.Switch
+import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.cyotun.jpq.*
@@ -52,18 +53,39 @@ class DisplayInteractionTest {
             }
             fun descendants(view: View): List<View> = listOf(view)+if(view is ViewGroup)
                 (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
-            lateinit var switches: List<Switch>
-            instrument.runOnMainSync {
-                switches=descendants(activity!!.window.decorView).filterIsInstance<Switch>()
-                    .filter { it.text.toString() in setOf("显示三家出牌记录","显示重置按钮","双击记牌条隐藏") }
+            fun selectHistory(which: Int) {
+                instrument.runOnMainSync {
+                    val label=descendants(activity!!.window.decorView).filterIsInstance<TextView>().single { it.text.toString()=="三家出牌显示" }
+                    assertTrue((label.parent as View).performClick())
+                }
+                instrument.waitForIdleSync()
+                instrument.runOnMainSync {
+                    val label=listOf("隐藏","仅数量","数量和详情")[which]
+                    val choice=WindowInspector.getGlobalWindowViews().flatMap { descendants(it) }.filterIsInstance<TextView>()
+                        .first { it.text.toString()==label && it.parent is android.widget.ListView }
+                    val list=choice.parent as android.widget.ListView
+                    assertTrue(list.performItemClick(choice,which,list.adapter.getItemId(which)))
+                }
+                instrument.waitForIdleSync()
             }
-            assertEquals(3,switches.size)
+            fun toggleSwitches() {
+                instrument.runOnMainSync {
+                    val switches=descendants(activity!!.window.decorView).filterIsInstance<Switch>()
+                        .filter { it.text.toString() in setOf("显示重置按钮","双击记牌条隐藏") }
+                    assertEquals(2,switches.size); switches.forEach { it.performClick() }
+                }
+            }
+            selectHistory(0)
             // Exercise the actual screen listeners and the exact combination reported by the user.
-            instrument.runOnMainSync { switches.forEach { it.performClick() } }
+            toggleSwitches()
             assertFalse(store.load().showHistory); assertFalse(store.load().showReset)
             assertTrue(store.load().doubleTapHide); assertEquals(before,AppState.ledger.snapshot())
-            instrument.runOnMainSync { switches.forEach { it.performClick() } }
+            selectHistory(1)
+            assertTrue(store.load().showHistory); assertFalse(store.load().showHistoryDetails)
+            assertEquals(before,AppState.ledger.snapshot())
+            selectHistory(2); toggleSwitches()
             assertTrue(store.load().showHistory); assertTrue(store.load().showReset)
+            assertTrue(store.load().showHistoryDetails)
             assertFalse(store.load().doubleTapHide); assertEquals(before,AppState.ledger.snapshot())
             instrument.runOnMainSync { overlay=OverlayController(context).also { it.show() } }
             instrument.waitForIdleSync()

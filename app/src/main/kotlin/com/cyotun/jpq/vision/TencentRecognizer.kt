@@ -116,6 +116,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 val b=l.box ?: return@mapNotNull null
                 when { b.centerY()<captured.height*.3 -> Seat.OPPOSITE; b.centerX()<captured.width*.4 -> Seat.PREVIOUS; b.centerX()>captured.width*.65 -> Seat.NEXT; else -> null }
             }.toSet()
+            val selfFinished=tencentSelfFinished(hints)
             val removed=AppState.ledger.currentHand().toMutableList()
             val subset=hand.all { removed.remove(it) }
             val ownership=assignPlayGroups(partition.table.filter { it.box.cy<.55f },passing,if(subset && scene!=TableScene.TEAMMATE && !captured.adjusting) removed else emptyList(),scene==TableScene.TEAMMATE,
@@ -149,9 +150,22 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 .put("confidences",JSONObject(ownership.seats.mapKeys { it.key.name }.mapValues { (_,p) -> p.minOfOrNull { it.confidence } ?: 1f }))
                 .put("glyphs",JSONArray(glyphs.map { p -> JSONArray(listOf(p.card.colorKey(),rounded(p.confidence),rounded(p.box.left),rounded(p.box.top),rounded(p.box.right),rounded(p.box.bottom))) }))
                 .put("ambiguous",ownership.ambiguous.size).put("showHistory",ConfigStore(context).load().showHistory)
-                .put("sceneHints",JSONArray(hints.filter { it.text in setOf("末游","四游","头游","二游","三游","进贡","还贡","队友手牌","对家手牌","加倍","不加倍","超级加倍") }.map { it.text })))
+                .put("selfFinished",selfFinished).put("passing",JSONArray(passing.map { it.name }))
+                .put("sceneHints",JSONArray(hints.filter { it.text in setOf("末游","四游","头游","二游","三游","进贡","还贡","队友手牌","对家手牌","加倍","不加倍","超级加倍") }.map { it.text }))
+                .put("sceneHintBoxes",JSONArray(hints.filter { it.text in setOf("末游","四游","头游","二游","三游","进贡","还贡","队友手牌","对家手牌","加倍","不加倍","超级加倍","不出","不要") }.map { hint ->
+                    JSONObject().put("text",hint.text).put("box",hint.box?.let { box ->
+                        JSONArray(listOf(rounded(box.left),rounded(box.top),rounded(box.right),rounded(box.bottom)))
+                    } ?: JSONObject.NULL)
+                })))
             if(diagnostics.getBoolean("enabled",false) && SystemClock.elapsedRealtime()-lastDiagnostic>=2000) {
                 android.util.Log.i("JPQVision","scene=$scene hand=${hand.map { it.colorKey() }} passing=$passing groups=${ownership.seats.mapValues { (_,p) -> p.map { it.card.colorKey() } }} ambiguous=${ownership.ambiguous.size}")
+            }
+            if(confirmedRoundFinished(round) && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.DEALING,TableScene.TRIBUTE)) {
+                // The opponents' double-finish ends the match before both losing
+                // hands are revealed in central table rows. Such reveals may have
+                // no play owner and must not reach the ambiguity timeout.
+                ambiguousSince=null; overlayOcclusionSince=null
+                observe(TableFrame(start,scene,null)); return
             }
             val overlayOccluded=emptyEvidence.values.any { it.reason=="overlay_occlusion" } &&
                 scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)
@@ -181,7 +195,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 ObservedPlay(sorted.map { it.card },sorted.minOfOrNull { it.confidence } ?: 1f,sorted,
                     regionObserved=emptyEvidence.getValue(seat).observed && (sorted.isNotEmpty() || !effect))
             }
-            observe(TableFrame(start,scene,if(scene==TableScene.TEAMMATE || captured.adjusting) null else hand,observed,tencentSelfFinished(hints)))
+            observe(TableFrame(start,scene,if(scene==TableScene.TEAMMATE || captured.adjusting) null else hand,observed,selfFinished))
         } finally {
             val now=SystemClock.elapsedRealtime()
             if(diagnosticFrameAllowed && diagnostics.getBoolean("enabled",false) && now-lastDiagnostic>=2000 && evidenceBusy.compareAndSet(false,true)) {

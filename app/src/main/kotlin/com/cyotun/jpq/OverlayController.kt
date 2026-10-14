@@ -20,6 +20,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private var changedDuringTouch=false
     private var oldRound: String?=null
     private var oldBounds: Rect?=null
+    private val positionMemory=OverlayPositionMemory()
     private val width=HistoryWidth()
     private val font=Typeface.createFromAsset(context.assets,"overlay.ttf")
     private val view=BarView()
@@ -50,6 +51,11 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private fun snapshot()=if(preview) PreviewData.snapshot else AppState.ledger.snapshot()
     fun close() {
         if(disposed) return
+        if(added && !preview) {
+            val screen=oldBounds ?: bounds()
+            if(touch && view.hasMoved()) saveDraggedPosition(screen)
+            else positionMemory.onStop(OverlayPoint(params.x,params.y),screen.width(),screen.height())?.let { savePosition(it) }
+        }
         disposed=true
         AppState.unsubscribe(listener)
         dialogs.toList().forEach { runCatching { it.dismiss() }; AppState.endOverlayOcclusion(it) }
@@ -67,7 +73,9 @@ class OverlayController(private val context: Context,private val preview: Boolea
         val previous=config
         config=configSource?.invoke() ?: store.load()
         val screen=bounds()
-        val keepAnchor=added && oldBounds==screen && previous.x==config.x && previous.y==config.y
+        val sameSavedPosition=previous.x==config.x && previous.y==config.y &&
+            previous.positionIsScreenRelative==config.positionIsScreenRelative
+        val keepAnchor=added && oldBounds==screen && sameSavedPosition
         oldBounds=Rect(screen)
         val snapshot=snapshot()
         if(snapshot.roundId!=oldRound) { oldRound=snapshot.roundId; width.newRound() }
@@ -80,21 +88,41 @@ class OverlayController(private val context: Context,private val preview: Boolea
             params.width=dp(left+banner).roundToInt(); params.height=dp(46f).roundToInt()
         } else {
             val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface=font; textSize=sp(14*config.detailText) }
-            val longest=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).maxOf { occupied(paint,snapshot.history(it))/d }
+            val longest=if(config.showHistory && config.showHistoryDetails)
+                listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).maxOf { occupied(paint,snapshot.history(it))/d } else 0f
             size=width.measure(config,longest,space)
             left=if(config.doubleTapHide) 0f else 48f
             barHeight=maxOf(44f,44*config.gridHeight+3,if(config.showHistory) 42*config.recordHeight+4 else 0f)
             params.width=dp(size.total).roundToInt(); params.height=dp(barHeight).roundToInt()
         }
-        val maxX=max(0,screen.width()-params.width); val maxY=max(0,screen.height()-params.height)
-        params.x=if(keepAnchor) params.x.coerceIn(0,maxX) else (config.x*maxX).roundToInt()
-        params.y=if(keepAnchor) params.y.coerceIn(0,maxY) else (config.y*maxY).roundToInt()
+        val position=if(keepAnchor)
+            OverlayPosition.clamp(params.x,params.y,screen.width(),screen.height(),params.width,params.height)
+        else OverlayPosition.restore(config.x,config.y,config.positionIsScreenRelative,
+            screen.width(),screen.height(),params.width,params.height)
+        params.x=position.x; params.y=position.y
+        if(!preview) {
+            positionMemory.observe(position,screen.width(),screen.height())
+            // Preserve a legacy position until the first game-shaped screen;
+            // otherwise a portrait waiting banner would migrate its clamp.
+            if(!config.positionIsScreenRelative && screen.width()>=screen.height()) savePosition(screen)
+        }
         if(added) wm.updateViewLayout(view,params)
         if(!preview) view.post { publishMask() }
         if(preview) view.layoutParams=(view.layoutParams ?: ViewGroup.LayoutParams(params.width,params.height)).apply {
             width=params.width; height=params.height
         }
         view.invalidate()
+    }
+    private fun savePosition(screen: Rect) {
+        savePosition(OverlayPosition.save(params.x,params.y,screen.width(),screen.height()))
+    }
+    private fun savePosition(position: ScreenRelativePosition) {
+        config=store.load().copy(x=position.x,y=position.y,positionIsScreenRelative=true)
+        store.save(config)
+    }
+    private fun saveDraggedPosition(screen: Rect) {
+        positionMemory.userMoved(OverlayPoint(params.x,params.y),screen.width(),screen.height())
+        savePosition(screen)
     }
     private fun occupied(paint: Paint,value: String): Float {
         val b=Rect(); paint.getTextBounds(value,0,value.length,b)
@@ -170,6 +198,12 @@ class OverlayController(private val context: Context,private val preview: Boolea
             detector=makeDetector()
         }
         fun cancelGesture() { cancelTapDetector(); touch=false; moved=false }
+        fun hasMoved()=moved
+        override fun onConfigurationChanged(newConfig: Configuration) {
+            super.onConfigurationChanged(newConfig)
+            cancelGesture(); changedDuringTouch=false
+            refresh()
+        }
         override fun onSizeChanged(w: Int,h: Int,oldw: Int,oldh: Int) {
             super.onSizeChanged(w,h,oldw,oldh)
             if(!preview) post { publishMask() }
@@ -205,9 +239,8 @@ class OverlayController(private val context: Context,private val preview: Boolea
             if(event.actionMasked==MotionEvent.ACTION_UP || event.actionMasked==MotionEvent.ACTION_CANCEL) {
                 touch=false
                 if(moved) {
+                    saveDraggedPosition(oldBounds ?: bounds())
                     detectorCancel()
-                    config=store.load().copy(x=params.x.toFloat()/max(1,bounds().width()-params.width),y=params.y.toFloat()/max(1,bounds().height()-params.height))
-                    store.save(config)
                 }
                 if(changedDuringTouch) post { refresh() }
             }
@@ -243,6 +276,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
                     val y=dp(1+i*(14*config.recordHeight+1)); val h=dp(14*config.recordHeight)
                     val lb=RectF(rx,y,rx+dp(14f),y+h); p.color=Color.rgb(67,67,67); canvas.drawRect(lb,p); text(canvas,lb,seat.label,12f,Color.WHITE)
                     val nb=RectF(rx+dp(16f),y,rx+dp(30f),y+h); p.color=GOLD; canvas.drawRect(nb,p); text(canvas,nb,snap.played(seat).toString(),12*config.counterText,Color.BLACK)
+                    if(!config.showHistoryDetails) return@forEachIndexed
                     val hb=RectF(rx+dp(32f),y,rx+dp(size.history-12),y+h)
                     p.typeface=font; p.textSize=sp(14*config.detailText)
                     var groups=snap.plays[seat].orEmpty().map { it.cards.joinToString("") { it.rank.label } }
