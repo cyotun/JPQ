@@ -32,7 +32,11 @@ def badge(im,x,y,s,state):
     if ICON_MODE:
         if state=='unknown': return
         tone=GOLD if state in ('natural','wild') else '#626262'
-        d.rectangle((x,y,x+BADGE_WIDTH*s,y+44*s),fill=PANEL)
+        # Continue the rank-header gradient and count-row grey into the icon.
+        # A separate #262626 strip looked detached from the adjacent card grid.
+        for j in range(round(21*s)):
+            n=round(109-(109-67)*j/(21*s))
+            d.line((x,y+j,x+BADGE_WIDTH*s,y+j),fill=(n,n,n))
         xx=x+BADGE_WIDTH*s/2; yy=y+22*s
         d.polygon([(xx,yy-7*s),(xx-5*s,yy-1*s),(xx,yy+3*s),(xx+5*s,yy-1*s)],fill=tone)
         d.ellipse((xx-6*s,yy-3*s,xx,yy+3*s),fill=tone)
@@ -118,7 +122,7 @@ def icon_preview():
     BADGE_WIDTH=16; ICON_MODE=True
     im=Image.new('RGB',(1800,870),'#141514'); d=ImageDraw.Draw(im)
     ui(d,(62,35),'同花顺 · 牌格旁图案版',42,GOLD,True)
-    ui(d,(64,104),'单个12dp小黑桃 · 无底框、无文字 · 亮表示可能有，暗表示已排除 · 自绘设计图',24,'#AAA')
+    ui(d,(64,104),'单个12dp小黑桃 · 底色与牌格连续 · 亮表示可能有，暗表示已排除 · 自绘设计图',24,'#AAA')
     for i,(state,mode,title,desc) in enumerate([
         ('natural','all','亮 · 天然或含变牌仍可能成顺','计数和详情均显示；只占约16dp，图标本身约12dp，不增加条高。'),
         ('none','counts','暗 · 已排除所有天然及含变组合','只显示三家数量时，不保留详情的空白区域。'),
