@@ -91,6 +91,13 @@ class DisplayInteractionTest {
             assertFalse(store.load().showStraightFlush); assertEquals(before,AppState.ledger.snapshot())
             toggleStraightFlush()
             assertTrue(store.load().showStraightFlush); assertEquals(before,AppState.ledger.snapshot())
+            instrument.runOnMainSync {
+                val setting=descendants(activity!!.window.decorView).filterIsInstance<Switch>()
+                    .single { it.text.toString()=="显示级牌遮挡提示" }
+                assertTrue(setting.performClick())
+            }
+            assertFalse(store.load().showGradeOcclusionTip)
+            assertEquals(before,AppState.ledger.snapshot())
             selectHistory(0)
             // Exercise the actual screen listeners and the exact combination reported by the user.
             toggleSwitches()
@@ -285,6 +292,106 @@ class DisplayInteractionTest {
                 assertEquals(before,AppState.ledger.snapshot())
             } finally { AppState.straightFlushState=original }
         }
+    }
+
+    @Test fun gradeHintMoveUsesATopSafeAnchorAndSavesItWithoutChangingTheRound() {
+        withStoppedSyntheticOverlay(DisplayConfig(showHistory=false,showReset=true,doubleTapHide=false,x=0f,y=0f)) {
+                instrument,context,store,overlay,view,before ->
+            assumeTrue(Build.VERSION.SDK_INT>=29)
+            val originalGrade=AppState.gradeRegion
+            val screen=checkNotNull(AppState.barMask)
+            assumeTrue(screen.screenWidth>=screen.screenHeight)
+            var activated=false
+            try {
+                instrument.runOnMainSync {
+                    AppState.running=true; activated=true
+                    AppState.gradeRegion=GlyphBox(.05f,0f,.17f,.1f)
+                    overlay.refresh()
+                }
+                waitFor(instrument) { AppState.gradeTipMask!=null }
+                val hint=checkNotNull(AppState.gradeTipMask)
+                val originalBar=Rect(checkNotNull(AppState.barMask).rectangle)
+                assertTrue(hint.rectangle.right<=hint.screenWidth*.40f)
+                assertTrue(hint.rectangle.bottom<=hint.screenHeight*.24f)
+                assertEquals(originalBar,AppState.barMask!!.rectangle)
+                assertFalse(AppState.adjusting); assertNull(AppState.adjustmentMask)
+                clickGradeAction(instrument,"grade-occlusion-move")
+                waitFor(instrument) { AppState.gradeTipMask==null && AppState.barMask?.rectangle?.left != originalBar.left }
+                val moved=checkNotNull(AppState.barMask).rectangle
+                assertEquals(0,moved.top)
+                assertTrue(moved.left>=screen.screenWidth*.17f)
+                assertTrue(moved.right<=screen.screenWidth*.84f)
+                assertTrue(store.load().positionIsScreenRelative)
+                assertTrue(store.load().x>0f)
+                assertEquals(before,AppState.ledger.snapshot())
+                assertFalse(AppState.adjusting); assertNull(AppState.adjustmentMask)
+            } finally {
+                if(activated) instrument.runOnMainSync { AppState.running=false; AppState.gradeRegion=originalGrade; overlay.refresh() }
+            }
+        }
+    }
+
+    @Test fun gradeHintIgnoreLastsThroughSettingsAndRoundChangesButNotANewCaptureController() {
+        withStoppedSyntheticOverlay(DisplayConfig(showHistory=false,showReset=false,doubleTapHide=true,x=0f,y=0f)) {
+                instrument,context,store,overlay,view,before ->
+            assumeTrue(Build.VERSION.SDK_INT>=29)
+            val originalGrade=AppState.gradeRegion
+            val screen=checkNotNull(AppState.barMask)
+            assumeTrue(screen.screenWidth>=screen.screenHeight)
+            var replacement: OverlayController?=null
+            var activated=false
+            try {
+                instrument.runOnMainSync {
+                    AppState.running=true; activated=true
+                    AppState.gradeRegion=GlyphBox(.05f,0f,.17f,.1f)
+                    overlay.refresh()
+                }
+                waitFor(instrument) { AppState.gradeTipMask!=null }
+                clickGradeAction(instrument,"grade-occlusion-ignore")
+                waitFor(instrument) { AppState.gradeTipMask==null }
+                for(enabled in listOf(false,true)) {
+                    store.save(store.load().copy(showGradeOcclusionTip=enabled))
+                    instrument.runOnMainSync {
+                        AppState.gradeRegion=GlyphBox(.06f,0f,.22f,.1f); overlay.refresh()
+                    }
+                    instrument.waitForIdleSync()
+                    assertNull(AppState.gradeTipMask)
+                    assertEquals(before,AppState.ledger.snapshot())
+                }
+                val initial=Rank.entries.filterNot { it.isJoker }.flatMap { rank ->
+                    listOf(Suit.RED,Suit.BLACK).flatMap { suit -> List(4) { Card(rank,suit) } }
+                }.take(27)
+                instrument.runOnMainSync {
+                    AppState.ledger.waitForNext(); AppState.ledger.begin("grade-tip-new-round",initial); overlay.refresh()
+                }
+                instrument.waitForIdleSync()
+                assertNull(AppState.gradeTipMask)
+                instrument.runOnMainSync {
+                    overlay.close()
+                    assertNull(AppState.gradeTipMask)
+                    replacement=OverlayController(context).also { it.show() }
+                }
+                waitFor(instrument) { AppState.gradeTipMask!=null }
+                assertFalse(AppState.adjusting); assertNull(AppState.adjustmentMask)
+            } finally {
+                instrument.runOnMainSync {
+                    replacement?.close()
+                    if(activated) { AppState.running=false; AppState.gradeRegion=originalGrade; overlay.refresh() }
+                }
+                assertNull(AppState.gradeTipMask)
+            }
+        }
+    }
+
+    private fun clickGradeAction(instrument: android.app.Instrumentation,key: String) {
+        fun descendants(view: View): List<View> = listOf(view)+if(view is ViewGroup)
+            (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
+        instrument.runOnMainSync {
+            val action=WindowInspector.getGlobalWindowViews().flatMap { descendants(it) }.single { it.tag==key }
+            assertTrue(action.isEnabled)
+            assertTrue(action.performClick())
+        }
+        instrument.waitForIdleSync()
     }
 
     private fun withStoppedSyntheticOverlay(config: DisplayConfig,

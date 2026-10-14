@@ -197,7 +197,7 @@ class CaptureService : Service() {
                     val now=SystemClock.elapsedRealtime()
                     if(now-lastFrame>=33 && generation==session && source===reader && !closed && capturedVisible && epoch==visibilityEpoch && AppState.recognitionReady) {
                         lastFrame=now
-                        val masks=listOfNotNull(AppState.barMask,AppState.adjustmentMask).map {
+                        val masks=listOfNotNull(AppState.barMask,AppState.adjustmentMask,AppState.gradeTipMask).map {
                             CaptureMask(android.graphics.Rect(it.rectangle),it.screenWidth,it.screenHeight)
                         }
                         delivery.offer(capture.capture(image,AppState.sourceWidth,AppState.sourceHeight,AppState.adjusting,masks,now).also {
@@ -256,6 +256,7 @@ class CaptureService : Service() {
         AppState.running=false; AppState.recognitionReady=false; AppState.message=message
         AppState.straightFlushState=StraightFlushState.UNKNOWN
         AppState.straightFlushIncludesWildcards=false
+        AppState.gradeRegion=null; AppState.gradeTipMask=null
         com.cyotun.jpq.updates.UpdateManager.scheduleDownload(this)
         overlay?.close(); overlay=null
         visualContext=null

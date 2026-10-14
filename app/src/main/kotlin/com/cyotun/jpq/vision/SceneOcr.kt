@@ -10,7 +10,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 data class OcrLine(val text: String,val box: Rect?)
 data class SceneText(val lines: List<OcrLine>,val timeMs: Long,val width: Int,val height: Int,val visibilityEpoch: Long=0L,
-                     val gradeElements: List<OcrLine> = emptyList())
+                     val gradeElements: List<OcrLine> = emptyList(),
+                     val metadataElements: List<OcrLine> = emptyList())
 /** OCR never blocks card inference. Its owned immutable snapshot survives the next frame. */
 class SceneOcr: AutoCloseable {
     private val recognizer=TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
@@ -43,6 +44,15 @@ class SceneOcr: AutoCloseable {
                             result.textBlocks.flatMap { it.lines }.flatMap { it.elements }
                                 .filter { it.text.replace(" ","")=="级" }.map { element ->
                                     OcrLine("级",element.boundingBox?.let { b ->
+                                        Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
+                                    })
+                                },
+                            result.textBlocks.flatMap { it.lines }.flatMap { it.elements }
+                                .filter { element ->
+                                    val compact=element.text.filterNot(Char::isWhitespace)
+                                    compact.uppercase() in setOf("我方","对方","我方对方","2","3","4","5","6","7","8","9","10","J","Q","K","A")
+                                }.map { element ->
+                                    OcrLine(element.text.filterNot(Char::isWhitespace),element.boundingBox?.let { b ->
                                         Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
                                     })
                                 })

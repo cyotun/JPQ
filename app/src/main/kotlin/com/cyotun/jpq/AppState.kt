@@ -14,6 +14,9 @@ object AppState {
     private val overlayOcclusions=linkedSetOf<Any>()
     @Volatile var barMask: CaptureMask?=null
     @Volatile var adjustmentMask: CaptureMask?=null
+    @Volatile var gradeTipMask: CaptureMask?=null
+    /** Full-display normalized region, independent of the reduced capture resolution. */
+    @Volatile var gradeRegion: GlyphBox?=null
     val ledger = RoundLedger()
     @Volatile var running = false
     @Volatile var capturedFrames = 0L

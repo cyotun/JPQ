@@ -19,6 +19,7 @@ data class DisplayConfig(
     val showHistoryDetails: Boolean = true,
     val positionIsScreenRelative: Boolean = false,
     val showStraightFlush: Boolean = true,
+    val showGradeOcclusionTip: Boolean = true,
 ) {
     fun validate(): DisplayConfig {
         require(validOrder(order))

@@ -110,6 +110,8 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             // Own completion is a round state, not a label that must be re-read
             // on every frame. Teammate hand pixels never become our hand again.
             val scene=continueTeammateScene(detectedScene,round.phase)
+            if(!captured.adjusting && frameCurrent())
+                straightFlush.observeGrade(bitmap,start,activeVisibilityEpoch,scene,text,normalizedMasks)
             val ownExitPresentation=ownExitTracker.prepare(start,scene,round.roundId)
             val glyphs=detections.map { p -> PlayGlyph(p.card,p.confidence,GlyphBox(p.box.left,p.box.top,p.box.right,p.box.bottom)) }
             val partition=partitionGuandanHand(glyphs)
@@ -200,7 +202,8 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             }
             observe(TableFrame(start,scene,if(scene==TableScene.TEAMMATE || captured.adjusting) null else hand,observed,selfFinished))
             if(!captured.adjusting && frameCurrent()) straightFlush.offer(bitmap,start,activeVisibilityEpoch,
-                AppState.ledger.snapshot(),AppState.ledger.initialHand(),partition.hand,ownership.seats,normalizedMasks,text)
+                AppState.ledger.snapshot(),AppState.ledger.initialHand(),
+                if(scene==TableScene.TEAMMATE) emptyList() else partition.hand,ownership.seats,normalizedMasks,text)
         } finally {
             val now=SystemClock.elapsedRealtime()
             if(diagnosticFrameAllowed && diagnostics.getBoolean("enabled",false) && now-lastDiagnostic>=2000 && evidenceBusy.compareAndSet(false,true)) {

@@ -62,6 +62,8 @@ class StraightFlushEvidenceTracker {
         annotations.clear(); conflicts.clear(); initialConflict = false
         votes.values.forEach { it.clear() }; consumed = emptyList()
     }
+    /** Visibility gaps interrupt candidates, not accepted evidence from the same round. */
+    fun clearCandidateVotes() { votes.values.forEach { it.clear() } }
 
     private fun colors(cards: List<Card>) = cards.map { it.colorKey() }.sorted()
     private fun neutral(cards: List<Card>) = cards.map { card ->
@@ -110,13 +112,24 @@ class StraightFlushEvidenceTracker {
             votes.values.forEach { it.clear() }
             return StraightFlushResult(StraightFlushState.UNKNOWN, reason = "initial_hand_missing")
         }
-        // Teammate hand pixels and our reduced hand cannot replace the immutable initial 27 cards.
+        // A fast first play may precede three suit frames. Stabilize the remaining
+        // physical hand and reconstruct only its immutable initial rank/color pool:
+        // SELF events come from qualified hand differences and supply unknown suits,
+        // never extra consumed cards. Teammate reveals cannot enter this path.
         val ownVotes = votes.getValue(Seat.SELF)
-        if (!initialConflict && snapshot.phase == RoundPhase.ACTIVE && snapshot.played(Seat.SELF) == 0 &&
-            own != null && colors(own.cards) == colors(initial)) {
-            if (ownVotes.accept("initial", own, time)) {
-                if (!compatible(initial, own.cards)) { initialConflict = true; initial = neutral(initial) }
-                else initial = merge(initial, own.cards)
+        val selfEvents = snapshot.plays[Seat.SELF].orEmpty().sortedWith(compareBy({ it.sequence }, { it.eventId }))
+        val selfColors = neutral(selfEvents.flatMap { it.cards })
+        val reconstructed = own?.let { it.cards + selfColors }
+        if (!initialConflict && snapshot.phase == RoundPhase.ACTIVE && own != null &&
+            reconstructed?.size == 27 && colors(reconstructed) == colors(initial)) {
+            // Any change in committed SELF provenance starts a fresh vote even if
+            // the visible hand happens to have identical points and geometry.
+            val ownKey = "initial:" + selfEvents.joinToString("|") { event ->
+                "${event.eventId}:${event.cards.size}:${colors(event.cards).joinToString(",")}"
+            }
+            if (ownVotes.accept(ownKey, own, time)) {
+                if (!compatible(initial, reconstructed)) { initialConflict = true; initial = neutral(initial) }
+                else initial = merge(initial, reconstructed)
             }
         } else ownVotes.clear()
 
@@ -158,10 +171,15 @@ class WildcardRuleTracker {
     private var lastFrame = -1L
     private val rankVotes = mutableMapOf<Rank, RankVote>()
     private val ranks = mutableSetOf<Rank>()
+    val observedRanks: Set<Rank> get() = ranks.toSet()
 
     fun reset() {
         mode = WildcardMode.UNKNOWN; modeCandidate = mode; modeVotes = 0
         lastOcr = -1L; lastFrame = -1L; rankVotes.clear(); ranks.clear()
+    }
+    fun clearCandidateVotes() {
+        rankVotes.clear(); modeCandidate=mode
+        modeVotes=if(mode==WildcardMode.UNKNOWN) 0 else 3
     }
 
     private fun current(): WildcardRuleEvidence {

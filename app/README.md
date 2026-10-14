@@ -1,8 +1,8 @@
 # 记牌器 Android 工程
 
-当前0.2.4-regression为离线修复与原快速管线验证候选版。109项核心检查通过；第一局3177帧既有回放保持通过，第二局2805帧新预处理回放的初始27张、27手外家出牌与剩余8张均匹配独立录像真值。两次已进行的真实验收仍判失败，候选包尚未安装验证，不能把离线结果称为稳定真机记牌。已恢复原APK固定横屏原始尺寸、独立采集/推理及最新帧交付；原native预处理和320/640模型仅接入显式验证入口，默认识别仍使用整图模型。GPU未通过本机验证，继续使用CPU。见 [第二局记录](../docs/development/second-phone-round.md)、[第一局记录](../docs/development/first-phone-round.md) 与 [真机计划](../docs/development/live-test-plan.md)。
+当前0.2.12-regression为离线修复候选版。282项核心检查通过；旧完整牌局2805帧回放的初始27张、27手外家出牌与剩余8张均匹配独立录像标注。已接入本局级牌缓存、四种花色与逢人配的同花顺判断、会话内忽略的级牌遮挡提示。识别沿用此前适配的原APK快速管线；硬件选择与采集适配记录见 [识别适配记录](../docs/development/adaptation.md)。本轮未连接或操作手机，候选包尚待新版本真机验收，不能把离线结果称为稳定真机记牌。完整范围和验证限制见 [0.2.12 记录](../docs/development/grade-and-straight-flush-0.2.12.md) 与 [真机计划](../docs/development/live-test-plan.md)。
 
-固定 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、compile/target SDK 36、min SDK 28，当前手机实际 API 37；首版 ABI arm64-v8a。界面为 Kotlin 原生 View / Canvas，内部保存使用 SharedPreferences / SQLite。
+固定 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、compile/target SDK 36、min SDK 28，此前连接手机实际 API 37；首版 ABI arm64-v8a。界面为 Kotlin 原生 View / Canvas，内部保存使用 SharedPreferences / SQLite。
 
 ```powershell
 ./tools/android/bootstrap.ps1

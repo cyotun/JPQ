@@ -28,12 +28,13 @@ class ConfigStore(context: Context) {
             if(j.has("order")) j.getString("order").split(",").map { Rank.valueOf(it) } else d.order,
             j.optDouble("x",0.0).toFloat(),j.optDouble("y",0.0).toFloat(),j.optDouble("countWidth",1.0).toFloat(),
             j.optBoolean("historyDetails",d.showHistoryDetails),j.optBoolean("positionScreenRelative",d.positionIsScreenRelative),
-            j.optBoolean("straightFlush",d.showStraightFlush)).validate()
+            j.optBoolean("straightFlush",d.showStraightFlush),
+            j.optBoolean("gradeOcclusionTip",d.showGradeOcclusionTip)).validate()
     }
     private fun encode(c: DisplayConfig)=JSONObject().put("history",c.showHistory).put("reset",c.showReset).put("doubleTap",c.doubleTapHide)
         .put("width",c.widthScale).put("ratio",c.gridRatio).put("gridHeight",c.gridHeight).put("recordHeight",c.recordHeight)
         .put("headerText",c.headerText).put("valueText",c.valueText).put("counterText",c.counterText).put("detailText",c.detailText)
         .put("order",c.order.joinToString(",") { it.name }).put("x",c.x).put("y",c.y).put("countWidth",c.countWidthScale)
         .put("historyDetails",c.showHistoryDetails).put("positionScreenRelative",c.positionIsScreenRelative)
-        .put("straightFlush",c.showStraightFlush)
+        .put("straightFlush",c.showStraightFlush).put("gradeOcclusionTip",c.showGradeOcclusionTip)
 }

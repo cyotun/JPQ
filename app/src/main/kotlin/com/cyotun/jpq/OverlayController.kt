@@ -4,8 +4,12 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.*
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.text.TextUtils
 import android.view.*
+import android.widget.LinearLayout
+import android.widget.TextView
 import com.cyotun.jpq.core.*
 import kotlin.math.*
 
@@ -40,7 +44,47 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private var size=OverlaySize(0f,0f,0f,0f)
     private var barHeight=44f
     private var left=0f
+    private val gradeSession=GradeOcclusionSession()
+    private var tipAdded=false
+    private val tipCopy=TextView(context).apply {
+        text="级牌区域被遮挡，请挪开记牌器"
+        typeface=font; textSize=12f; setTextColor(GOLD)
+        maxLines=1; ellipsize=TextUtils.TruncateAt.END; gravity=Gravity.CENTER_VERTICAL
+        setAutoSizeTextTypeUniformWithConfiguration(9,12,1,android.util.TypedValue.COMPLEX_UNIT_SP)
+        tag="grade-occlusion-copy"
+    }
+    private val tipMove=tipAction("一键挪开","grade-occlusion-move",true) { moveAwayFromGrade() }
+    private val tipIgnore=tipAction("忽略","grade-occlusion-ignore",false) {
+        gradeSession.ignore(); removeTip()
+    }
+    private val tipView=LinearLayout(context).apply {
+        orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL
+        contentDescription="级牌遮挡提醒"; tag="grade-occlusion-tip"
+        setPadding(dp(8f).roundToInt(),0,dp(4f).roundToInt(),0)
+        background=GradientDrawable().apply {
+            setColor(Color.argb(230,38,38,38)); cornerRadius=dp(6f)
+            setStroke(dp(1f).roundToInt().coerceAtLeast(1),Color.argb(68,109,101,71))
+        }
+        addView(tipCopy,LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.MATCH_PARENT,1f).apply {
+            marginEnd=dp(8f).roundToInt()
+        })
+        addView(tipMove,LinearLayout.LayoutParams(dp(80f).roundToInt(),ViewGroup.LayoutParams.MATCH_PARENT))
+        addView(tipIgnore,LinearLayout.LayoutParams(dp(40f).roundToInt(),ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+    private val tipParams=WindowManager.LayoutParams(1,1,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT).apply {
+        gravity=Gravity.TOP or Gravity.LEFT
+        layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+    }
     private val dialogs=linkedSetOf<AlertDialog>()
+    private fun tipAction(label: String,key: String,filled: Boolean,action: ()->Unit)=TextView(context).apply {
+        text=label; tag=key; typeface=font; textSize=12f; maxLines=1
+        setAutoSizeTextTypeUniformWithConfiguration(6,12,1,android.util.TypedValue.COMPLEX_UNIT_SP)
+        gravity=Gravity.CENTER; setTextColor(if(filled) Color.BLACK else GOLD)
+        isClickable=true; isFocusable=true; setOnClickListener { action() }
+        if(filled) background=GradientDrawable().apply { setColor(GOLD); cornerRadius=dp(5f) }
+    }
     fun show() {
         check(!disposed)
         if(added) return
@@ -58,6 +102,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
         }
         disposed=true
         AppState.unsubscribe(listener)
+        removeTip()
         dialogs.toList().forEach { runCatching { it.dismiss() }; AppState.endOverlayOcclusion(it) }
         dialogs.clear()
         val wasAdded=added; added=false
@@ -132,6 +177,65 @@ class OverlayController(private val context: Context,private val preview: Boolea
         if(!added || disposed || view.width<=0 || view.height<=0) return
         val location=IntArray(2); view.getLocationOnScreen(location); val screen=bounds()
         AppState.barMask=CaptureMask(Rect(location[0],location[1],location[0]+view.width,location[1]+view.height),screen.width(),screen.height())
+        updateGradeTip()
+    }
+    private fun gradeRect(screen: Rect): GradeOcclusionRect? {
+        val grade=AppState.gradeRegion ?: return null
+        if(!listOf(grade.left,grade.top,grade.right,grade.bottom).all { it.isFinite() && it in 0f..1f } || grade.width<=0 || grade.height<=0) return null
+        return GradeOcclusionRect((grade.left*screen.width()).toInt(),(grade.top*screen.height()).toInt(),
+            ceil(grade.right*screen.width()).toInt(),ceil(grade.bottom*screen.height()).toInt())
+    }
+    private fun actualBarRect(): GradeOcclusionRect {
+        val location=IntArray(2); view.getLocationOnScreen(location)
+        return GradeOcclusionRect(location[0],location[1],location[0]+view.width,location[1]+view.height)
+    }
+    private fun safeGradePosition(screen: Rect,bar: GradeOcclusionRect,grade: GradeOcclusionRect)=
+        GradeOcclusionGeometry.safeTopPosition(screen.width(),screen.height(),bar.width,bar.height,bar.left,grade,dp(4f).roundToInt())
+    private fun updateGradeTip() {
+        if(!added || disposed || preview || view.width<=0 || view.height<=0) { removeTip(); return }
+        val screen=bounds(); val grade=gradeRect(screen); val bar=actualBarRect()
+        if(!gradeSession.shouldShow(AppState.running,preview,hidden,config.showGradeOcclusionTip,bar,grade)) { removeTip(); return }
+        val hint=GradeOcclusionGeometry.hintPosition(screen.width(),screen.height(),bar,dp(380f).roundToInt(),
+            dp(32f).roundToInt(),dp(left).roundToInt(),dp(4f).roundToInt())
+        // Keep actions readable on unusual displays; never enlarge the window
+        // across live cards just to make a hint fit.
+        if(hint==null || hint.width<dp(190f)) { removeTip(); return }
+        val canMove=grade!=null && safeGradePosition(screen,bar,grade)!=null
+        tipMove.text=if(canMove) "一键挪开" else "请手动拖动"
+        tipMove.isEnabled=canMove
+        tipMove.setTextColor(if(canMove) Color.BLACK else Color.rgb(221,221,221))
+        (tipMove.background as GradientDrawable).setColor(if(canMove) GOLD else Color.rgb(86,82,68))
+        if(tipAdded && tipParams.x==hint.left && tipParams.y==hint.top &&
+            tipParams.width==hint.width && tipParams.height==hint.height) return
+        tipParams.x=hint.left; tipParams.y=hint.top; tipParams.width=hint.width; tipParams.height=hint.height
+        // Preserve the old mask until the new layout is known; unchanged hints
+        // do not repeatedly clear their capture mask on every ledger refresh.
+        if(!tipAdded) {
+            // Mask the tightly bounded target before its first visible frame;
+            // replace it with measured screen coordinates after attachment.
+            AppState.gradeTipMask=CaptureMask(Rect(hint.left,hint.top,hint.right,hint.bottom),screen.width(),screen.height())
+            runCatching { wm.addView(tipView,tipParams); tipAdded=true }.onFailure { removeTip() }
+        } else runCatching { wm.updateViewLayout(tipView,tipParams) }.onFailure { removeTip() }
+        if(tipAdded) tipView.post { publishTipMask() }
+    }
+    private fun publishTipMask() {
+        if(!tipAdded || disposed || preview || !AppState.running || tipView.width<=0 || tipView.height<=0) return
+        val location=IntArray(2); tipView.getLocationOnScreen(location); val screen=bounds()
+        AppState.gradeTipMask=CaptureMask(Rect(location[0],location[1],location[0]+tipView.width,location[1]+tipView.height),screen.width(),screen.height())
+    }
+    private fun removeTip() {
+        val hadTip=tipAdded; tipAdded=false
+        if(hadTip) runCatching { wm.removeView(tipView) }
+        if(!preview) AppState.gradeTipMask=null
+    }
+    private fun moveAwayFromGrade() {
+        if(disposed || hidden || preview || !AppState.running) return
+        val screen=bounds(); val grade=gradeRect(screen) ?: return
+        val point=safeGradePosition(screen,actualBarRect(),grade) ?: return
+        detectorCancel(); params.x=point.x; params.y=point.y
+        if(added) wm.updateViewLayout(view,params)
+        saveDraggedPosition(screen)
+        removeTip(); view.post { publishMask() }
     }
     private fun hide() { hidden=true; detectorCancel(); refresh() }
     private fun detectorCancel() { view.cancelGesture() }

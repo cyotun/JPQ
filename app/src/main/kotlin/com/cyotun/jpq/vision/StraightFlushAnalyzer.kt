@@ -25,9 +25,17 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
     private val generation=AtomicLong(0L)
     private val evidence=StraightFlushEvidenceTracker()
     private val ruleTracker=WildcardRuleTracker()
+    private val gradeReader=GradeSourceReader()
+    private val gradeTracker=RoundGradeTracker()
+    @Volatile private var cachedGrade=WildcardRuleEvidence(null,false)
+    @Volatile private var cornerGrades=emptySet<Rank>()
+    private var pendingGrade=false
+    private var gradeEpoch: Long?=null
+    private var lastGradeTrace=""
     private val repository=RoundRepository(context)
     private var lastCheckpoint: String?=null
     private var workerGeneration=-1L
+    private var workerRound: String?=null
     private var lastRound: String?=null
     private var lastOffer=-10000L
     private var lastEpoch: Long?=null
@@ -36,8 +44,54 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
 
     fun onLedgerChanged(snapshot: RoundSnapshot) {
         if(snapshot.roundId!=lastRound || snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) {
+            val begins=snapshot.roundId!=lastRound && snapshot.phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)
+            if(begins) {
+                // A newly established baseline adopts only evidence collected in
+                // this deal's preceding dealing/tribute window, never a prior round.
+                if(!pendingGrade) resetGrade()
+                pendingGrade=false; cornerGrades=emptySet()
+            } else if(!pendingGrade) resetGrade()
             lastRound=snapshot.roundId; generation.incrementAndGet()
             publishUnknown()
+        }
+    }
+    private fun resetGrade() {
+        gradeTracker.reset(); gradeReader.reset(); cachedGrade=WildcardRuleEvidence(null,false)
+        cornerGrades=emptySet(); lastGradeTrace=""
+    }
+    /** Called on the vision owner thread even before the 27-card baseline exists. */
+    fun observeGrade(bitmap: Bitmap,time: Long,epoch: Long,scene: TableScene,
+        text: SceneText?,masks: List<GlyphBox>) = synchronized(sessionGuard) {
+        if(closed || !alive() || visibilityEpoch()!=epoch) return@synchronized
+        if(gradeEpoch!=epoch) { gradeTracker.clearCandidateVotes(); gradeEpoch=epoch }
+        try {
+        val phase=AppState.ledger.snapshot().phase
+        if(scene in setOf(TableScene.LOBBY,TableScene.RESULT)) {
+            pendingGrade=false; resetGrade()
+        } else if(phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED) &&
+            scene in setOf(TableScene.DEALING,TableScene.TRIBUTE) && !pendingGrade) {
+            resetGrade(); pendingGrade=true
+        }
+        val lines=text?.lines.orEmpty().map { line -> SceneHint(line.text,line.box?.let { b ->
+            GlyphBox(b.left.toFloat()/bitmap.width,b.top.toFloat()/bitmap.height,b.right.toFloat()/bitmap.width,b.bottom.toFloat()/bitmap.height)
+        }) }
+        val source=gradeReader.read(bitmap,time,text,masks,scene,cornerGrades,tencentWildcardMode(lines))
+        val rule=gradeTracker.observe(time,source.sourceTime,source.reading)
+        if(cachedGrade!=rule) { cachedGrade=rule; generation.incrementAndGet(); publishUnknown() }
+        if(AppState.gradeRegion!=source.hudRegion) {
+            AppState.gradeRegion=source.hudRegion; AppState.notifyChanged()
+        }
+        val fingerprint="${source.reading.source}:${rule.ranks}:${rule.confirmed}:${source.obscured}"
+        if(fingerprint!=lastGradeTrace) {
+            lastGradeTrace=fingerprint
+            report(JSONObject().put("type","grade").put("elapsedMs",time).put("roundId",lastRound ?: JSONObject.NULL)
+                .put("source",source.reading.source).put("confirmed",rule.confirmed)
+                .put("ranks",JSONArray(rule.ranks.orEmpty().map { it.name })).put("obscured",source.obscured))
+        }
+        } catch(error: Exception) {
+            resetGrade(); generation.incrementAndGet(); publishUnknown()
+            if(AppState.gradeRegion!=null) { AppState.gradeRegion=null; AppState.notifyChanged() }
+            android.util.Log.w("JPQVision","grade_metadata_unavailable:${error.javaClass.simpleName}")
         }
     }
     private fun publishUnknown() {
@@ -78,12 +132,15 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
             val mode=tencentWildcardMode(hints(text?.lines.orEmpty()))
             val markedRanks=tencentGradeMarkerRanks(hand,hints(text?.gradeElements.orEmpty()),bitmap.width.toFloat()/bitmap.height)
             val initialCopy=initial.toList()
+            val gradeForFrame=cachedGrade
             val extractMs=(SystemClock.elapsedRealtimeNanos()-extractStart)/1000000.0
             executor.execute {
                 try {
                     if(closed || !alive() || requestGeneration!=generation.get() || visibilityEpoch()!=epoch) return@execute
                     if(workerGeneration!=requestGeneration) {
-                        evidence.reset(); ruleTracker.reset(); workerGeneration=requestGeneration; lastCheckpoint=null
+                        if(workerRound!=snapshot.roundId) { evidence.reset(); ruleTracker.reset(); workerRound=snapshot.roundId }
+                        else { evidence.clearCandidateVotes(); ruleTracker.clearCandidateVotes() }
+                        workerGeneration=requestGeneration; lastCheckpoint=null
                     }
                     val started=SystemClock.elapsedRealtimeNanos()
                     val observations=mutableListOf<Pair<Input,SuitSymbolObservation>>()
@@ -104,7 +161,11 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                     val gradeRanks=observations.filter { (input,obs) -> input in ownSet &&
                         (obs.goldHeart || input.glyph.card.rank in markedRanks) &&
                         greenGradeSupport(input.pixels) }.map { it.first.glyph.card.rank }.toSet()
-                    val rule=ruleTracker.observe(time,text?.timeMs,mode,gradeRanks)
+                    ruleTracker.observe(time,text?.timeMs,mode,gradeRanks)
+                    // All sources, including stabilized corners, pass the one
+                    // priority-aware grade cache. A withdrawn announcement must
+                    // not be silently replaced by an older corner-only rule.
+                    val rule=gradeForFrame
                     // The selected Tencent policy deliberately falls back to natural
                     // straight flushes when the round's effective grade is unavailable.
                     // Persist that scope so natural-only absence cannot be presented as
@@ -137,6 +198,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                             current.roundId!=snapshot.roundId || current.phase!=snapshot.phase ||
                             current.plays!=snapshot.plays) return@synchronized
                         accepted=true
+                        cornerGrades=ruleTracker.observedRanks
                         if(AppState.straightFlushState!=result.state || AppState.straightFlushIncludesWildcards!=rule.confirmed) {
                             AppState.straightFlushState=result.state
                             AppState.straightFlushIncludesWildcards=rule.confirmed; AppState.notifyChanged()
