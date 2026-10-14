@@ -1,0 +1,138 @@
+package com.cyotun.jpq.core
+
+/** Possibility in the combined three-player pool, not proof of any particular player's hand. */
+enum class StraightFlushState { UNKNOWN, POSSIBLE, IMPOSSIBLE }
+
+data class StraightFlushWitness(
+    val suit: Suit,
+    val ranks: List<Rank>,
+    val wildcardsNeeded: Int,
+)
+
+data class StraightFlushResult(
+    val state: StraightFlushState,
+    val witness: StraightFlushWitness? = null,
+    val reason: String? = null,
+)
+
+/**
+ * Side-channel analysis only: consumed must be the immutable initial own hand plus confirmed plays
+ * from the other three seats. Own plays must not be consumed a second time.
+ *
+ * RED and BLACK preserve uncertainty about the physical suit. POSSIBLE requires a constructive
+ * proof using remaining lower bounds. IMPOSSIBLE requires ruling out every compatible physical
+ * allocation, including HEART cards of all confirmed wildcard ranks. Otherwise the result is
+ * UNKNOWN. Until the effective rule is confirmed, every ordinary HEART rank is
+ * treated as a potential wildcard: this is an ability superset, not a guessed
+ * level. Absence must also hold under that superset.
+ *
+ * TABLE cards may show a wildcard's declared replacement. In that case the
+ * displayed residual pool loses the replacement but retains an extra heart
+ * wildcard. The retained wildcard can occupy the lost card's slot, so this
+ * pool is conservative for absence when the wildcard set is complete. It is
+ * not a reconstruction of the precise physical cards each player holds.
+ */
+object StraightFlushEvaluator {
+    private val suits = listOf(Suit.SPADE, Suit.HEART, Suit.CLUB, Suit.DIAMOND)
+    private val ascending = listOf(Rank.A, Rank.TWO, Rank.THREE, Rank.FOUR, Rank.FIVE,
+        Rank.SIX, Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.TEN, Rank.J, Rank.Q, Rank.K, Rank.A)
+    // A is low or high. K-A-2 and any other wrapping sequence are absent.
+    private val windows = (0..9).map { ascending.subList(it, it + 5).toList() }
+    private val ordinaryRanks = Rank.entries.filterNot { it.isJoker }
+
+    fun evaluate(
+        consumed: List<Card>,
+        wildcardRanks: Set<Rank>?,
+        ruleConfirmed: Boolean,
+        unresolvedReplacements: Int = 0,
+    ): StraightFlushResult {
+        if(unresolvedReplacements !in 0..104) return StraightFlushResult(StraightFlushState.UNKNOWN,reason="invalid_replacement_bound")
+        if(wildcardRanks?.any { it.isJoker }==true) return StraightFlushResult(StraightFlushState.UNKNOWN,reason="unsupported_wildcard_rank")
+        val counts = consumed.groupingBy { it }.eachCount()
+        val byRank = consumed.groupingBy { it.rank }.eachCount()
+        val byColor = consumed.groupingBy { it.colorKey() }.eachCount()
+        if (counts.any { (card, count) ->
+                card.suit !in setOf(Suit.RED, Suit.BLACK) && count > 2
+            } || byRank.any { (rank, count) -> count > rank.capacity } ||
+            byColor.any { (color, count) -> count > if (color.contains(':')) 4 else 2 }) {
+            return StraightFlushResult(StraightFlushState.UNKNOWN, reason = "invalid_card_capacity")
+        }
+
+        val allocations = ordinaryRanks.associateWith { rank -> remainingAllocations(rank, counts) }
+        if (allocations.values.any { it.isEmpty() }) {
+            return StraightFlushResult(StraightFlushState.UNKNOWN, reason = "invalid_card_capacity")
+        }
+        // Display substitutions preserve card count, even if their physical rank
+        // is unresolved. Fewer than five ordinary cards can never make a run.
+        if(104-consumed.count { !it.rank.isJoker }<5) return StraightFlushResult(StraightFlushState.IMPOSSIBLE)
+        val lower = allocations.mapValues { (_, choices) ->
+            IntArray(suits.size) { suitIndex -> choices.minOf { it[suitIndex] } }
+        }
+
+        for (suitIndex in suits.indices) for (window in windows) {
+            if (window.all { lower.getValue(it)[suitIndex] > 0 }) {
+                return StraightFlushResult(StraightFlushState.POSSIBLE,
+                    StraightFlushWitness(suits[suitIndex], window, 0))
+            }
+        }
+        val completeRule = ruleConfirmed && wildcardRanks != null
+        val possibleWildRanks = if (completeRule) wildcardRanks!! else ordinaryRanks.toSet()
+
+        val heartIndex = suits.indexOf(Suit.HEART)
+        val guaranteedWildcards = possibleWildRanks.sumOf { lower.getValue(it)[heartIndex] }
+        for (suitIndex in suits.indices) for (window in windows) {
+            val missing = window.count { lower.getValue(it)[suitIndex] == 0 }
+            val reservedNaturalWildcards = if (suits[suitIndex] == Suit.HEART) {
+                window.count { it in possibleWildRanks && lower.getValue(it)[heartIndex] > 0 }
+            } else 0
+            if (completeRule && missing <= guaranteedWildcards - reservedNaturalWildcards) {
+                return StraightFlushResult(StraightFlushState.POSSIBLE,
+                    StraightFlushWitness(suits[suitIndex], window, missing))
+            }
+        }
+
+        for (suitIndex in suits.indices) for (window in windows) {
+            val windowRanks = window.toSet()
+            // Each rank's RED/BLACK allocation is independent of other ranks. For a chosen
+            // allocation, natural cards cover a slot first. HEART wildcards used naturally
+            // are reserved, and remaining HEART wildcards must cover the missing slots.
+            // Maximizing this resource balance independently per rank is an exact existence
+            // check, while retaining HEART/DIAMOND correlation within each rank.
+            val bestBalance = ordinaryRanks.sumOf { rank ->
+                allocations.getValue(rank).maxOf { remaining ->
+                    val natural = rank in windowRanks && remaining[suitIndex] > 0
+                    val wild = if (rank in possibleWildRanks) remaining[heartIndex] else 0
+                    val missing = if (rank in windowRanks && !natural) 1 else 0
+                    val reserved = if (natural && suits[suitIndex] == Suit.HEART &&
+                        rank in possibleWildRanks) 1 else 0
+                    wild - missing - reserved
+                }
+            }
+            if (bestBalance + unresolvedReplacements >= 0) {
+                return StraightFlushResult(StraightFlushState.UNKNOWN,
+                    reason = if(unresolvedReplacements>0) "rendered_substitution_uncertain"
+                    else if (completeRule) "suit_uncertain" else "wildcard_rule_unknown")
+            }
+        }
+        return StraightFlushResult(StraightFlushState.IMPOSSIBLE)
+    }
+
+    /** Enumerates compatible remaining counts in SPADE, HEART, CLUB, DIAMOND order. */
+    private fun remainingAllocations(rank: Rank, consumed: Map<Card, Int>): List<IntArray> {
+        fun count(suit: Suit) = consumed[Card(rank, suit)] ?: 0
+        val available = IntArray(suits.size) { 2 - count(suits[it]) }
+        val red = count(Suit.RED)
+        val black = count(Suit.BLACK)
+        val result = mutableListOf<IntArray>()
+        for (heartConsumed in 0..red) for (spadeConsumed in 0..black) {
+            val diamondConsumed = red - heartConsumed
+            val clubConsumed = black - spadeConsumed
+            if (heartConsumed <= available[1] && diamondConsumed <= available[3] &&
+                spadeConsumed <= available[0] && clubConsumed <= available[2]) {
+                result += intArrayOf(available[0] - spadeConsumed, available[1] - heartConsumed,
+                    available[2] - clubConsumed, available[3] - diamondConsumed)
+            }
+        }
+        return result
+    }
+}

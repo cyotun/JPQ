@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN" data-htmlprd-page-id="jpq.design.grade-occlusion">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>记牌器 · 级牌遮挡提示设计</title>
+<style>
+@font-face{font-family:overlay;src:url('../../../app/src/main/assets/overlay.ttf')}
+*{box-sizing:border-box}body{margin:0;background:#141514;color:#eee;font:16px/1.6 system-ui,'Microsoft YaHei',sans-serif}main{max-width:1280px;margin:auto;padding:30px 28px}h1{font-size:26px;color:#ffe395;margin:0 0 8px}.lead{margin:0;color:#bbb}.controls{display:flex;gap:20px;align-items:center;flex-wrap:wrap;padding:15px 18px;background:#262626;border-radius:12px;margin:20px 0}label{font-size:14px}select,button{font:inherit}select{background:#191919;color:#ffe395;border:1px solid #666;border-radius:6px;padding:6px;max-width:260px}.reset{background:none;color:#ffe395;border:1px solid #837247;border-radius:6px;padding:6px 11px;cursor:pointer}.frame{width:100%;aspect-ratio:1000/460;overflow:hidden;position:relative;border-radius:12px;background:#096c61;border:1px solid #3e5b51}.world{position:absolute;width:1000px;height:460px;transform-origin:top left;background:radial-gradient(ellipse at 50% 50%,#118879,#06665e);overflow:hidden}.table-line{position:absolute;left:44px;top:97px;width:912px;height:331px;border:1px solid #ffffff14;border-radius:48%;pointer-events:none}.grades{position:absolute;left:8px;top:5px;display:flex;gap:3px;font-family:overlay,sans-serif}.grade{width:49px;border:1px solid #494d48;border-radius:3px;overflow:hidden;background:#fff;text-align:center;line-height:1}.grade-label{display:block;background:#2484a6;color:#fff;font-size:15px;padding:4px 0}.grade.other .grade-label{background:#929a95}.grade-value{display:block;color:#258cb1;font-size:27px;padding:2px 0 4px}.grade.other .grade-value{color:#777}.hud{position:absolute;right:18px;top:11px;color:#ffffffaa;font-size:13px}.avatar{position:absolute;width:54px;height:62px;border:2px solid #4dcef3;border-radius:4px;background:#284d58;color:#f3f8f9;font-size:12px;text-align:center;padding-top:18px}.avatar.team{left:478px;top:104px}.avatar.left{left:42px;top:179px;border-color:#d95456}.avatar.right{right:42px;top:179px;border-color:#d95456}.play{position:absolute;left:440px;top:187px;display:flex;gap:2px}.play-card{width:39px;height:57px;background:#eee;border:1px solid #bbb;border-radius:4px;color:#181818;font:25px overlay,sans-serif;padding:2px 5px}.play-card:after{content:'♠';display:block;font-family:serif;font-size:20px;line-height:1}.caption{position:absolute;left:385px;top:266px;color:#073e39;font:18px overlay,sans-serif}.hand{position:absolute;left:277px;bottom:22px;display:flex;gap:2px}.hand div{width:47px;height:70px;background:#eee;border:1px solid #bcbcbc;border-radius:4px;color:#181818;font:30px overlay,sans-serif;padding:3px 5px}.hand div:after{content:'♣';display:block;font:25px serif}.counter{position:absolute;left:64px;top:6px;font-family:overlay,sans-serif;touch-action:none;cursor:grab;user-select:none;z-index:2}.counter:focus-visible{outline:2px solid #ffe395;outline-offset:4px}.bar{display:flex;align-items:flex-start;gap:4px;width:664px;height:46px}.circle{width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:2px solid #262626;background:#ffe395;color:#000;border-radius:50%;font:16px overlay,sans-serif}.body{display:flex;gap:1px;width:568px;height:46px;border:1px solid #000;border-radius:11px;background:#262626;padding:1px;overflow:hidden}.grid{width:235px;flex-shrink:0;display:grid;grid-template-columns:repeat(15,1fr);gap:1px;line-height:1}.cell{display:flex;flex-direction:column;gap:1px;text-align:center;min-width:0}.rank,.num{height:21px;display:flex;align-items:center;justify-content:center;background:#434343;white-space:nowrap}.rank{font-size:14px;background:linear-gradient(#6d6e6e,#434343)}.num{font-size:16px}.red{color:#ff3140}.zero{color:#5f5f5f}.spade{width:16px;flex-shrink:0;color:#ffe395;background:linear-gradient(to bottom,#6d6e6e 0px,#434343 21px,#434343 100%)}.spade svg{width:16px;height:44px}.history{width:313px;flex-shrink:0;display:flex;flex-direction:column;gap:1px;line-height:1}.record{height:14px;display:flex;gap:2px;align-items:center;font-size:12px}.seat{width:14px;height:14px;flex-shrink:0;background:#434343;text-align:center;padding-top:1px}.count{width:16px;height:14px;flex-shrink:0;background:#ffe395;color:#000;text-align:center;padding-top:1px}.detail{font-size:13px;white-space:nowrap;padding-left:2px}.tip{position:absolute;left:48px;top:50px;display:flex;align-items:center;gap:10px;white-space:nowrap;padding:4px 7px 4px 9px;background:#262626e6;border:1px solid #6d654744;border-radius:6px;color:#ffe395;font:12px/20px overlay,sans-serif;cursor:default}.tip[hidden]{display:none}.move{border:0;border-radius:5px;background:#ffe395;color:#111;font:12px/20px overlay,sans-serif;padding:2px 9px;cursor:pointer}.move[hidden]{display:none}.move:disabled{background:#565244;color:#ddd;cursor:default}.reading{font-size:13px;color:#bbb;margin:12px 0 0}.notes{margin-top:20px;background:#202220;border:1px solid #454545;border-radius:12px;padding:16px 20px}.notes p{margin:5px 0;color:#bbb;font-size:14px}.scope{color:#ffe395!important}#event{min-height:24px;font-size:13px;color:#ffe395;margin:8px 0 0}@media(max-width:720px){main{padding:20px 14px}h1{font-size:22px}.controls{gap:12px}.notes{padding:14px}}
+.counter[hidden]{display:none}.ignore{border:0;background:none;color:#ffe395;font:12px/20px overlay,sans-serif;padding:2px 5px;cursor:pointer}
+</style>
+</head>
+<body><main>
+<h1>级牌遮挡提示 · 设计预览</h1>
+<p class="lead">在记牌条下面加一行轻提示，不弹窗、不主动挪动。沿用原黑金样式；下方为示例牌局。</p>
+<div class="controls" data-htmlprd-id="jpq.design.grade-occlusion.controls">
+<label>预览情形 <select id="scenario" data-htmlprd-id="jpq.design.grade-occlusion.scenario"><option value="blocked">级牌区域被遮挡</option><option value="moved">已挪开，提示消失</option><option value="ignored">仍遮挡，本次记牌已忽略</option><option value="tight">顶部空间不足</option></select></label>
+<label><input id="tips" type="checkbox" checked data-htmlprd-id="jpq.design.grade-occlusion.tip-setting"> 显示级牌遮挡提示</label>
+<button class="reset" id="reset" data-htmlprd-id="jpq.design.grade-occlusion.reset">恢复示例</button>
+<button class="reset" id="session" data-htmlprd-id="jpq.design.grade-occlusion.session">停止记牌</button>
+<button class="reset" id="next-round" data-htmlprd-id="jpq.design.grade-occlusion.next-round">模拟下一局</button>
+<button class="reset" id="region-change" data-htmlprd-id="jpq.design.grade-occlusion.region-change">模拟区域变化</button>
+</div>
+<div class="frame" id="frame" data-htmlprd-id="jpq.design.grade-occlusion.table-preview">
+<div class="world" id="world">
+<div class="table-line"></div>
+<div class="grades" data-htmlprd-id="jpq.design.grade-occlusion.level-region"><div class="grade"><span class="grade-label">我方</span><span class="grade-value">3</span></div><div class="grade other"><span class="grade-label">对方</span><span class="grade-value">3</span></div></div>
+<div class="hud">规则　▣　00:49</div><div class="avatar team">队友</div><div class="avatar left">对手</div><div class="avatar right">对手</div>
+<div class="play"><div class="play-card">7</div><div class="play-card">8</div><div class="play-card">9</div></div>
+<div class="caption">经典中级场　底分：4000</div><div class="hand"><div>A</div><div>K</div><div>Q</div><div>J</div><div>10</div><div>8</div><div>6</div><div>4</div><div>2</div></div>
+<div class="counter" id="counter" tabindex="0" role="group" aria-label="可拖动记牌条示例" data-htmlprd-id="jpq.design.grade-occlusion.counter">
+<div class="bar"><div class="circle">隐藏</div><div class="body"><div class="grid" id="grid"></div><div class="spade"><svg viewBox="0 0 16 44" aria-label="同花顺尚未排除"><path d="M8 16 C6 19 2 19 2 22 C2 25 6 26 8 23 C10 26 14 25 14 22 C14 19 10 19 8 16 Z M8 23 L5 28 H11 Z" fill="currentColor"/></svg></div><div class="history" id="history"></div></div><div class="circle">重置</div></div>
+<div class="tip" id="tip" aria-live="polite" data-htmlprd-id="jpq.design.grade-occlusion.tip"><span id="tip-copy">级牌区域被遮挡，请挪开记牌器</span><button class="move" id="move" data-htmlprd-id="jpq.design.grade-occlusion.move">一键挪开</button><button class="ignore" id="ignore" data-htmlprd-id="jpq.design.grade-occlusion.ignore">忽略</button></div>
+</div></div></div>
+<p class="reading" id="reading" data-htmlprd-id="jpq.design.grade-occlusion.reading-state">级牌识别持续运行（示例）；提示开关只影响这行提醒。</p>
+<p id="event" role="status" data-htmlprd-id="jpq.design.grade-occlusion.event"></p>
+<div class="notes"><p>遮挡时显示「级牌区域被遮挡，请挪开记牌器」，提供「一键挪开」和「忽略」。一键挪开会把整条移到顶部右侧可容纳的空位，提醒消失，数字保持不变。也可手动拖动；键盘方向键可移动本预览。</p><p>只有安全位置能容纳整条时才提供一键移动；空间不足时显示「请手动拖动」。不会自动跳动，也不会把一键目标放在三家出牌区或自己手牌区。</p><p>「忽略」持续到本次记牌结束；即使进入下一局或级牌区域改变，也不会再次提醒。只有停止后重新开始记牌才恢复提醒。全局提示开关单独保存，关闭提醒不关闭级牌读取。</p><p class="scope">本页仅为设计。遮挡提示的样式、设置开关、「一键挪开」与「忽略」的交互，均需你确认后再实现到 APP。</p></div>
+</main>
+<script>
+const ranks=['大','小','A','K','Q','J','10','9','8','7','6','5','4','3','2'];
+const numbers=[1,1,6,4,6,5,3,0,1,1,0,0,4,4,4];
+const data=[['上',13,'Q·6·77722·AAA99·3'],['对',14,'9·4·小·66688·JJ1010·大'],['下',14,'6·99944·K·J·101088·7']];
+const el=id=>document.getElementById(id);
+el('grid').innerHTML=ranks.map((rank,i)=>'<div class="cell"><span class="rank">'+rank+'</span><span class="num '+(numbers[i]===0?'zero':numbers[i]>=(i<2?2:4)?'red':'')+'">'+numbers[i]+'</span></div>').join('');
+el('history').innerHTML=data.map(row=>'<div class="record"><span class="seat">'+row[0]+'</span><span class="count">'+row[1]+'</span><span class="detail">'+row[2]+'</span></div>').join('');
+const COUNTER_WIDTH=664,SAFE_RIGHT=895;
+let state='blocked',position={x:64,y:6},scale=1,drag=null,running=true,ignoredSession=false;
+let levelRegion={left:8,right:118,top:5,bottom:58};
+function fit(){scale=el('frame').getBoundingClientRect().width/1000;el('world').style.transform='scale('+scale+')';}
+function safeLeft(){return levelRegion.right+30;}
+function hasRoom(){return safeLeft()+COUNTER_WIDTH<=(state==='tight'?765:SAFE_RIGHT);}
+function overlapsLevel(){return position.x<levelRegion.right && position.x+COUNTER_WIDTH>levelRegion.left && position.y<levelRegion.bottom && position.y+46>levelRegion.top;}
+function render(){
+el('counter').style.left=position.x+'px';el('counter').style.top=position.y+'px';el('counter').hidden=!running;
+const blocked=overlapsLevel();
+el('tip').hidden=!running||!el('tips').checked||ignoredSession||!blocked;
+el('move').disabled=blocked&&!hasRoom();el('move').textContent=hasRoom()?'一键挪开':'请手动拖动';
+el('session').textContent=running?'停止记牌':'开始记牌';
+el('reading').textContent=running?'级牌识别持续运行（示例）；'+(el('tips').checked?'提示开关只影响提醒。':'提醒已关闭，级牌读取继续。'):'记牌已停止（示例）；设置中的提示开关保持原值。';
+}
+function setScenario(value){state=value;position={x:value==='moved'?safeLeft():64,y:6};if(value==='ignored')ignoredSession=true;el('event').textContent=ignoredSession?'已忽略本次记牌提醒；停止后重新开始才恢复。':'';render();}
+el('scenario').addEventListener('change',()=>setScenario(el('scenario').value));
+el('tips').addEventListener('change',render);
+el('reset').addEventListener('click',()=>{el('tips').checked=true;running=true;ignoredSession=false;levelRegion={left:8,right:118,top:5,bottom:58};document.querySelector('.grades').style.left='8px';el('scenario').value='blocked';setScenario('blocked');});
+el('move').addEventListener('click',()=>{if(!running||!hasRoom())return;position={x:safeLeft(),y:6};state='moved';el('scenario').value='moved';el('event').textContent='已挪开，提醒消失；牌格和三家数量没有变化。';render();});
+el('ignore').addEventListener('click',()=>{if(!running)return;ignoredSession=true;el('scenario').value='ignored';el('event').textContent='已忽略本次记牌提醒；下一局或区域改变都不再提醒。';render();});
+el('session').addEventListener('click',()=>{running=!running;if(running){ignoredSession=false;el('scenario').value=overlapsLevel()?'blocked':'moved';el('event').textContent='已重新开始记牌，本次忽略状态已清除；全局提示开关保持原值。';}else{el('event').textContent='已停止记牌，位置与全局提示开关保持原值。';}render();});
+el('next-round').addEventListener('click',()=>{el('event').textContent=ignoredSession?'已模拟下一局：本次记牌仍处于忽略状态。':'已模拟下一局：按当前遮挡情况决定是否提醒。';render();});
+el('region-change').addEventListener('click',()=>{const next=levelRegion.left===8?20:8;levelRegion={left:next,right:next+110,top:5,bottom:58};document.querySelector('.grades').style.left=next+'px';el('event').textContent=ignoredSession?'已模拟区域变化：本次记牌仍处于忽略状态。':'已模拟区域变化：按当前遮挡情况决定是否提醒。';render();});
+function moveManually(x,y){position={x:Math.max(0,Math.min(1000-COUNTER_WIDTH,x)),y:Math.max(0,Math.min(70,y))};if(!overlapsLevel()){state='moved';el('scenario').value='moved';}render();}
+el('counter').addEventListener('pointerdown',e=>{if(e.target.closest('button'))return;drag={x:e.clientX,y:e.clientY,origin:{...position}};el('counter').setPointerCapture(e.pointerId);});
+el('counter').addEventListener('pointermove',e=>{if(drag)moveManually(drag.origin.x+(e.clientX-drag.x)/scale,drag.origin.y+(e.clientY-drag.y)/scale);});
+el('counter').addEventListener('pointerup',()=>{drag=null;});el('counter').addEventListener('pointercancel',()=>{drag=null;});
+el('counter').addEventListener('keydown',e=>{const steps={ArrowLeft:[-8,0],ArrowRight:[8,0],ArrowUp:[0,-8],ArrowDown:[0,8]};const step=steps[e.key];if(!step)return;e.preventDefault();moveManually(position.x+step[0],position.y+step[1]);});
+window.addEventListener('resize',fit);fit();render();
+</script></body></html>

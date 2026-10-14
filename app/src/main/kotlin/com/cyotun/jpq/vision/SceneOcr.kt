@@ -9,7 +9,8 @@ import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class OcrLine(val text: String,val box: Rect?)
-data class SceneText(val lines: List<OcrLine>,val timeMs: Long,val width: Int,val height: Int,val visibilityEpoch: Long=0L)
+data class SceneText(val lines: List<OcrLine>,val timeMs: Long,val width: Int,val height: Int,val visibilityEpoch: Long=0L,
+                     val gradeElements: List<OcrLine> = emptyList())
 /** OCR never blocks card inference. Its owned immutable snapshot survives the next frame. */
 class SceneOcr: AutoCloseable {
     private val recognizer=TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
@@ -38,7 +39,13 @@ class SceneOcr: AutoCloseable {
                             OcrLine(line.text.replace(" ",""),line.boundingBox?.let { b ->
                                 Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
                             })
-                        },now,sourceWidth,sourceHeight,visibilityEpoch)
+                        },now,sourceWidth,sourceHeight,visibilityEpoch,
+                            result.textBlocks.flatMap { it.lines }.flatMap { it.elements }
+                                .filter { it.text.replace(" ","")=="级" }.map { element ->
+                                    OcrLine("级",element.boundingBox?.let { b ->
+                                        Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
+                                    })
+                                })
                         synchronized(resultLock) { if(!closed) latest=text }
                     }
                 } catch(error: Exception) { android.util.Log.w("JPQVision","ocr_result_unavailable",error) }

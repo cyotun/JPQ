@@ -22,6 +22,7 @@ class DisplayConfigPersistenceTest {
             val imported=store.import(old.toString())
             assertFalse(imported.showHistory)
             assertTrue(imported.showHistoryDetails)
+            assertTrue(imported.showStraightFlush)
             assertFalse(imported.positionIsScreenRelative)
             assertEquals(.25f,imported.x,0f); assertEquals(.5f,imported.y,0f)
             assertEquals(imported,store.load())
@@ -33,12 +34,13 @@ class DisplayConfigPersistenceTest {
         val store=ConfigStore(InstrumentationRegistry.getInstrumentation().targetContext)
         val original=store.load()
         try {
-            val expected=DisplayConfig(showHistory=true,showHistoryDetails=false,
+            val expected=DisplayConfig(showHistory=true,showHistoryDetails=false,showStraightFlush=false,
                 positionIsScreenRelative=true,x=.25f,y=.5f)
             store.save(expected)
             val exported=store.export()
             assertTrue(JSONObject(exported).getJSONObject("display").getBoolean("history"))
             assertFalse(JSONObject(exported).getJSONObject("display").getBoolean("historyDetails"))
+            assertFalse(JSONObject(exported).getJSONObject("display").getBoolean("straightFlush"))
             store.save(DisplayConfig())
             assertEquals(expected,store.import(exported))
             assertEquals(expected,store.load())

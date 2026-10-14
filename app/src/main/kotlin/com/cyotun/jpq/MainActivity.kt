@@ -191,6 +191,8 @@ class MainActivity : ComponentActivity() {
         val d=store.load()
         add(c,text("显示设置",15f,muted))
         add(c,row("三家出牌显示",historyLabel(d)) { selectHistoryMode() })
+        switch(c,"显示同花顺标识",d.showStraightFlush) { store.save(store.load().copy(showStraightFlush=it)); changed() }
+        add(c,text("亮色：尚未排除；暗色：当前计算范围已排除。未识别级牌时只判断天然同花顺，确认逢人配后计入变牌；花色不清楚时保留可能。",13f,muted))
         switch(c,"显示重置按钮",d.showReset) { store.save(store.load().copy(showReset=it)); changed() }
         switch(c,"双击记牌条隐藏",d.doubleTapHide) { store.save(store.load().copy(doubleTapHide=it)); changed() }
         add(c,text("双击开启后移除隐藏按钮；隐藏后只显示恢复按钮。",13f,muted))
@@ -307,7 +309,7 @@ class MainActivity : ComponentActivity() {
     private fun saveBar(c: LinearLayout) {
         add(c,row("重置当前调整","恢复默认") {
             val defaults=DisplayConfig()
-            draft=if(page=="order") draft.copy(order=guandanOrder) else defaults.copy(showHistory=draft.showHistory,showHistoryDetails=draft.showHistoryDetails,showReset=draft.showReset,doubleTapHide=draft.doubleTapHide,order=draft.order,x=draft.x,y=draft.y,positionIsScreenRelative=draft.positionIsScreenRelative)
+            draft=if(page=="order") draft.copy(order=guandanOrder) else defaults.copy(showHistory=draft.showHistory,showHistoryDetails=draft.showHistoryDetails,showStraightFlush=draft.showStraightFlush,showReset=draft.showReset,doubleTapHide=draft.doubleTapHide,order=draft.order,x=draft.x,y=draft.y,positionIsScreenRelative=draft.positionIsScreenRelative)
             render()
         })
         add(c,button("保存并退出") { store.save(draft.validate()); changed(); page=restorePage; render() },56)

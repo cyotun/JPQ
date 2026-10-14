@@ -3,6 +3,9 @@ package com.cyotun.jpq.vision
 import android.content.Intent
 import android.graphics.PointF
 import android.graphics.Rect
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
@@ -75,6 +78,19 @@ class DisplayInteractionTest {
                     assertEquals(2,switches.size); switches.forEach { it.performClick() }
                 }
             }
+            fun toggleStraightFlush() {
+                instrument.runOnMainSync {
+                    val setting=descendants(activity!!.window.decorView).filterIsInstance<Switch>()
+                        .single { it.text.toString()=="显示同花顺标识" }
+                    assertTrue(setting.performClick())
+                }
+                instrument.waitForIdleSync()
+            }
+            assertTrue(store.load().showStraightFlush)
+            toggleStraightFlush()
+            assertFalse(store.load().showStraightFlush); assertEquals(before,AppState.ledger.snapshot())
+            toggleStraightFlush()
+            assertTrue(store.load().showStraightFlush); assertEquals(before,AppState.ledger.snapshot())
             selectHistory(0)
             // Exercise the actual screen listeners and the exact combination reported by the user.
             toggleSwitches()
@@ -233,6 +249,41 @@ class DisplayInteractionTest {
                 assertFalse(AppState.adjusting); assertNull(AppState.adjustmentMask)
                 assertEquals(before,AppState.ledger.snapshot())
             }
+        }
+    }
+
+    @Test fun straightFlushDefaultsToGoldAndOnlyProvedAbsenceDarkensTheSameSmallSlot() {
+        withStoppedSyntheticOverlay(DisplayConfig(showHistory=false,showReset=false,doubleTapHide=true,showStraightFlush=true)) {
+                instrument,context,store,overlay,view,before ->
+            val original=AppState.straightFlushState
+            val density=context.resources.displayMetrics.density
+            val config=store.load()
+            val width=HistoryWidth().measure(config,0f,context.resources.displayMetrics.widthPixels/density)
+            val centerX=((width.grid+10f)*density).roundToInt()
+            val centerY=((22*config.gridHeight+1.5f)*density).roundToInt()
+            val shownWidth=view.width
+            fun centerColor(state: StraightFlushState): Int {
+                var color=0
+                instrument.runOnMainSync {
+                    AppState.straightFlushState=state; overlay.refresh()
+                    val bitmap=Bitmap.createBitmap(view.width,view.height,Bitmap.Config.ARGB_8888)
+                    try { view.draw(Canvas(bitmap)); color=bitmap.getPixel(centerX,centerY) }
+                    finally { bitmap.recycle() }
+                }
+                assertEquals(shownWidth,view.width)
+                assertEquals(before,AppState.ledger.snapshot())
+                return color
+            }
+            try {
+                assertEquals(OverlayController.GOLD,centerColor(StraightFlushState.UNKNOWN))
+                assertEquals(OverlayController.GOLD,centerColor(StraightFlushState.POSSIBLE))
+                assertEquals(Color.rgb(98,98,98),centerColor(StraightFlushState.IMPOSSIBLE))
+                store.save(config.copy(showStraightFlush=false))
+                instrument.runOnMainSync { overlay.refresh() }
+                instrument.waitForIdleSync()
+                assertEquals((16*density).roundToInt(),shownWidth-view.width)
+                assertEquals(before,AppState.ledger.snapshot())
+            } finally { AppState.straightFlushState=original }
         }
     }
 

@@ -30,8 +30,7 @@ def centered(im, box, value, size, fill):
 def badge(im,x,y,s,state):
     d=ImageDraw.Draw(im); d.rectangle((x,y,x+BADGE_WIDTH*s,y+44*s),fill=CELL)
     if ICON_MODE:
-        if state=='unknown': return
-        tone=GOLD if state in ('natural','wild') else '#626262'
+        tone='#626262' if state=='none' else GOLD
         # Continue the rank-header gradient and count-row grey into the icon.
         # A separate #262626 strip looked detached from the adjacent card grid.
         for j in range(round(21*s)):
@@ -122,17 +121,17 @@ def icon_preview():
     BADGE_WIDTH=16; ICON_MODE=True
     im=Image.new('RGB',(1800,870),'#141514'); d=ImageDraw.Draw(im)
     ui(d,(62,35),'同花顺 · 牌格旁图案版',42,GOLD,True)
-    ui(d,(64,104),'单个12dp小黑桃 · 底色与牌格连续 · 亮表示可能有，暗表示已排除 · 自绘设计图',24,'#AAA')
+    ui(d,(64,104),'单个12dp小黑桃 · 底色与牌格连续 · 亮表示尚未排除，暗表示已排除 · 自绘设计图',24,'#AAA')
     for i,(state,mode,title,desc) in enumerate([
         ('natural','all','亮 · 天然或含变牌仍可能成顺','计数和详情均显示；只占约16dp，图标本身约12dp，不增加条高。'),
         ('none','counts','暗 · 已排除所有天然及含变组合','只显示三家数量时，不保留详情的空白区域。'),
-        ('wild','off','亮 · 包含变牌能补齐的情况','三家记录关闭，图案仍在牌格旁；没有额外点击或长按面板。')]):
+        ('unknown','off','默认亮 · 信息尚未确认时继续亮','三家记录关闭，图案仍在牌格旁；只有全部可能被排除后才变暗。')]):
         y=180+i*210
         d.rounded_rectangle((48,y,1752,y+188),radius=14,fill='#202220')
         ui(d,(78,y+14),title,27,GOLD,True)
         bar(im,106,y+63,2,'inline',state,mode)
         ui(d,(78,y+156),desc,22,'#BBB')
-    ui(d,(62,818),'花色/级牌/变牌规则不确定时暂不显示图案，不能把未知画成“暗”。',22,'#AAA')
+    ui(d,(62,818),'亮色表示“尚未排除”，不代表某一家持有；花色或变牌规则不确定时不会变暗。',22,'#AAA')
     im.save(OUT/'icon-preview.png',optimize=True)
 
 if __name__=='__main__': OUT.mkdir(parents=True,exist_ok=True); options(); states(); icon_preview(); print(OUT)

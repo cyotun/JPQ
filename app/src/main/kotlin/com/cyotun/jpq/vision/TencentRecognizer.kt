@@ -25,6 +25,8 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     private var referenceRoundId: String?=null
     private val ocr=SceneOcr()
     private val trace=SessionTrace(context)
+    private val straightFlush=StraightFlushAnalyzer(context,sessionGuard,
+        { sessionAlive() && !closed },visibilityEpoch) { trace.write(it) }
     private val evidenceIo=java.util.concurrent.Executors.newSingleThreadExecutor()
     private val evidenceBusy=java.util.concurrent.atomic.AtomicBoolean(false)
     private val emptyGuard=EmptyRegionGuard()
@@ -32,6 +34,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     private val repository=RoundRepository(context)
     private var tracedEvents=emptyMap<String,PlayEvent>()
     private val observer=RoundObserver(AppState.ledger) { snapshot ->
+        straightFlush.onLedgerChanged(snapshot)
         if(snapshot.roundId!=referenceRoundId) {
             referenceDetector?.reset("round_boundary")
             referenceRoundId=snapshot.roundId
@@ -196,6 +199,8 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                     regionObserved=emptyEvidence.getValue(seat).observed && (sorted.isNotEmpty() || !effect))
             }
             observe(TableFrame(start,scene,if(scene==TableScene.TEAMMATE || captured.adjusting) null else hand,observed,selfFinished))
+            if(!captured.adjusting && frameCurrent()) straightFlush.offer(bitmap,start,activeVisibilityEpoch,
+                AppState.ledger.snapshot(),AppState.ledger.initialHand(),partition.hand,ownership.seats,normalizedMasks,text)
         } finally {
             val now=SystemClock.elapsedRealtime()
             if(diagnosticFrameAllowed && diagnostics.getBoolean("enabled",false) && now-lastDiagnostic>=2000 && evidenceBusy.compareAndSet(false,true)) {
@@ -251,6 +256,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     override fun close() {
         if(closed) return
         closed=true
+        straightFlush.close()
         runCatching { repository.save(AppState.ledger) }; runCatching { repository.close() }
         runCatching { ocr.close() }
         runCatching { referenceDetector?.close() }

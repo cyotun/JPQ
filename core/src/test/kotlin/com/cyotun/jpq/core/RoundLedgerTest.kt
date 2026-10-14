@@ -88,7 +88,7 @@ class RoundLedgerTest {
         assertTrue(validOrder(guandanOrder)); assertFalse(validOrder(guandanOrder.dropLast(1)+Rank.A))
     }
     @Test fun widthExpandsRightOnlyAndResetsForNextRound() {
-        val config=DisplayConfig(); val w=HistoryWidth()
+        val config=DisplayConfig(showStraightFlush=false); val w=HistoryWidth()
         val base=w.measure(config,158.25f,1000f); val wide=w.measure(config,466.806f,1000f)
         assertEquals(base.grid,wide.grid); assertEquals(511f,wide.history)
         assertEquals(wide,w.measure(config,10f,1000f))
@@ -97,7 +97,7 @@ class RoundLedgerTest {
         assertEquals(700f,w.measure(config,466.806f,700f).total)
     }
     @Test fun explicitSizeChangeRecomputesBaseWithoutLosingRecordSetting() {
-        val config=DisplayConfig(); val width=HistoryWidth()
+        val config=DisplayConfig(showStraightFlush=false); val width=HistoryWidth()
         width.measure(config,466.806f,1000f)
         val smaller=width.measure(config.copy(widthScale=.8f),20f,1000f)
         assertTrue(smaller.history<320f)

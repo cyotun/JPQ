@@ -23,6 +23,8 @@ object AppState {
     @Volatile var sourceHeight = 0
     @Volatile var message = "等待开始记牌"
     @Volatile var recognitionReady = false
+    @Volatile var straightFlushState = StraightFlushState.UNKNOWN
+    @Volatile var straightFlushIncludesWildcards = false
     private val main = Handler(Looper.getMainLooper())
     private val listeners = linkedSetOf<() -> Unit>()
     private val notificationPending=AtomicBoolean(false)

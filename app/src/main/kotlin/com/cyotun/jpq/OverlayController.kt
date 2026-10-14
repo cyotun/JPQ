@@ -156,6 +156,15 @@ class OverlayController(private val context: Context,private val preview: Boolea
     }
     private inner class BarView: View(context) {
         private val p=Paint(Paint.ANTI_ALIAS_FLAG)
+        // The approved 12dp spade is drawn as a path, independent of a system
+        // font. Its 16dp slot shares the two card rows' original grey surface.
+        private val spade=Path().apply {
+            moveTo(8f,16f); cubicTo(6f,19f,2f,19f,2f,22f)
+            cubicTo(2f,25f,6f,26f,8f,23f)
+            cubicTo(10f,26f,14f,25f,14f,22f)
+            cubicTo(14f,19f,10f,19f,8f,16f); close()
+            moveTo(8f,23f); lineTo(5f,28f); lineTo(11f,28f); close()
+        }
         private var originX=0; private var originY=0
         private var downX=0f; private var downY=0f; private var moved=false
         private var doubleTapPending=false
@@ -270,8 +279,23 @@ class OverlayController(private val context: Context,private val preview: Boolea
                 val color=when(countTone(rank,count)) { CountTone.RED -> Color.rgb(255,49,64); CountTone.ZERO -> Color.rgb(95,95,95); else -> Color.WHITE }
                 text(canvas,value,count.toString(),16*config.valueText,color)
             }
+            val indicatorWidth=if(config.showStraightFlush) HistoryWidth.STRAIGHT_FLUSH_SLOT else 0f
+            if(config.showStraightFlush) {
+                val indicator=RectF(gridStart+dp(size.grid+1),dp(1f),
+                    gridStart+dp(size.grid+1+indicatorWidth),dp(height*2+2))
+                p.shader=LinearGradient(0f,indicator.top,0f,dp(height+1),
+                    Color.rgb(109,110,110),Color.rgb(67,67,67),Shader.TileMode.CLAMP)
+                canvas.drawRect(indicator,p); p.shader=null
+                val state=if(preview) StraightFlushState.POSSIBLE else AppState.straightFlushState
+                // Gold means not excluded, including incomplete suit or wildcard evidence.
+                // Only a proved absence may darken the icon.
+                p.color=if(state==StraightFlushState.IMPOSSIBLE) Color.rgb(98,98,98) else GOLD
+                canvas.save()
+                canvas.translate(indicator.left,indicator.centerY()-dp(22f)); canvas.scale(d,d)
+                canvas.drawPath(spade,p); canvas.restore()
+            }
             if(config.showHistory) {
-                val rx=gridStart+dp(size.grid+1)
+                val rx=gridStart+dp(size.grid+1+indicatorWidth)
                 listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).forEachIndexed { i,seat ->
                     val y=dp(1+i*(14*config.recordHeight+1)); val h=dp(14*config.recordHeight)
                     val lb=RectF(rx,y,rx+dp(14f),y+h); p.color=Color.rgb(67,67,67); canvas.drawRect(lb,p); text(canvas,lb,seat.label,12f,Color.WHITE)

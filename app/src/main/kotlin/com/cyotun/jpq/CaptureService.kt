@@ -1,5 +1,7 @@
 package com.cyotun.jpq
 
+import com.cyotun.jpq.core.StraightFlushState
+
 import android.app.*
 import android.content.*
 import android.content.pm.ServiceInfo
@@ -252,6 +254,8 @@ class CaptureService : Service() {
         }
         android.util.Log.i("JPQCapture","session_stop reason=$message")
         AppState.running=false; AppState.recognitionReady=false; AppState.message=message
+        AppState.straightFlushState=StraightFlushState.UNKNOWN
+        AppState.straightFlushIncludesWildcards=false
         com.cyotun.jpq.updates.UpdateManager.scheduleDownload(this)
         overlay?.close(); overlay=null
         visualContext=null

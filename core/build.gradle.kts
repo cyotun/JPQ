@@ -18,3 +18,12 @@ tasks.register<JavaExec>("replayLoggedFrames") {
     mainClass.set("com.cyotun.jpq.core.PhoneLoggedFrameReplayKt")
     doFirst { args(providers.gradleProperty("loggedTape").get(),providers.gradleProperty("loggedOutput").get()) }
 }
+tasks.register<JavaExec>("probeSuitSymbols") {
+    dependsOn(tasks.testClasses)
+    classpath=sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.cyotun.jpq.core.SuitSymbolFixtureProbeKt")
+    doFirst {
+        args(providers.gradleProperty("suitAnnotations").get())
+        providers.gradleProperty("suitProbeOutput").orNull?.let { args(it) }
+    }
+}

@@ -6,9 +6,22 @@ import com.cyotun.jpq.core.*
 import org.json.*
 
 /** Atomic local checkpoints; no capture buffers, remote transport, or guessed resumption. */
-class RoundRepository(context: Context): SQLiteOpenHelper(context,"rounds.db",null,1) {
-    override fun onCreate(db: SQLiteDatabase) { db.execSQL("CREATE TABLE rounds(id TEXT PRIMARY KEY, touched INTEGER NOT NULL, state TEXT NOT NULL)") }
-    override fun onUpgrade(db: SQLiteDatabase,oldVersion: Int,newVersion: Int) = Unit
+class RoundRepository(context: Context,databaseName: String="rounds.db"): SQLiteOpenHelper(context,databaseName,null,2) {
+    override fun onCreate(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE rounds(id TEXT PRIMARY KEY, touched INTEGER NOT NULL, state TEXT NOT NULL)")
+        createSuitEvidence(db)
+    }
+    private fun createSuitEvidence(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS suit_evidence(id TEXT PRIMARY KEY, state TEXT NOT NULL)")
+    }
+    override fun onUpgrade(db: SQLiteDatabase,oldVersion: Int,newVersion: Int) { if(oldVersion<2) createSuitEvidence(db) }
+    /** Separate annotations cannot overwrite the immutable rank/color round checkpoint. */
+    @Synchronized fun saveSuitEvidence(id: String,state: JSONObject) {
+        writableDatabase.insertWithOnConflict("suit_evidence",null,ContentValues().apply {
+            put("id",id); put("state",state.toString())
+        },SQLiteDatabase.CONFLICT_REPLACE)
+        writableDatabase.execSQL("DELETE FROM suit_evidence WHERE id NOT IN (SELECT id FROM rounds)")
+    }
     @Synchronized fun save(ledger: RoundLedger) {
         val s=ledger.snapshot(); val id=s.roundId ?: return
         val state=JSONObject().put("schemaVersion",1).put("roundId",id).put("phase",s.phase.name)
@@ -28,8 +41,10 @@ class RoundRepository(context: Context): SQLiteOpenHelper(context,"rounds.db",nu
         } finally { db.endTransaction() }
     }
     fun export(): String {
-        val a=JSONArray(); readableDatabase.rawQuery("SELECT state FROM rounds ORDER BY touched DESC",null).use { q -> while(q.moveToNext()) a.put(JSONObject(q.getString(0))) }
-        return JSONObject().put("schemaVersion",1).put("rounds",a).toString(2)
+        val a=JSONArray(); readableDatabase.rawQuery("SELECT r.state,s.state FROM rounds r LEFT JOIN suit_evidence s ON s.id=r.id ORDER BY r.touched DESC",null).use { q ->
+            while(q.moveToNext()) a.put(JSONObject(q.getString(0)).apply { if(!q.isNull(1)) put("suitEvidence",JSONObject(q.getString(1))) })
+        }
+        return JSONObject().put("schemaVersion",2).put("rounds",a).toString(2)
     }
     fun summary(): String {
         readableDatabase.rawQuery("SELECT touched,state FROM rounds ORDER BY touched DESC LIMIT 20",null).use { q ->
@@ -42,6 +57,10 @@ class RoundRepository(context: Context): SQLiteOpenHelper(context,"rounds.db",nu
             }; return lines.joinToString("\n\n").ifEmpty { "暂无牌局记录" }
         }
     }
-    fun clear() { writableDatabase.delete("rounds",null,null) }
+    @Synchronized fun clear() {
+        val db=writableDatabase; db.beginTransaction()
+        try { db.delete("rounds",null,null); db.delete("suit_evidence",null,null); db.setTransactionSuccessful() }
+        finally { db.endTransaction() }
+    }
     private fun cards(values: List<Card>)=JSONArray(values.map { JSONObject().put("rank",it.rank.name).put("colorOrSuit",it.suit.name) })
 }

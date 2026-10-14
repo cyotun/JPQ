@@ -18,6 +18,7 @@ data class DisplayConfig(
     val countWidthScale: Float = 1f,
     val showHistoryDetails: Boolean = true,
     val positionIsScreenRelative: Boolean = false,
+    val showStraightFlush: Boolean = true,
 ) {
     fun validate(): DisplayConfig {
         require(validOrder(order))
@@ -40,22 +41,32 @@ class HistoryWidth {
         config.validate()
         require(textWidth.isFinite() && textWidth >= 0 && available.isFinite() && available > 0)
         val newGeometry = listOf(config.widthScale,config.gridRatio,config.detailText,
-            if(config.showHistory) 1f else 0f,if(config.showHistoryDetails) 1f else 0f)
+            if(config.showHistory) 1f else 0f,if(config.showHistoryDetails) 1f else 0f,
+            if(config.showStraightFlush) 1f else 0f)
         if (geometry != newGeometry) { expanded = 0f; geometry = newGeometry }
         val inner = 552 * config.widthScale - 3
-        val grid = inner * config.gridRatio
+        val requestedGrid = inner * config.gridRatio
         val controls = (if (config.doubleTapHide) 0 else 48) + (if (config.showReset) 48 else 0)
+        val indicator = if(config.showStraightFlush) STRAIGHT_FLUSH_SLOT else 0f
         if (!config.showHistory || !config.showHistoryDetails) {
-            val onlyGrid=235.577047f*config.countWidthScale
+            val requestedCompactGrid=235.577047f*config.countWidthScale
             // Count mode ends just after the two 14dp seat/count cells. It does
             // not inherit a previous round's expanded text or a detail gutter.
             val record=if(config.showHistory) 32f else 0f
-            val content=onlyGrid+record+if(config.showHistory) 3f else 2f
+            val margin=if(config.showHistory) 3f else 2f
+            // Keep the complete seat/count cells when the saved scale reaches
+            // a narrower screen. The icon owns its own slot, never a count cell.
+            val onlyGrid=minOf(requestedCompactGrid,maxOf(0f,available-controls-indicator-record-margin))
+            val content=onlyGrid+indicator+record+margin
             return OverlaySize(onlyGrid,record,content,content+controls)
         }
-        val base = inner - grid
+        val base = inner - requestedGrid
         expanded = maxOf(expanded, base, kotlin.math.ceil(32 + textWidth + 12))
-        val record = minOf(expanded, maxOf(0f, available - controls - grid - 3))
-        return OverlaySize(grid, record, grid + record + 3, grid + record + 3 + controls)
+        val grid=minOf(requestedGrid,maxOf(0f,available-controls-indicator-32-3))
+        val record = minOf(expanded, maxOf(32f, available - controls - grid - indicator - 3))
+        val content=grid+indicator+record+3
+        return OverlaySize(grid, record, content, content+controls)
     }
+
+    companion object { const val STRAIGHT_FLUSH_SLOT = 16f }
 }
