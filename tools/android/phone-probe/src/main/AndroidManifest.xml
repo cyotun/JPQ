@@ -9,6 +9,10 @@
         <activity android:name="com.cyotun.jpq.vision.ScopeProbeActivity"
             android:exported="true" android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density" />
+        <activity android:name="com.cyotun.jpq.vision.ScopeConsentActivity"
+            android:exported="false" android:excludeFromRecents="true"
+            android:taskAffinity="com.cyotun.jpq.tests.scopeconsent"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density" />
         <service android:name="com.cyotun.jpq.vision.ScopeProbeService"
             android:exported="false" android:foregroundServiceType="mediaProjection" />
     </application>

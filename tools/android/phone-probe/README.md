@@ -33,7 +33,7 @@ adb shell appops set com.cyotun.jpq.scopeoverlay SYSTEM_ALERT_WINDOW allow
 adb shell am start -W -n com.cyotun.jpq.tests/com.cyotun.jpq.vision.ScopeProbeActivity --ez scopeProbe true --es orientation landscape --ei timeoutSeconds 45
 ```
 
-额外加 `--ez requestConsent true` 会在自家画面就绪后自动打开标准系统共享选择窗口。只有 `scopeProbe=true` 时不会自动请求权限。也可点自家「开始单应用共享实验」。测试工具不代替用户选应用，不打开游戏，不调用隐藏任务/截图接口。
+额外加 `--ez requestConsent true` 会在自家画面就绪后自动打开标准系统共享选择窗口。授权由独立的未导出测试任务请求，以免系统选择器排除底图任务；结果通过本包 PendingIntent 返回，超时或退出即撤销。只有 `scopeProbe=true` 时不会自动请求权限。也可点自家「开始单应用共享实验」。标准选择器中只选专用测试应用，不打开游戏，不调用隐藏任务/截图接口。
 
 分别完成两次阳性/排除对照；每次都是一份新授权和单次 MediaProjection 会话：
 
@@ -58,6 +58,6 @@ adb shell am start -W -n com.cyotun.jpq.tests/com.cyotun.jpq.vision.ScopeProbeAc
 
 完成后确认 MediaProjection 已停止、洋红覆盖层已移除，恢复记录的临时 app-op／亮屏原值，再恢复正常的 releaseAndroidTest APK，并移除本次独立安装的 `com.cyotun.jpq.scopeoverlay` 辅助包。它不保存资料，不得误卸载生产 APP。不能在这项实验运行时启动原 instrumentation driver，它以此测试 APK 为 target，结束时可能终止本实验进程。
 
-2026-10-15 当前状态：用户选择稍后进行。实验工具最终构建和静态检查通过（0 错误、10 条警告），尚未请求实际共享、启动实验投影或生成实验结果；不能宣称本机单应用共享通过。手机在最终清理前断开，临时 USB 保持亮屏原值 0／最后值 3、测试包悬浮 app-op 原值 default／最后值 allow 待连接后恢复。常规 AndroidTest 包也待恢复；实验开始前应重新安装最终冻结产物，避免使用首次构建候选。
+2026-10-15 最终状态：整屏阳性和单应用排除对照均已完成，包括横屏→竖屏→横屏、独立 UID、独立物理截图和采集 PNG 对照。20 项工具单元检查通过；实际系统对洋红色窗口的合成结果为 `(204,51,204)`，颜色判定已覆盖该值及负例。原始失败记录也保留。
 
-后续审查见 [修复记录](../../../docs/development/review-0.2.16.md)。新的两个 APK 均需重新安装；目前仍遵守用户“稍后进行”的安排，没有连接或操作手机、没有安装辅助包，也没有发起共享实验。
+实验投影停止、正常 AndroidTest 包恢复、临时亮屏值恢复 0、旧测试悬浮 app-op 恢复 default，辅助包卸载。用户选择不接入生产，工具仅留存备用，正式 APP 继续原整屏共享流程。完整结论与局限见 [实测记录](../../../docs/development/scope-probe-20261015.md)，此前审查见 [修复记录](../../../docs/development/review-0.2.16.md)。

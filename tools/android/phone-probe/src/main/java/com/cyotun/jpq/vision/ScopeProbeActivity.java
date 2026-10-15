@@ -1,6 +1,7 @@
 package com.cyotun.jpq.vision;
 
 import android.app.Activity;
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
@@ -8,7 +9,6 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
-import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -28,6 +28,7 @@ public final class ScopeProbeActivity extends Activity {
     private final Handler main=new Handler(Looper.getMainLooper());
     private Button start;
     private boolean consentPending;
+    private PendingIntent consentResult;
     private int timeoutSeconds=45;
     private long serviceLaunchAt=-1;
     private static volatile Rect patternScreenRect;
@@ -39,7 +40,7 @@ public final class ScopeProbeActivity extends Activity {
     private final Runnable consentTimeout=() -> {
         if(consentPending) {
             consentPending=false;
-            finishActivity(CONSENT);
+            if(consentResult!=null) { consentResult.cancel(); consentResult=null; }
             if(start!=null) { start.setEnabled(true); start.setText("授权超时，重新开始实验"); }
         }
     };
@@ -97,10 +98,19 @@ public final class ScopeProbeActivity extends Activity {
         if(isFinishing() || !isFixtureForeground() || consentPending || ScopeProbeService.isRunning()) return;
         consentPending=true; start.setEnabled(false); start.setText("请在系统窗口选择记牌器手机测试");
         android.util.Log.i("JPQScopeProbe","standard_user_choice_consent_requested");
-        MediaProjectionManager manager=getSystemService(MediaProjectionManager.class);
-        // Standard user choice: no default-display opt-out and no hidden task ID.
-        startActivityForResult(manager.createScreenCaptureIntent(),CONSENT);
-        main.postDelayed(consentTimeout,90000);
+        // The picker hides its own task. Request in another task so this actual
+        // fixture remains a selectable recent task; still use standard user choice.
+        consentResult=createPendingResult(CONSENT,new Intent().setPackage(getPackageName()),
+            PendingIntent.FLAG_ONE_SHOT|PendingIntent.FLAG_CANCEL_CURRENT|PendingIntent.FLAG_MUTABLE);
+        try {
+            startActivity(new Intent(this,ScopeConsentActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(OPT_IN,true).putExtra("resultTo",consentResult)
+                .putExtra("portrait",getRequestedOrientation()==ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
+            main.postDelayed(consentTimeout,95000);
+        } catch(Exception error) {
+            consentPending=false; consentResult.cancel(); consentResult=null; start.setEnabled(true);
+            android.util.Log.w("JPQScopeProbe","consent_task_launch_failed:"+error.getClass().getSimpleName());
+        }
     }
 
     @Override protected void onActivityResult(int request,int result,Intent data) {
@@ -108,6 +118,7 @@ public final class ScopeProbeActivity extends Activity {
         if(request!=CONSENT) return;
         boolean expected=consentPending;
         main.removeCallbacks(consentTimeout); consentPending=false;
+        consentResult=null;
         if(!expected || isFinishing() || isDestroyed()) {
             android.util.Log.i("JPQScopeProbe","late_consent_result_discarded_no_projection"); return;
         }
@@ -131,12 +142,15 @@ public final class ScopeProbeActivity extends Activity {
         if(Build.VERSION.SDK_INT>=28) getWindow().getAttributes().layoutInDisplayCutoutMode=
             WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
     }
-    @Override protected void onResume() { super.onResume(); resumed=true; main.post(refreshStatus); }
+    @Override protected void onResume() {
+        super.onResume(); resumed=true; focused=getWindow().getDecorView().hasWindowFocus(); main.post(refreshStatus);
+    }
     @Override protected void onPause() { resumed=false; focused=false; main.removeCallbacks(refreshStatus); super.onPause(); }
     @Override public void onWindowFocusChanged(boolean focus) { super.onWindowFocusChanged(focus); focused=focus; if(focus) immersive(); }
     @Override public void onConfigurationChanged(Configuration next) { super.onConfigurationChanged(next); immersive(); }
     @Override protected void onDestroy() {
         main.removeCallbacksAndMessages(null);
+        if(consentResult!=null) { consentResult.cancel(); consentResult=null; }
         resumed=false; focused=false; patternScreenRect=null;
         if(isFinishing()) stopService(new Intent(this,ScopeProbeService.class));
         super.onDestroy();

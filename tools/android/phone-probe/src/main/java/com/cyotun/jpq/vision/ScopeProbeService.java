@@ -396,7 +396,7 @@ public final class ScopeProbeService extends Service {
     private static boolean green(int p) { return (p>>16&255)<=30 && (p>>8&255)>=235 && (p&255)<=30; }
     private static boolean blue(int p) { return (p>>16&255)<=30 && (p>>8&255)<=60 && (p&255)>=230; }
     private static boolean orange(int p) { return (p>>16&255)>=230 && (p>>8&255)>=110 && (p>>8&255)<=190 && (p&255)<=40; }
-    private static boolean magenta(int p) { return (p>>16&255)>=230 && (p>>8&255)<=50 && (p&255)>=230; }
+    private static boolean magenta(int p) { return ScopeProbeColors.magenta(p); }
     private static void include(Rect rect,int x,int y,int step) {
         if(rect.isEmpty()) rect.set(x,y,x+step,y+step); else rect.union(x,y,x+step,y+step);
     }
