@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -28,6 +29,7 @@ public final class ScopeProbeActivity extends Activity {
     private Button start;
     private boolean consentPending;
     private int timeoutSeconds=45;
+    private long serviceLaunchAt=-1;
     private static volatile Rect patternScreenRect;
     private static volatile int patternRotation;
     private static volatile boolean resumed,focused;
@@ -39,6 +41,16 @@ public final class ScopeProbeActivity extends Activity {
             consentPending=false;
             finishActivity(CONSENT);
             if(start!=null) { start.setEnabled(true); start.setText("授权超时，重新开始实验"); }
+        }
+    };
+    private final Runnable refreshStatus=new Runnable() {
+        @Override public void run() {
+            if(!resumed || isFinishing()) return;
+            if(start!=null && !consentPending && !ScopeProbeService.isRunning() &&
+                (serviceLaunchAt<0 || SystemClock.elapsedRealtime()-serviceLaunchAt>=3000)) {
+                start.setEnabled(true); start.setText("开始单应用共享实验");
+            }
+            main.postDelayed(this,250);
         }
     };
 
@@ -82,7 +94,7 @@ public final class ScopeProbeActivity extends Activity {
     }
 
     private void requestConsent() {
-        if(isFinishing() || consentPending || ScopeProbeService.isRunning()) return;
+        if(isFinishing() || !isFixtureForeground() || consentPending || ScopeProbeService.isRunning()) return;
         consentPending=true; start.setEnabled(false); start.setText("请在系统窗口选择记牌器手机测试");
         android.util.Log.i("JPQScopeProbe","standard_user_choice_consent_requested");
         MediaProjectionManager manager=getSystemService(MediaProjectionManager.class);
@@ -94,7 +106,11 @@ public final class ScopeProbeActivity extends Activity {
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
         if(request!=CONSENT) return;
+        boolean expected=consentPending;
         main.removeCallbacks(consentTimeout); consentPending=false;
+        if(!expected || isFinishing() || isDestroyed()) {
+            android.util.Log.i("JPQScopeProbe","late_consent_result_discarded_no_projection"); return;
+        }
         if(result!=RESULT_OK || data==null) {
             android.util.Log.i("JPQScopeProbe","consent_denied_no_projection_no_png");
             start.setEnabled(true); start.setText("已取消授权，未采集画面"); return;
@@ -102,6 +118,7 @@ public final class ScopeProbeActivity extends Activity {
         Intent service=new Intent(this,ScopeProbeService.class).setAction(ScopeProbeService.ACTION_START)
             .putExtra(OPT_IN,true).putExtra("resultCode",result).putExtra("resultData",data)
             .putExtra("timeoutSeconds",timeoutSeconds);
+        serviceLaunchAt=SystemClock.elapsedRealtime();
         if(Build.VERSION.SDK_INT>=26) startForegroundService(service); else startService(service);
         start.setText("实验运行中，将自动停止");
     }
@@ -114,12 +131,13 @@ public final class ScopeProbeActivity extends Activity {
         if(Build.VERSION.SDK_INT>=28) getWindow().getAttributes().layoutInDisplayCutoutMode=
             WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
     }
-    @Override protected void onResume() { super.onResume(); resumed=true; }
-    @Override protected void onPause() { resumed=false; super.onPause(); }
+    @Override protected void onResume() { super.onResume(); resumed=true; main.post(refreshStatus); }
+    @Override protected void onPause() { resumed=false; focused=false; main.removeCallbacks(refreshStatus); super.onPause(); }
     @Override public void onWindowFocusChanged(boolean focus) { super.onWindowFocusChanged(focus); focused=focus; if(focus) immersive(); }
     @Override public void onConfigurationChanged(Configuration next) { super.onConfigurationChanged(next); immersive(); }
     @Override protected void onDestroy() {
         main.removeCallbacksAndMessages(null);
+        resumed=false; focused=false; patternScreenRect=null;
         if(isFinishing()) stopService(new Intent(this,ScopeProbeService.class));
         super.onDestroy();
     }

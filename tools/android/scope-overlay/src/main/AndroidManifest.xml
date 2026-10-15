@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <permission android:name="com.cyotun.jpq.scopeoverlay.BIND_PROBE" android:protectionLevel="signature" />
+    <queries><package android:name="com.cyotun.jpq.tests" /></queries>
+    <application android:label="记牌器实验悬浮层" android:allowBackup="false">
+        <service android:name=".ScopeOverlayService" android:exported="true"
+            android:permission="com.cyotun.jpq.scopeoverlay.BIND_PROBE" />
+    </application>
+</manifest>

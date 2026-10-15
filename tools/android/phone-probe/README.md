@@ -14,6 +14,19 @@ Android Gradle 的 androidTest manifest 会覆盖 instrumentation target；这�
 
 `ScopeProbeActivity` 和 `ScopeProbeService` 只属于本机测试 APK，不修改生产 APK、旧 UI driver 或旧动态测试画面。先确认真实对局已结束，生产记牌器的屏幕采集已停止。
 
+审查后实验需要两个测试 APK：底图和投影属于 `com.cyotun.jpq.tests`，洋红覆盖层属于单独 UID 的 `com.cyotun.jpq.scopeoverlay`，与实际游戏和记牌器分别属于两个应用的条件一致。不能用旧版同一应用创建两类窗口的工具代替这次验证。辅助 APK 没有桌面入口、采集、存储或网络权限；只向同签名且 UID 包含指定测试包的客户端提供绑定服务。
+
+准备时先恢复上轮遗留的 USB 保持亮屏和旧测试包悬浮 app-op，再记录本轮要改的原值。构建与安装顺序如下，仅在用户准备好、已解锁且无真实对局时执行：
+
+```powershell
+tools/android/build.ps1 -Tasks @(':phoneProbe:testDebugUnitTest', ':phoneProbe:assembleDebug', ':scopeOverlay:assembleDebug')
+adb install -r tools/android/scope-overlay/build/outputs/apk/debug/scopeOverlay-debug.apk
+adb install -r tools/android/phone-probe/build/outputs/apk/debug/phoneProbe-debug.apk
+adb shell appops get com.cyotun.jpq.scopeoverlay SYSTEM_ALERT_WINDOW
+# 把上一步原值写入本机 operator-state 后，才设置实验辅助包的悬浮权限。
+adb shell appops set com.cyotun.jpq.scopeoverlay SYSTEM_ALERT_WINDOW allow
+```
+
 仅显示专用测试图（没有 opt-in 参数会立即退出）：
 
 ```powershell
@@ -27,20 +40,24 @@ adb shell am start -W -n com.cyotun.jpq.tests/com.cyotun.jpq.vision.ScopeProbeAc
 1. 在标准选择窗口选「单个应用」→ **记牌器手机测试**，正常允许共享。
 2. 单次实验自动停止后，再启动一次标准选择窗口，选「整个屏幕」并允许共享。
 
-两次实验都应留在专用测试图。系统文案和选项可能因澎湃 OS 版本不同而变化；选项不明确时先取消，不能用 token 或收到帧就宣布单应用共享成功。拒绝授权不会创建 projection 或 PNG。独立测试 APK 如未获悬浮窗权限，只记录 `permission_missing`，不自动打开权限设置；由已授权的本机操作者单独配置后重新实验。
+两次实验都应留在专用测试图。系统文案和选项可能因澎湃 OS 版本不同而变化；选项不明确时先取消，不能用 token 或收到帧就宣布单应用共享成功。拒绝授权不会创建 projection 或 PNG。独立悬浮层辅助 APK 如未获悬浮窗权限，只记录 `permission_missing` 并停止，不自动打开权限设置；由已授权的本机操作者单独配置后重新实验。
 
-底图是纯绿，带蓝/橙位置块及每 250ms 变化的 16 位黑黄计数条。至少两幅不同计数的无遮挡基线通过后，服务才创建已知位置的不透明洋红 `TYPE_APPLICATION_OVERLAY`。仅在本专用 Activity 位于前台并有焦点、颜色/标记几何/动态条符合时保存 PNG；其他画面只记数值并在连续 5 秒无法确认底图时停止。最多保存 12 幅 PNG，无云上传。
+底图是纯绿，带蓝/橙位置块及每 250ms 变化的 16 位黑黄计数条。至少两幅不同计数、不同原始图像时间戳的无遮挡基线通过后，服务才绑定另一个应用并创建主屏上的不透明洋红 `TYPE_APPLICATION_OVERLAY`。仅在本专用 Activity 位于前台并有焦点、颜色/标记几何/动态条符合时保存 PNG；其他画面只记数值。独立定时检查在离开前台 1.5 秒或动态画面停滞 5 秒后停止，即使完全没有图像回调也会执行。最多保存 12 幅 PNG，无云上传。
+
+采集服务检查两个包的实际 UID 不相同，核验辅助程序消息发送 UID、会话 ID、所属主屏和实际窗口范围。辅助程序每次心跳报告自身窗口是否仍显示；采集侧只使用近 500ms 内的窗口状态，失联则结束。解除绑定或心跳停止 3 秒会移除洋红层；辅助程序也有 90 秒硬上限。
 
 结果位于 `/sdcard/Android/data/com.cyotun.jpq.tests/files/scope-probe/<runId>/`：
 
 - `events.jsonl`：授权后的尺寸、resize/可见性回调、原始图像时间戳、颜色统计、定位块与底图矩形、物理测试图/洋红覆盖层坐标、旋转、计数值、PNG 文件名。
 - `frame-*.png`：只含已确认的专用测试图；基线、覆盖层稳定后和旋转尺寸均可对照。
-- `summary.json`：`OVERLAY_PIXELS_PRESENT`、`OVERLAY_PIXELS_NOT_OBSERVED` 或 `INCONCLUSIVE`。结论要求基线/覆盖后多幅独立动态帧，而非仅收到图像。
+- `summary.json`：`OVERLAY_PIXELS_PRESENT`、`OVERLAY_PIXELS_NOT_OBSERVED` 或 `INCONCLUSIVE`。记录两个包的实际 UID；有效结论要求同一稳定尺寸／位置下至少三幅原始时间戳递增且计数至少两种的合格帧。普通的其他动态帧不能给静止的绿区统计补足计数。异常终止只保留原始像素证据，最终结论降为 `INCONCLUSIVE`。
 
 `NOT_OBSERVED` 还必须与**独立的实际屏幕截图**对照，确认手机上洋红覆盖层确实可见，同时采集 PNG 的相应区域实际仍为绿色。`PRESENT` 应能在全屏阳性对照中检测到相应区域的洋红。未显示覆盖层、未知画面、没有足够动态帧、回调终止等均不能作成功证明。
 
-默认 45 秒自动结束，可显式设置 15–90 秒。点「停止实验」、通知中的「停止」、退出本测试 Activity、projection 被系统终止、连续无法确认测试图都会清理。旋转可只改变本 Activity 的 `orientation` extra（仍须 `scopeProbe=true`，不加 `requestConsent`）；服务在 `onCapturedContentResize` 中 resize 原有 VirtualDisplay 并替换 ImageReader，绝不重复 createVirtualDisplay。`summary.displayCreations` 应始终为 1。
+默认 45 秒自动结束，可显式设置 15–90 秒。点「停止实验」、通知中的「停止」、退出本测试 Activity、projection 被系统终止、连续无法确认测试图都会清理。超时后再次进入页面可直接发起新实验；超时撤销后迟到的授权结果不会启动新采集。旋转可只改变本 Activity 的 `orientation` extra（仍须 `scopeProbe=true`，不加 `requestConsent`）；服务在 `onCapturedContentResize` 中 resize 原有 VirtualDisplay 并替换 ImageReader，绝不重复 createVirtualDisplay。旋转或移动后立即清除旧结论，等待实际窗口稳定 600ms，再重新收集独立证据。`summary.displayCreations` 应始终为 1。
 
-完成后确认 MediaProjection 已停止、洋红覆盖层已移除，再恢复正常的 releaseAndroidTest APK。不能在这项实验运行时启动原 instrumentation driver，它以此测试 APK 为 target，结束时可能终止本实验进程。
+完成后确认 MediaProjection 已停止、洋红覆盖层已移除，恢复记录的临时 app-op／亮屏原值，再恢复正常的 releaseAndroidTest APK，并移除本次独立安装的 `com.cyotun.jpq.scopeoverlay` 辅助包。它不保存资料，不得误卸载生产 APP。不能在这项实验运行时启动原 instrumentation driver，它以此测试 APK 为 target，结束时可能终止本实验进程。
 
 2026-10-15 当前状态：用户选择稍后进行。实验工具最终构建和静态检查通过（0 错误、10 条警告），尚未请求实际共享、启动实验投影或生成实验结果；不能宣称本机单应用共享通过。手机在最终清理前断开，临时 USB 保持亮屏原值 0／最后值 3、测试包悬浮 app-op 原值 default／最后值 allow 待连接后恢复。常规 AndroidTest 包也待恢复；实验开始前应重新安装最终冻结产物，避免使用首次构建候选。
+
+后续审查见 [修复记录](../../../docs/development/review-0.2.16.md)。新的两个 APK 均需重新安装；目前仍遵守用户“稍后进行”的安排，没有连接或操作手机、没有安装辅助包，也没有发起共享实验。

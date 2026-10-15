@@ -7,12 +7,12 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.Context;
+import android.content.ComponentName;
+import android.content.ServiceConnection;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
@@ -22,14 +22,14 @@ import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.Message;
+import android.os.Messenger;
 import android.os.SystemClock;
-import android.provider.Settings;
-import android.view.Gravity;
-import android.view.View;
 import android.view.WindowManager;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -50,6 +50,7 @@ public final class ScopeProbeService extends Service {
     public static final String ACTION_START="com.cyotun.jpq.tests.SCOPE_START";
     private static final String ACTION_STOP="com.cyotun.jpq.tests.SCOPE_STOP";
     private static final String CHANNEL="jpq-scope-probe";
+    private static final String OVERLAY_PACKAGE="com.cyotun.jpq.scopeoverlay";
     private static volatile boolean running;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final Object sessionLock=new Object();
@@ -59,26 +60,46 @@ public final class ScopeProbeService extends Service {
     private final Set<Integer> baselineCounters=new HashSet<>();
     private final Set<Integer> afterCounters=new HashSet<>();
     private final Set<String> savedStages=new HashSet<>();
+    private final ScopeProbeEvidence scopeEvidence=new ScopeProbeEvidence();
+    private ScopeProbeWatchdog watchdog;
     private HandlerThread captureThread;
     private Handler capture;
     private MediaProjection projection;
     private VirtualDisplay display;
     private ImageReader reader;
     private WindowManager windows;
-    private View overlay;
-    private WindowManager.LayoutParams overlayParams;
+    private Messenger overlayControl;
+    private boolean overlayBound;
+    private int overlayUid=-1;
     private volatile Rect overlayRect;
+    private volatile OverlayPlacement overlayPlacement;
+    private int placementSequence;
     private volatile boolean overlayAdded;
+    private volatile long lastOverlayReportAt;
     private boolean overlayAttempted;
     private boolean initialized;
-    private long startedAt,lastSampleAt,lastKnownPatternAt,overlayAddedAt;
+    private long startedAt,lastSampleAt;
     private int density,generation,sampleCount,patternCount,unknownCount,baselineCount,afterCount;
-    private int presentCount,absentCount,pngCount,resizeCount,displayCreations,lastWidth,lastHeight;
+    private int pngCount,resizeCount,displayCreations,lastWidth,lastHeight;
     private File directory;
     private BufferedWriter events;
     private String runId;
     private String stopReason="not_started";
     private boolean capturedVisible=true;
+    private final Messenger overlayReplies=new Messenger(new Handler(Looper.getMainLooper(),this::externalOverlayState));
+    private final ServiceConnection overlayConnection=new ServiceConnection() {
+        @Override public void onServiceConnected(ComponentName name,IBinder service) {
+            if(released.get()) return;
+            try {
+                overlayUid=getPackageManager().getApplicationInfo(OVERLAY_PACKAGE,0).uid;
+                if(overlayUid==android.os.Process.myUid()) throw new IllegalStateException("overlay_requires_separate_uid");
+                overlayControl=new Messenger(service); sendOverlay(1);
+            } catch(Exception error) { fail("external_overlay_bind",error); }
+        }
+        @Override public void onServiceDisconnected(ComponentName name) { overlayControl=null; end("external_overlay_disconnected"); }
+        @Override public void onNullBinding(ComponentName name) { end("external_overlay_null_binding"); }
+        @Override public void onBindingDied(ComponentName name) { end("external_overlay_binding_died"); }
+    };
     private final MediaProjection.Callback projectionCallback=new MediaProjection.Callback() {
         @Override public void onStop() { end("projection_stopped"); }
         @Override public void onCapturedContentResize(int width,int height) {
@@ -122,10 +143,14 @@ public final class ScopeProbeService extends Service {
             directory=new File(parent,runId);
             if(!directory.mkdirs() && !directory.isDirectory()) throw new IllegalStateException("output_directory");
             events=new BufferedWriter(new OutputStreamWriter(new FileOutputStream(new File(directory,"events.jsonl")),StandardCharsets.UTF_8));
-            startedAt=lastKnownPatternAt=SystemClock.elapsedRealtime();
+            startedAt=SystemClock.elapsedRealtime(); watchdog=new ScopeProbeWatchdog(startedAt);
             showForegroundNotification();
             captureThread=new HandlerThread("JPQScopeProbe"); captureThread.start(); capture=new Handler(captureThread.getLooper());
-            windows=getSystemService(WindowManager.class); density=getResources().getDisplayMetrics().densityDpi;
+            android.view.Display primary=getSystemService(DisplayManager.class).getDisplay(android.view.Display.DEFAULT_DISPLAY);
+            if(primary==null) throw new IllegalStateException("primary_display_unavailable");
+            Context visual=createDisplayContext(primary);
+            if(Build.VERSION.SDK_INT>=30) visual=visual.createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,null);
+            windows=visual.getSystemService(WindowManager.class); density=visual.getResources().getDisplayMetrics().densityDpi;
             projection=getSystemService(MediaProjectionManager.class).getMediaProjection(result,data);
             projection.registerCallback(projectionCallback,main);
             Rect screen=screenBounds();
@@ -137,8 +162,21 @@ public final class ScopeProbeService extends Service {
                 "notice","Frame arrival and consent do not establish capture scope.");
             main.postDelayed(() -> end("timeout"),seconds*1000L);
             main.postDelayed(this::maybeAddOverlay,1500);
+            main.postDelayed(this::checkProgress,250);
         } catch(Exception error) { fail("start",error); }
         return START_NOT_STICKY;
+    }
+
+    private void checkProgress() {
+        if(released.get()) return;
+        String reason;
+        synchronized(sessionLock) {
+            reason=watchdog.stopReason(SystemClock.elapsedRealtime(),ScopeProbeActivity.isFixtureForeground());
+        }
+        if(reason==null && overlayAdded && SystemClock.elapsedRealtime()-lastOverlayReportAt>=1500)
+            reason="external_overlay_heartbeat_lost";
+        if(reason!=null) end(reason);
+        else { sendOverlay(3); if(!released.get()) main.postDelayed(this::checkProgress,250); }
     }
 
     private void showForegroundNotification() {
@@ -170,6 +208,7 @@ public final class ScopeProbeService extends Service {
     }
     private void resize(int width,int height) {
         validateSize(width,height);
+        scopeEvidence.invalidateOverlay(); overlayPlacement=null;
         ImageReader previous=reader;
         ImageReader next=newReader(width,height);
         try {
@@ -193,50 +232,61 @@ public final class ScopeProbeService extends Service {
     private void maybeAddOverlay() {
         if(released.get() || overlayAttempted) return;
         synchronized(sessionLock) {
-            if(baselineCount<2 || baselineCounters.size()<2) { main.postDelayed(this::maybeAddOverlay,300); return; }
+            if(!scopeEvidence.hasBaseline()) { main.postDelayed(this::maybeAddOverlay,300); return; }
         }
         overlayAttempted=true;
-        if(!Settings.canDrawOverlays(this)) {
-            event("overlay_not_added","reason","permission_missing","note","No permission screen was opened."); return;
-        }
         try {
-            overlay=new View(this) {
-                @Override protected void onDraw(Canvas canvas) {
-                    canvas.drawColor(Color.MAGENTA);
-                    Paint border=new Paint(); border.setStyle(Paint.Style.STROKE); border.setColor(Color.BLACK); border.setStrokeWidth(4);
-                    canvas.drawRect(2,2,getWidth()-2,getHeight()-2,border); overlayDraws.incrementAndGet();
-                }
-            };
-            overlay.setContentDescription("scope-probe-magenta-overlay");
-            overlayParams=new WindowManager.LayoutParams(1,1,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT);
-            overlayParams.gravity=Gravity.TOP|Gravity.LEFT; overlayParams.alpha=1f;
-            if(Build.VERSION.SDK_INT>=28) overlayParams.layoutInDisplayCutoutMode=
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            assignOverlayPosition(); windows.addView(overlay,overlayParams); overlayAdded=true;
-            overlayAddedAt=SystemClock.elapsedRealtime();
-            overlay.post(this::recordOverlayBounds);
-            event("overlay_added","colour","#FF00FF","alpha",1,"permissionGranted",true);
-        } catch(Exception error) { event("overlay_error","class",error.getClass().getSimpleName()); }
+            Intent companion=new Intent().setComponent(new ComponentName(OVERLAY_PACKAGE,OVERLAY_PACKAGE+".ScopeOverlayService"))
+                .putExtra("scopeProbe",true).putExtra("runId",runId);
+            overlayBound=bindService(companion,overlayConnection,BIND_AUTO_CREATE);
+            event("external_overlay_requested","ownerPackage",OVERLAY_PACKAGE,"bound",overlayBound);
+            if(!overlayBound) end("external_overlay_not_installed_or_unavailable");
+        } catch(Exception error) { fail("external_overlay",error); }
     }
-    private void assignOverlayPosition() {
-        Rect screen=screenBounds();
-        overlayParams.x=(int)(screen.width()*.30f); overlayParams.y=(int)(screen.height()*.28f);
-        overlayParams.width=(int)(screen.width()*.25f); overlayParams.height=(int)(screen.height()*.14f);
+    private void sendOverlay(int command) {
+        if(overlayControl==null) return;
+        Message message=Message.obtain(null,command); Bundle data=new Bundle(); data.putString("runId",runId);
+        message.setData(data); message.replyTo=overlayReplies;
+        try { overlayControl.send(message); }
+        catch(android.os.RemoteException error) { if(!released.get()) fail("external_overlay_ipc",error); }
     }
     private void positionOverlay() {
-        if(released.get() || !overlayAdded || overlay==null) return;
-        try { assignOverlayPosition(); windows.updateViewLayout(overlay,overlayParams); overlay.post(this::recordOverlayBounds); }
-        catch(Exception error) { event("overlay_position_error","class",error.getClass().getSimpleName()); }
+        if(released.get() || !overlayAdded) return;
+        synchronized(sessionLock) { scopeEvidence.invalidateOverlay(); overlayPlacement=null; }
+        sendOverlay(2);
     }
-    private void recordOverlayBounds() {
-        if(!overlayAdded || overlay==null) return;
-        int[] location=new int[2]; overlay.getLocationOnScreen(location);
-        overlayRect=new Rect(location[0],location[1],location[0]+overlay.getWidth(),location[1]+overlay.getHeight());
+    private boolean externalOverlayState(Message message) {
+        if(released.get() || message.what!=10 || message.sendingUid!=overlayUid) return true;
+        Bundle data=message.getData();
+        if(!runId.equals(data.getString("runId")) || !OVERLAY_PACKAGE.equals(data.getString("ownerPackage")) ||
+            data.getInt("ownerUid",-1)!=overlayUid || overlayUid==android.os.Process.myUid()) return true;
+        String error=data.getString("error");
+        if(error!=null) { event("overlay_not_added","reason",error,"ownerPackage",OVERLAY_PACKAGE); end("external_overlay_error"); return true; }
+        int[] bounds=data.getIntArray("bounds");
+        if(!data.getBoolean("visible",false) || data.getInt("displayId",-1)!=android.view.Display.DEFAULT_DISPLAY ||
+            bounds==null || bounds.length!=4) {
+            synchronized(sessionLock) { scopeEvidence.invalidateOverlay(); overlayPlacement=null; }
+            end("external_overlay_not_visible_on_primary"); return true;
+        }
+        Rect measured=new Rect(bounds[0],bounds[1],bounds[2],bounds[3]);
+        if(measured.isEmpty()) return true;
+        lastOverlayReportAt=SystemClock.elapsedRealtime();
+        overlayAdded=true; overlayRect=measured; overlayDraws.set(data.getInt("drawCount",0));
+        Rect pattern=ScopeProbeActivity.patternRect();
+        if(pattern==null || pattern.isEmpty() || !pattern.contains(overlayRect)) {
+            synchronized(sessionLock) { scopeEvidence.invalidateOverlay(); overlayPlacement=null; }
+            return true;
+        }
+        OverlayPlacement previous=overlayPlacement;
+        int rotation=ScopeProbeActivity.patternRotation();
+        if(previous==null || !previous.covered.equals(overlayRect) || !previous.pattern.equals(pattern) || previous.rotation!=rotation) {
+            synchronized(sessionLock) { scopeEvidence.invalidateOverlay(); }
+            overlayPlacement=new OverlayPlacement(overlayRect,pattern,rotation,++placementSequence,SystemClock.elapsedRealtime());
+        }
         event("overlay_geometry","screenRect",rect(overlayRect),"physicalPatternRect",rect(ScopeProbeActivity.patternRect()),
-            "isShown",overlay.isShown(),"drawCount",overlayDraws.get(),"rotation",ScopeProbeActivity.patternRotation());
+            "ownerPackage",OVERLAY_PACKAGE,"ownerUid",overlayUid,"fixtureUid",android.os.Process.myUid(),
+            "isShown",true,"drawCount",overlayDraws.get(),"rotation",ScopeProbeActivity.patternRotation());
+        return true;
     }
     @Override public void onConfigurationChanged(Configuration next) {
         super.onConfigurationChanged(next); main.postDelayed(this::positionOverlay,200);
@@ -257,7 +307,12 @@ public final class ScopeProbeService extends Service {
                 if(now-lastSampleAt<300) return;
                 lastSampleAt=now; sampleCount++;
                 FramePixels pixels=new FramePixels(image);
-                Stats stats=analyze(pixels); boolean after=overlayAdded && now-overlayAddedAt>=600;
+                Stats stats=analyze(pixels);
+                OverlayPlacement placement=overlayPlacement;
+                Rect currentPattern=ScopeProbeActivity.patternRect();
+                boolean after=overlayAdded && placement!=null && now-placement.since>=600 &&
+                    now-lastOverlayReportAt<=500 &&
+                    placement.pattern.equals(currentPattern) && placement.rotation==ScopeProbeActivity.patternRotation();
                 boolean ownForeground=ScopeProbeActivity.isFixtureForeground();
                 stats.fixture=stats.fixture && ownForeground;
                 JSONObject sample=json("sample",sampleCount,"width",image.getWidth(),"height",image.getHeight(),
@@ -270,15 +325,19 @@ public final class ScopeProbeService extends Service {
                     "overlayScreenRect",rect(overlayRect),"physicalPatternRect",rect(ScopeProbeActivity.patternRect()),
                     "rotation",ScopeProbeActivity.patternRotation(),"generation",generation);
                 if(stats.fixture) {
-                    lastKnownPatternAt=now; patternCount++;
-                    if(!overlayAdded) { baselineCount++; baselineCounters.add(stats.counter); }
+                    watchdog.knownPattern(now,stats.counter,image.getTimestamp()); patternCount++;
+                    if(!overlayAdded && scopeEvidence.baseline(stats.counter,image.getTimestamp())) {
+                        baselineCount++; baselineCounters.add(stats.counter);
+                    }
                     if(after && overlayDraws.get()>0) {
                         afterCount++; afterCounters.add(stats.counter);
-                        double[] area=overlayArea(stats,pixels);
+                        double[] area=overlayArea(stats,pixels,placement);
                         if(area!=null) {
                             put(sample,"overlayRegionGreenRatio",area[0]); put(sample,"overlayRegionMagentaRatio",area[1]);
-                            if(area[1]>=.60 && stats.magenta>=.003) presentCount++;
-                            else if(area[0]>=.90 && stats.magenta<=.0001) absentCount++;
+                            String geometry=readerGeneration+":"+image.getWidth()+"x"+image.getHeight()+":"+placement.sequence;
+                            scopeEvidence.overlay(stats.counter,image.getTimestamp(),geometry,
+                                area[1]>=.60 && stats.magenta>=.003,area[0]>=.90 && stats.magenta<=.0001);
+                            put(sample,"evidenceGeometry",geometry);
                         }
                     }
                     String stage=(!overlayAdded ? "baseline" : after ? "overlay" : "transition")+
@@ -290,7 +349,7 @@ public final class ScopeProbeService extends Service {
                 } else {
                     unknownCount++; put(sample,"png",JSONObject.NULL);
                     // Unknown applications and denied/blank output never reach a PNG file.
-                    if(now-lastKnownPatternAt>5000) main.post(() -> end("fixture_not_visible_or_unrecognized"));
+                    // The main-thread watchdog also handles a complete lack of image callbacks.
                 }
                 event("frame",sample);
             } catch(Exception error) {
@@ -299,6 +358,16 @@ public final class ScopeProbeService extends Service {
                     main.post(() -> end("frame_error"));
                 }
             } finally { if(image!=null) image.close(); }
+        }
+    }
+
+    private static final class OverlayPlacement {
+        final Rect covered,pattern;
+        final int rotation,sequence;
+        final long since;
+        OverlayPlacement(Rect covered,Rect pattern,int rotation,int sequence,long since) {
+            this.covered=new Rect(covered); this.pattern=new Rect(pattern);
+            this.rotation=rotation; this.sequence=sequence; this.since=since;
         }
     }
 
@@ -370,9 +439,9 @@ public final class ScopeProbeService extends Service {
     private static boolean near(double actual,double expected,double tolerance) {
         return expected>2 && Math.abs(actual-expected)<=Math.max(3,expected*tolerance);
     }
-    private double[] overlayArea(Stats stats,FramePixels pixels) {
-        Rect screen=ScopeProbeActivity.patternRect(),covered=overlayRect;
-        if(screen==null || covered==null || screen.isEmpty() || !screen.contains(covered) || stats.content==null) return null;
+    private double[] overlayArea(Stats stats,FramePixels pixels,OverlayPlacement placement) {
+        Rect screen=placement.pattern,covered=placement.covered;
+        if(stats.content==null) return null;
         double[] c=stats.content; double sx=screen.width()/(c[2]-c[0]),sy=screen.height()/(c[3]-c[1]);
         double left=c[0]+(covered.left-screen.left)/sx,top=c[1]+(covered.top-screen.top)/sy;
         double right=c[0]+(covered.right-screen.left)/sx,bottom=c[1]+(covered.bottom-screen.top)/sy;
@@ -411,8 +480,9 @@ public final class ScopeProbeService extends Service {
                 try { projection.unregisterCallback(projectionCallback); } catch(Exception ignored) {}
                 try { projection.stop(); } catch(Exception ignored) {} projection=null;
             }
-            if(overlayAdded && overlay!=null) try { windows.removeViewImmediate(overlay); } catch(Exception ignored) {}
-            overlayAdded=false; overlay=null;
+            sendOverlay(4);
+            if(overlayBound) { try { unbindService(overlayConnection); } catch(Exception ignored) {} overlayBound=false; }
+            overlayControl=null; overlayAdded=false; overlayPlacement=null;
             writeSummary();
         }
         if(captureThread!=null) { captureThread.quitSafely(); captureThread=null; }
@@ -421,16 +491,16 @@ public final class ScopeProbeService extends Service {
     }
     private void writeSummary() {
         if(directory==null) return;
-        String classification="INCONCLUSIVE";
-        if(baselineCount>=2 && baselineCounters.size()>=2 && afterCount>=3 && afterCounters.size()>=2 && overlayDraws.get()>0) {
-            if(presentCount>=3 && absentCount==0) classification="OVERLAY_PIXELS_PRESENT";
-            else if(absentCount>=3 && presentCount==0) classification="OVERLAY_PIXELS_NOT_OBSERVED";
-        }
+        String classification=scopeEvidence.classificationForStop(stopReason);
         JSONObject summary=json("runId",runId,"stopReason",stopReason,"elapsedMs",SystemClock.elapsedRealtime()-startedAt,
             "classification",classification,"captureSelection","user_choice_unknown","displayCreations",displayCreations,
+            "lastGeometryPixelEvidence",scopeEvidence.classification(),
+            "fixturePackage",getPackageName(),"fixtureUid",android.os.Process.myUid(),"overlayPackage",OVERLAY_PACKAGE,"overlayUid",overlayUid,
             "resizeEvents",resizeCount,"samples",sampleCount,"fixtureFrames",patternCount,"unknownFrames",unknownCount,
             "baselineFrames",baselineCount,"baselineDistinctCounters",baselineCounters.size(),"afterOverlayFrames",afterCount,
-            "afterDistinctCounters",afterCounters.size(),"overlayPixelsPresentFrames",presentCount,"underlyingGreenFrames",absentCount,
+            "afterDistinctCounters",afterCounters.size(),"overlayPixelsPresentFrames",scopeEvidence.presentFrames(),
+            "underlyingGreenFrames",scopeEvidence.absentFrames(),"presentDistinctCounters",scopeEvidence.presentDistinctCounters(),
+            "absentDistinctCounters",scopeEvidence.absentDistinctCounters(),"evidenceGeometry",scopeEvidence.geometry(),
             "overlayDraws",overlayDraws.get(),"overlayScreenRect",rect(overlayRect),"pngCount",pngCount,
             "requiresIndependentPhysicalOverlayScreenshot",true,
             "notice","NOT_OBSERVED is pixel evidence only; independently verify magenta is visible on the physical screen. No game was opened or selected by this probe.");

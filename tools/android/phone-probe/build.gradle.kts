@@ -1,6 +1,7 @@
 import java.util.Properties
 
 plugins { id("com.android.application") }
+dependencies { testImplementation("junit:junit:4.13.2") }
 android {
     namespace="com.cyotun.jpq.phoneprobe"
     compileSdk=36
