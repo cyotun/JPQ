@@ -6,6 +6,9 @@ import android.os.SystemClock
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+import com.cyotun.jpq.core.GlyphBox
+import com.cyotun.jpq.core.SceneHint
+import com.cyotun.jpq.core.tencentGradeSymbolTokens
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class OcrLine(val text: String,val box: Rect?)
@@ -36,18 +39,33 @@ class SceneOcr: AutoCloseable {
                     if(task.isSuccessful) {
                         val result=task.result
                         val sx=sourceWidth.toFloat()/owned.width; val sy=sourceHeight.toFloat()/owned.height
+                        val elements=result.textBlocks.flatMap { it.lines }.flatMap { it.elements }
+                        // Use the recognizer's actual character boxes for merged
+                        // HUD points such as JJ. Never divide a word box into
+                        // guessed equal halves, and never split 10 into 1/0.
+                        val hudSymbols=elements.flatMap { element ->
+                            tencentGradeSymbolTokens(element.symbols.map { symbol ->
+                                SceneHint(symbol.text,symbol.boundingBox?.let { b -> GlyphBox(
+                                    b.left.toFloat()/owned.width,b.top.toFloat()/owned.height,
+                                    b.right.toFloat()/owned.width,b.bottom.toFloat()/owned.height) })
+                            })
+                        }.map { token ->
+                            val b=token.box!!
+                            OcrLine(token.text,Rect((b.left*sourceWidth).toInt(),(b.top*sourceHeight).toInt(),
+                                kotlin.math.ceil(b.right*sourceWidth).toInt(),kotlin.math.ceil(b.bottom*sourceHeight).toInt()))
+                        }
                         val text=SceneText(result.textBlocks.flatMap { it.lines }.map { line ->
                             OcrLine(line.text.replace(" ",""),line.boundingBox?.let { b ->
                                 Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
                             })
                         },now,sourceWidth,sourceHeight,visibilityEpoch,
-                            result.textBlocks.flatMap { it.lines }.flatMap { it.elements }
+                            elements
                                 .filter { it.text.replace(" ","")=="级" }.map { element ->
                                     OcrLine("级",element.boundingBox?.let { b ->
                                         Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
                                     })
                                 },
-                            result.textBlocks.flatMap { it.lines }.flatMap { it.elements }
+                            elements
                                 .filter { element ->
                                     val compact=element.text.filterNot(Char::isWhitespace)
                                     compact.uppercase() in setOf("我方","对方","我方对方","2","3","4","5","6","7","8","9","10","J","Q","K","A")
@@ -55,7 +73,7 @@ class SceneOcr: AutoCloseable {
                                     OcrLine(element.text.filterNot(Char::isWhitespace),element.boundingBox?.let { b ->
                                         Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
                                     })
-                                })
+                                }+hudSymbols)
                         synchronized(resultLock) { if(!closed) latest=text }
                     }
                 } catch(error: Exception) { android.util.Log.w("JPQVision","ocr_result_unavailable",error) }

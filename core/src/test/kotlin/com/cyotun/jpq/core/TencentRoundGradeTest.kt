@@ -63,6 +63,30 @@ class TencentRoundGradeTest {
         assertEquals(setOf(Rank.THREE),result.ranks)
         assertEquals("HUD_EQUAL",result.source)
     }
+    @Test fun separatorBesideMergedLabelsDoesNotHideTwoActualCharacterBoxes() {
+        val result=read(listOf(
+            SceneHint("|我方对方",GlyphBox(.09892638f,.011666667f,.17829755f,.045f)),
+            SceneHint("JJ",GlyphBox(.110046014f,.045833334f,.1648773f,.104166664f)),
+            SceneHint("J",GlyphBox(.110f,.046f,.123f,.104f)),
+            SceneHint("J",GlyphBox(.151f,.046f,.165f,.104f)),
+        ),active=setOf(TencentGradeTeam.OWN))
+        assertEquals(setOf(Rank.J),result.ranks)
+        assertEquals("HUD_ACTIVE",result.source)
+        assertEquals("|J",tencentGradeHudToken("|J"))
+        assertEquals("昵称我方",tencentGradeHudToken("昵称我方"))
+    }
+    @Test fun mergedTenPointsUseActualAdjacentSymbolBoundsAndKeepTenWhole() {
+        val symbols=listOf(
+            SceneHint("1",GlyphBox(.11f,.045f,.115f,.10f)),SceneHint("0",GlyphBox(.116f,.045f,.126f,.10f)),
+            SceneHint("1",GlyphBox(.15f,.045f,.155f,.10f)),SceneHint("0",GlyphBox(.156f,.045f,.166f,.10f)))
+        val parsed=tencentGradeSymbolTokens(symbols)
+        assertEquals(listOf("10","10"),parsed.map { it.text })
+        assertEquals(GlyphBox(.11f,.045f,.126f,.10f),parsed[0].box)
+        val hints=listOf(SceneHint("我方对方",GlyphBox(.10f,.008f,.18f,.035f)))+parsed
+        assertEquals(setOf(Rank.TEN),read(hints,active=setOf(TencentGradeTeam.OWN)).ranks)
+        assertTrue(tencentGradeSymbolTokens(listOf(symbols[0],symbols[3])).isEmpty())
+        assertTrue(tencentGradeSymbolTokens(listOf(symbols[0],symbols[1].copy(box=GlyphBox(.116f,.005f,.126f,.025f)))).isEmpty())
+    }
     @Test fun aSingleDigitCenteredBetweenMergedLabelsCannotCountAsBothTeamGrades() {
         val result=read(listOf(
             SceneHint("我方对方",GlyphBox(.09739264f,.011666667f,.1767638f,.043333333f)),

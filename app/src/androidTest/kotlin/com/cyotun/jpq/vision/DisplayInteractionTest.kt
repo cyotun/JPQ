@@ -263,8 +263,10 @@ class DisplayInteractionTest {
             val original=AppState.straightFlushState
             val density=context.resources.displayMetrics.density
             val config=store.load()
-            val width=HistoryWidth().measure(config,0f,context.resources.displayMetrics.widthPixels/density)
-            val centerX=((width.grid+10f)*density).roundToInt()
+            // The native grid now reserves actual font width (including 10).
+            // In this no-controls/no-history case, the 16dp icon ends 1dp
+            // inside the body's right edge. Sample its actual visible center.
+            val centerX=(view.width-9f*density).roundToInt()
             val centerY=((22*config.gridHeight+1.5f)*density).roundToInt()
             val shownWidth=view.width
             fun centerColor(state: StraightFlushState): Int {

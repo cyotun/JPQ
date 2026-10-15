@@ -14,6 +14,13 @@ data class TencentGradeReading(
 enum class TencentGradeTeam(val label: String) { OWN("我方"), OTHER("对方") }
 enum class TencentGradeHeaderTone { ACTIVE, INACTIVE, UNKNOWN }
 
+/** MLKit may include the table separator beside an otherwise exact team label. */
+fun tencentGradeHudToken(text: String): String {
+    val compact=text.filterNot(Char::isWhitespace)
+    val label=compact.trim { it=='|' || it=='丨' }
+    return if(label in setOf("我方","对方","我方对方")) label else compact
+}
+
 fun tencentGradeHeaderPixelColour(pixel: Int): Int {
     val r=pixel ushr 16 and 255; val g=pixel ushr 8 and 255; val b=pixel and 255
     if((pixel ushr 24 and 255)<200 || minOf(r,g,b)>210 || maxOf(r,g,b)<70) return 0
@@ -54,6 +61,22 @@ private fun gradePoint(text: String): Rank? = Rank.entries.firstOrNull {
     !it.isJoker && it.label == text.uppercase()
 }
 
+/** Actual character boxes from one OCR element, not an estimated split of its word box. */
+fun tencentGradeSymbolTokens(symbols: List<SceneHint>): List<SceneHint> {
+    val hud=symbols.filter { validGradeBox(it.box) && it.box!!.cx in .055f.. .23f && it.box.cy<=.13f }
+        .sortedBy { it.box!!.left }
+    val points=hud.filter { gradePoint(it.text)!=null }.toMutableList()
+    hud.zipWithNext().forEach { (one,zero) ->
+        val a=one.box!!; val b=zero.box!!
+        if(one.text=="1" && zero.text=="0" &&
+            abs(a.cy-b.cy)<=minOf(a.height,b.height)*.25f &&
+            minOf(a.height,b.height)>=maxOf(a.height,b.height)*.65f &&
+            b.left-a.right in -a.width*.25f..a.width*1.5f)
+            points.add(SceneHint("10",GlyphBox(a.left,minOf(a.top,b.top),b.right,maxOf(a.bottom,b.bottom))))
+    }
+    return points.distinct()
+}
+
 private fun gradeUnion(boxes: List<GlyphBox>): GlyphBox? = boxes.takeIf { it.isNotEmpty() }?.let {
     GlyphBox(it.minOf { b -> b.left }, it.minOf { b -> b.top },
         it.maxOf { b -> b.right }, it.maxOf { b -> b.bottom })
@@ -71,7 +94,7 @@ fun tencentRoundGradeReading(hints: List<SceneHint>, cornerRanks: Set<Rank> = em
     mode: WildcardMode = WildcardMode.UNKNOWN,
     activeHudTeams: Set<TencentGradeTeam> = emptySet()): TencentGradeReading {
     val positioned = hints.filter { validGradeBox(it.box) }.map {
-        SceneHint(it.text.filterNot(Char::isWhitespace), it.box)
+        SceneHint(tencentGradeHudToken(it.text), it.box)
     }.distinct()
     val corners = cornerRanks.filterNot { it.isJoker }.toSet()
     val hud = positioned.filter { it.box!!.cx in .055f.. .23f && it.box.cy <= .13f }.flatMap { hint ->

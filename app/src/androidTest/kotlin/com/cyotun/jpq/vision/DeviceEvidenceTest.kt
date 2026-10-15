@@ -33,6 +33,11 @@ class DeviceEvidenceTest {
         val output=File(context.getExternalFilesDir(null),"phone-preflight").apply { mkdirs() }
         val store=ConfigStore(context)
         File(output,"display-before.json").writeText(store.export())
+        val diagnostics=context.getSharedPreferences("jpq-diagnostics",0)
+        File(output,"runtime-before.json").writeText(org.json.JSONObject()
+            .put("diagnosticsEnabled",diagnostics.getBoolean("enabled",false))
+            .put("captureProfile",context.getSharedPreferences("jpq-runtime",0).getString("captureProfile","reference"))
+            .toString())
         if(arguments.getString("exportEvidence")=="true")
             File(output,"diagnostics.zip").outputStream().use { DiagnosticArchive.write(context,it) }
         if(arguments.getString("resetTestDisplay")=="true") {
@@ -43,6 +48,10 @@ class DeviceEvidenceTest {
         }
         if(arguments.getString("armCaptureProbe")=="true")
             check(context.getSharedPreferences("jpq-diagnostics",0).edit().putBoolean("enabled",true).putInt("captureProbeRemaining",3).commit())
+        arguments.getString("diagnosticsEnabled")?.let { value ->
+            require(value in setOf("true","false"))
+            check(diagnostics.edit().putBoolean("enabled",value=="true").commit())
+        }
         // Explicit local test selection only. The operator must first review the
         // fixture and continuous replay reports; this exporter is not certification.
         arguments.getString("enableReferencePipeline")?.let { enabled ->

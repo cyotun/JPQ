@@ -12,6 +12,7 @@ import com.cyotun.jpq.core.WildcardMode
 import com.cyotun.jpq.core.tencentRoundGradeReading
 import com.cyotun.jpq.core.tencentGradeHeaderTone
 import com.cyotun.jpq.core.tencentGradeHeaderPixelColour
+import com.cyotun.jpq.core.tencentGradeHudToken
 
 data class GradeSourceReading(
     val reading: TencentGradeReading,
@@ -51,7 +52,7 @@ class GradeSourceReader {
             val bounds = GlyphBox(box.left.toFloat()/bitmap.width,box.top.toFloat()/bitmap.height,
                 box.right.toFloat()/bitmap.width,box.bottom.toFloat()/bitmap.height)
             if (masks.any { overlap(bounds,it) > 0f }) return null
-            return SceneHint(line.text,bounds)
+            return SceneHint(tencentGradeHudToken(line.text),bounds)
         }
         val hints = (fresh?.lines.orEmpty() + fresh?.metadataElements.orEmpty()).mapNotNull(::normalized)
         val headerBoxes=headerBoxes(hints)

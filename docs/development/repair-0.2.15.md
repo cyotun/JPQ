@@ -1,6 +1,6 @@
 # 0.2.15 修复与待验收记录
 
-2026-10-15。版本 `0.2.15-regression`，versionCode 17。用户确认最新布局后实现；测试包已构建，尚未安装或执行本轮真实牌局。Cloudflare 不发布新的稳定版本，也不接收诊断上传。
+2026-10-15。版本 `0.2.15-regression`，versionCode 17。用户确认最新布局后实现，已安装并执行非对局手机检查，完整真实牌局尚待验收。Cloudflare 不发布新的稳定版本，也不接收诊断上传。补测与实际 OCR 修复见 [手机记录](phone-preflight-0.2.15.md)。
 
 ## 故障修复
 
@@ -25,11 +25,11 @@
 ## 已执行验证
 
 - 最终构建：`:core:test :app:assembleRelease :app:assembleReleaseAndroidTest :app:lintRelease` 成功。
-- 核心 JUnit：308 项，失败 0、错误 0；覆盖独立心形计数、替代身份歧义、同花顺单家容量、提示安全区域、牌格宽度和原有记账回归。
-- Android 测试包已编译；新增首页和更新入口、完整元数据导出的非对局检查，尚未在手机执行。最终静态检查零错误、54 条警告，主要为原生绘制分配、Android View/KTX 和依赖维护提示。
+- 核心 JUnit：310 项，失败 0、错误 0；覆盖独立心形计数、替代身份歧义、同花顺单家容量、提示安全区域、牌格宽度、合并级牌字符和原有记账回归。
+- 手机完成 38 项不同的非对局检查；另完成导出准备操作和动态采集恢复。最终静态检查零错误、54 条警告，主要为原生绘制分配、Android View/KTX 和依赖维护提示。
 - 用户截图手工标注的四个蓝/红/灰面板 ROI：4/4 颜色分类符合预期。这是开发样本，不是完整 OCR 识别率。
 - 浏览器原型构建、28 个受保护文件检查、4 项静态打包检查通过；iPhone/Pixel 首页无需滚动。详情见 [视觉核对](../design/home-redesign/design-qa.md)。
-- APK 持续签名校验通过：证书 SHA-256 `ebe83c802f083bdb1adafc6163744dfa2cbd30f5677c04ab5ff29356c5cff71f`。本机产物 `artifacts/记牌器-0.2.15-regression.apk`，SHA-256 `5b5dbf75154f89ff9b3e7a166319af86d2947c55767e6f67980e434cb2c7231c`。二进制和私人样本不进入 Git。
+- APK 持续签名校验通过：证书 SHA-256 `ebe83c802f083bdb1adafc6163744dfa2cbd30f5677c04ab5ff29356c5cff71f`。本机最终产物 `artifacts/记牌器-0.2.15-regression.apk`，SHA-256 `0a65d964e53bfd8c977f53a5ebda09e8312fca0322e53f66372c6cc87c3ee4a0`；同版本号下补入手机发现的 OCR 修复，替代前一候选构建。二进制和私人样本不进入 Git。
 
 ## 下一轮手机验收
 

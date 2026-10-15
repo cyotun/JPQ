@@ -69,8 +69,11 @@ class OverlayPersistenceTest {
 
             // All three supported history modes affect only display geometry.
             val round=AppState.ledger.snapshot()
+            val noHistoryWidth=view.width
             store.save(store.load().copy(showHistory=true,showHistoryDetails=false))
-            val expectedCountWidth=(HistoryWidth().measure(store.load(),0f,screenWidth/density).total*density).roundToInt()
+            // Reserve two 14dp count cells plus their gutters while preserving
+            // the actual font-measured grid rather than the old fixed width.
+            val expectedCountWidth=noHistoryWidth+(33*density).roundToInt()
             instrument.runOnMainSync { overlay!!.refresh() }
             waitFor { view.width==expectedCountWidth && AppState.barMask?.rectangle?.width()==expectedCountWidth }
             val countOnlyWidth=view.width
