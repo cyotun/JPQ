@@ -21,9 +21,9 @@ class DeviceEvidenceTest {
         assumeTrue(arguments.getString("exportEvidence")=="true" || arguments.getString("armCaptureProbe")=="true")
         check(!AppState.running) { "Stop capture after the user confirms the game ended" }
         val context=InstrumentationRegistry.getInstrumentation().targetContext
-        // Keep the explicitly requested exporter visible; some OEMs suspend large
-        // background file exports even while instrumentation remains registered.
-        if(arguments.getString("exportEvidence")=="true") {
+        // Optional only: AndroidX may wait for activity idle inside startActivity
+        // on OEM task transitions. A batch evidence export must not depend on it.
+        if(arguments.getString("exportEvidence")=="true" && arguments.getString("launchExportUi")=="true") {
             val intent=android.content.Intent(context,com.cyotun.jpq.MainActivity::class.java)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("page","home")
             // Export needs no UI result. Waiting for AndroidX's activity-idle
@@ -38,8 +38,14 @@ class DeviceEvidenceTest {
             .put("diagnosticsEnabled",diagnostics.getBoolean("enabled",false))
             .put("captureProfile",context.getSharedPreferences("jpq-runtime",0).getString("captureProfile","reference"))
             .toString())
-        if(arguments.getString("exportEvidence")=="true")
-            File(output,"diagnostics.zip").outputStream().use { DiagnosticArchive.write(context,it) }
+        if(arguments.getString("exportEvidence")=="true") {
+            android.util.Log.i("JPQEvidence","archive_write_start")
+            val pending=File(output,"diagnostics.pending.zip")
+            pending.outputStream().use { DiagnosticArchive.write(context,it) }
+            java.util.zip.ZipFile(pending).use { check(it.size()>0) }
+            check(pending.renameTo(File(output,"diagnostics.zip")))
+            android.util.Log.i("JPQEvidence","archive_write_end")
+        }
         if(arguments.getString("resetTestDisplay")=="true") {
             store.save(DisplayConfig())
             check(context.getSharedPreferences("jpq-display",0).edit().putString("config",store.draftJson(DisplayConfig())).commit())

@@ -3,7 +3,10 @@ param(
     [string]$OutputDirectory = ('captures/phone/live-' + (Get-Date -Format 'yyyyMMdd-HHmmss')),
     [int]$DurationSeconds = 1800,
     [string]$DeviceSerial = '',
-    [int]$PollMilliseconds = 500
+    [int]$PollMilliseconds = 500,
+    [int]$FrameIntervalMilliseconds = 1000,
+    [switch]$LogsOnly,
+    [switch]$SyntheticProbe
 )
 $ErrorActionPreference='Stop'
 $jpqRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -14,8 +17,7 @@ if($DurationSeconds -lt 5 -or $DurationSeconds -gt 7200) { throw 'Duration must 
 if($PollMilliseconds -lt 250 -or $PollMilliseconds -gt 1000) { throw 'Poll interval must be 250..1000 milliseconds.' }
 if(Test-Path -LiteralPath $jpqOutput) { throw 'Use a new evidence directory.' }
 $jpqAdb=Join-Path $jpqRoot '.android-tools/sdk/platform-tools/adb.exe'
-$jpqScrcpy=Join-Path $jpqRoot '.android-tools/scrcpy-5.0.1/scrcpy-win64-v5.0.1/scrcpy.exe'
-if(-not (Test-Path -LiteralPath $jpqScrcpy)) { throw 'Prepare the verified official scrcpy 5.0.1 locally first.' }
+if($FrameIntervalMilliseconds -lt 1000 -or $FrameIntervalMilliseconds -gt 10000) { throw 'Frame interval must be 1000..10000 milliseconds.' }
 . (Join-Path $PSScriptRoot 'live-test-support.ps1')
 $jpqDevices=Invoke-JpqReadCommand $jpqAdb @('devices')
 if(-not $jpqDevices.Ok) { throw 'Cannot read the ADB device list.' }
@@ -24,7 +26,14 @@ if($DeviceSerial) {
     if($jpqConnected -notcontains $DeviceSerial) { throw 'The selected device is not connected and authorized.' }
 } elseif($jpqConnected.Count -eq 1) { $DeviceSerial=$jpqConnected[0] }
 else { throw 'Select exactly one connected device with -DeviceSerial.' }
+$jpqPhysical=$null
+if(-not $LogsOnly) {
+    $jpqPhysicalRead=Invoke-JpqReadCommand $jpqAdb @('-s',$DeviceSerial,'shell','dumpsys','SurfaceFlinger','--display-id')
+    if($jpqPhysicalRead.Ok) { $jpqPhysical=Get-JpqPrimaryPhysicalDisplayId $jpqPhysicalRead.Text }
+    if(-not $jpqPhysical) { throw 'Cannot identify the primary physical panel; use -LogsOnly rather than guessing a display.' }
+}
 New-Item -ItemType Directory -Path $jpqOutput | Out-Null
+if(-not $LogsOnly) { New-Item -ItemType Directory -Path (Join-Path $jpqOutput 'frames') | Out-Null }
 
 function Start-JpqChild([string]$Executable,[string[]]$Arguments,[string]$Name) {
     # Direct inherited file handles avoid pipe backpressure and unfinished
@@ -56,17 +65,21 @@ function Write-JpqClockSample {
     $script:jpqLastClock=$jpqTimer.Elapsed.TotalSeconds
 }
 $jpqApk=Join-Path $jpqRoot 'app/build/outputs/apk/release/app-release.apk'
-$jpqMetadata=@{schemaVersion=2; collectorStarted=(Get-Date).ToUniversalTime().ToString('o');
+$jpqMetadata=@{schemaVersion=3; collectorStarted=(Get-Date).ToUniversalTime().ToString('o');
     commit=(& git -C $jpqRoot rev-parse HEAD).Trim(); dirty=[bool](& git -C $jpqRoot status --porcelain);
     localApkSha256=if(Test-Path -LiteralPath $jpqApk) { (Get-FileHash -LiteralPath $jpqApk -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null };
     apkHashScope='Local artifact only; installed version comes from JPQTrace session records.';
-    recorder='scrcpy 5.0.1'; recorderMode='no-control/no-audio/no-window/display-0'; maxSize=1920; maxFps=15;
+    recorder='Stateless screencap PNG sequence'; recorderMode=if($LogsOnly) {'logs_only'} else {'primary_physical_display_png_sequence'};
+    physicalDisplayId=$jpqPhysical; requestedFrameIntervalMs=$FrameIntervalMilliseconds;
+    acceptedSurface=if($SyntheticProbe) {'dedicated_phone_frame_probe_only'} else {'tencent_guandan_only'};
+    frameRateNote='Each screenshot has start/end timestamps. Guard and capture overhead reduce actual cadence; this is not 15 fps video.';
+    captureIsolation='No scrcpy, screenrecord, MediaProjection or second mirrored virtual display is created by this collector.';
     durationSeconds=$DurationSeconds; pollMilliseconds=$PollMilliseconds; readTimeoutMs=2000;
-    privacy='Fail closed on non-game, unknown, asleep or showing keyguard. Foreground polling has finite delay; review and remove non-game tail before viewing/exporting.';
-    timeline='Clock samples bound host UTC to device elapsedRealtime. MKV starts at its first encoded frame, not process launch; align a visible event before measuring event delays.';
+    privacy='Require target app, awake and unlocked before and after each screenshot. Finite guard/capture intervals still require privacy review before viewing/exporting.';
+    timeline='Clock samples bound host UTC to device elapsedRealtime. frames.jsonl bounds each screenshot by capture start/end; no invented fixed frame rate.';
     controlBoundary='User enters and plays; collector never clicks, installs, stops capture or changes game state.'}
 $jpqMetadata|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $jpqOutput 'metadata.json') -Encoding utf8
-$jpqLogs=$null; $jpqVideo=$null; $jpqSegment=0; $jpqRetryAfter=0.0; $jpqLastClock=-60.0; $jpqLastGuard=-10.0
+$jpqLogs=$null; $jpqFrame=0; $jpqNextFrame=0.0; $jpqLastClock=-60.0; $jpqLastGuard=-10.0; $jpqFrameBytes=0L
 $jpqFinishReason='duration_limit'
 $jpqTimer=[Diagnostics.Stopwatch]::StartNew()
 try {
@@ -76,38 +89,44 @@ try {
     Write-JpqClockSample
     while($jpqTimer.Elapsed.TotalSeconds -lt $DurationSeconds -and -not (Test-Path -LiteralPath (Join-Path $jpqOutput 'stop.signal'))) {
         # Raw dumpsys stays in memory; unrelated app names are never written.
-        # The read-only guard has finite delay, so a switched/locked segment's
-        # tail must be trimmed before review or any evidence export.
+        # The guard has finite timing uncertainty; post-capture rejection and
+        # privacy review are still required before any evidence export.
         if($jpqLogs.Process.HasExited) { throw 'Evidence log stream exited; see the local logcat logs.' }
         $guardStart=$jpqTimer.Elapsed.TotalSeconds
         $activity=Invoke-JpqAdb @('shell','dumpsys','activity','activities')
         $policy=Invoke-JpqAdb @('shell','dumpsys','window','policy')
         $power=Invoke-JpqAdb @('shell','dumpsys','power')
-        $guard=Get-JpqForegroundState $activity.Text $policy.Text $power.Text
+        $guard=Get-JpqForegroundState $activity.Text $policy.Text $power.Text -SyntheticProbe:$SyntheticProbe
         $inGame=$activity.Ok -and $policy.Ok -and $power.Ok -and $guard.SafeToRecord
         if($jpqTimer.Elapsed.TotalSeconds-$jpqLastGuard -ge 5 -or -not $inGame) {
             Write-JpqMarker 'foreground_guard' @{gameOnly=$guard.GameOnly; screenOn=$guard.ScreenOn; unlocked=$guard.Unlocked;
                 safe=$inGame; queryMs=($jpqTimer.Elapsed.TotalSeconds-$guardStart)*1000}
             $jpqLastGuard=$jpqTimer.Elapsed.TotalSeconds
         }
-        if($null -ne $jpqVideo -and (-not $inGame -or $jpqVideo.Process.HasExited)) {
-            $reason=if(-not $inGame) {'foreground_or_lock_guard'} else {'recorder_exited'}
-            Write-JpqMarker 'video_stop_requested' @{segment=$jpqSegment; reason=$reason}
-            $closed=Close-JpqChild $jpqVideo; $jpqVideo=$null
-            Write-JpqMarker 'video_stopped' @{segment=$jpqSegment; reason=$reason; exitCode=$closed.ExitCode;
-                forced=$closed.Forced; signalError=$closed.SignalError; reviewTail=(-not $inGame); elapsedSeconds=$jpqTimer.Elapsed.TotalSeconds;
-                fileBytes=if(Test-Path -LiteralPath $file) {(Get-Item -LiteralPath $file).Length} else {0}}
-            $jpqRetryAfter=$jpqTimer.Elapsed.TotalSeconds+3
-        }
-        if($inGame -and $null -eq $jpqVideo -and $jpqTimer.Elapsed.TotalSeconds -ge $jpqRetryAfter) {
-            $jpqSegment++
-            $name='game-{0:D3}' -f $jpqSegment
-            $file=Join-Path $jpqOutput "$name.mkv"
-            $remaining=[Math]::Max(1,[Math]::Ceiling($DurationSeconds-$jpqTimer.Elapsed.TotalSeconds))
-            Write-JpqMarker 'video_launch_requested' @{segment=$jpqSegment; file="$name.mkv"}
-            $jpqVideo=Start-JpqChild $jpqScrcpy @('--serial',$DeviceSerial,'--no-control','--no-clipboard-autosync','--no-audio','--no-window','--no-playback','--no-power-on','--no-terminal-title','--display-id=0','--max-size=1920','--max-fps=15','--video-bit-rate=3M',"--time-limit=$remaining","--record=$file") $name
-            Write-JpqMarker 'video_process_started' @{segment=$jpqSegment; elapsedSeconds=$jpqTimer.Elapsed.TotalSeconds}
-            Write-JpqClockSample
+        if($inGame -and -not $LogsOnly -and $jpqTimer.Elapsed.TotalSeconds -ge $jpqNextFrame) {
+            $before=[DateTimeOffset]::UtcNow
+            $frame=Invoke-JpqReadPng $jpqAdb @('-s',$DeviceSerial,'exec-out','screencap','-p','-d',$jpqPhysical)
+            $after=[DateTimeOffset]::UtcNow
+            # Recheck after capture: discard switch/lock transitions instead of
+            # persisting another app. No screenshot or raw dumpsys is logged on rejection.
+            $postActivity=Invoke-JpqAdb @('shell','dumpsys','activity','activities')
+            $postPolicy=Invoke-JpqAdb @('shell','dumpsys','window','policy')
+            $postPower=Invoke-JpqAdb @('shell','dumpsys','power')
+            $postGuard=Get-JpqForegroundState $postActivity.Text $postPolicy.Text $postPower.Text -SyntheticProbe:$SyntheticProbe
+            $safe=$frame.Ok -and $postActivity.Ok -and $postPolicy.Ok -and $postPower.Ok -and $postGuard.SafeToRecord
+            if($safe) {
+                # Bound local storage; metadata/logs continue if the frame budget is full.
+                if($jpqFrameBytes+$frame.Bytes.Length -le 512L*1024*1024) {
+                    $jpqFrame++
+                    $relative='frames/frame-{0:D6}.png' -f $jpqFrame
+                    [IO.File]::WriteAllBytes((Join-Path $jpqOutput $relative),$frame.Bytes)
+                    $jpqFrameBytes+=$frame.Bytes.Length
+                    @{frame=$jpqFrame;file=$relative;captureBefore=$before.ToString('o');captureAfter=$after.ToString('o');
+                        acceptedAt=[DateTimeOffset]::UtcNow.ToString('o');bytes=$frame.Bytes.Length}|
+                        ConvertTo-Json -Compress|Add-Content -LiteralPath (Join-Path $jpqOutput 'frames.jsonl') -Encoding utf8
+                } else { Write-JpqMarker 'frame_budget_reached'; $LogsOnly=$true }
+            } else { Write-JpqMarker 'frame_discarded' @{reason=if($frame.Ok) {'post_capture_guard'} else {$frame.Error}} }
+            $jpqNextFrame=$jpqTimer.Elapsed.TotalSeconds+$FrameIntervalMilliseconds/1000.0
         }
         if($jpqTimer.Elapsed.TotalSeconds-$jpqLastClock -ge 60) { Write-JpqClockSample }
         Start-Sleep -Milliseconds $PollMilliseconds
@@ -118,16 +137,11 @@ try {
     Write-JpqMarker 'collector_error' @{reason='Collector failed; this evidence cannot establish a passed game.'}
     throw
 } finally {
-    # Cleanup only the owned recorder/logcat processes, even if one fails.
-    try {
-        $videoClosed=Close-JpqChild $jpqVideo
-        if($null -ne $videoClosed) { Write-JpqMarker 'video_stopped' @{segment=$jpqSegment; reason=$jpqFinishReason; exitCode=$videoClosed.ExitCode; forced=$videoClosed.Forced;
-            fileBytes=if(Test-Path -LiteralPath $file) {(Get-Item -LiteralPath $file).Length} else {0}} }
-    } finally {
-        $logsClosed=Close-JpqChild $jpqLogs
-        Write-JpqMarker 'collector_stopped' @{elapsedSeconds=$jpqTimer.Elapsed.TotalSeconds;
-            reason=$jpqFinishReason;
-            logcatForced=if($null -ne $logsClosed) {$logsClosed.Forced} else {$null}}
-    }
+    # Only the owned ADB log stream is persistent. Stopping this collector
+    # cannot tear down a mirrored display used by the app's projection.
+    $logsClosed=Close-JpqChild $jpqLogs
+    Write-JpqMarker 'collector_stopped' @{elapsedSeconds=$jpqTimer.Elapsed.TotalSeconds;
+        reason=$jpqFinishReason;acceptedFrames=$jpqFrame;frameBytes=$jpqFrameBytes;
+        logcatForced=if($null -ne $logsClosed) {$logsClosed.Forced} else {$null}}
 }
 Write-Output $jpqOutput

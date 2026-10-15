@@ -22,6 +22,27 @@ Assert-Jpq (-not (Get-JpqForegroundState $game '' $awake).SafeToRecord) 'unknown
 Assert-Jpq (-not (Get-JpqForegroundState ($game+"`n"+$other) $unlocked $awake).SafeToRecord) 'multiple resumed apps are rejected'
 Assert-Jpq (-not (Get-JpqForegroundState '' $unlocked $awake).SafeToRecord) 'missing activity is rejected'
 Assert-Jpq (-not (Get-JpqForegroundState $game $unlocked 'mWakefulness=1').SafeToRecord) 'numeric display-only wakefulness is rejected'
+$rear="Display #1 (activities from top to bottom):`n$other"
+$primaryGame="Display #0 (activities from top to bottom):`n$game"
+$primaryOther="Display #0 (activities from top to bottom):`n$other"
+Assert-Jpq (Get-JpqForegroundState ($primaryGame+"`n"+$rear) $unlocked $awake).SafeToRecord 'rear display cannot veto the recorded primary game'
+Assert-Jpq (Get-JpqForegroundState ($rear+"`n"+$primaryGame) $unlocked $awake).SafeToRecord 'primary display can follow the rear display'
+Assert-Jpq (-not (Get-JpqForegroundState ($primaryOther+"`nDisplay #1 (activities from top to bottom):`n"+$game) $unlocked $awake).SafeToRecord) 'rear game cannot authorize another primary app'
+Assert-Jpq (-not (Get-JpqForegroundState $rear $unlocked $awake).SafeToRecord) 'missing primary display fails closed'
+Assert-Jpq (-not (Get-JpqForegroundState ($primaryGame+"`n"+$other+"`n"+$rear) $unlocked $awake).SafeToRecord) 'two primary resumed apps remain ambiguous'
+$probe=$primaryGame.Replace('com.tencent.guandansy/.MainActivity','com.cyotun.jpq.tests/com.cyotun.jpq.vision.PhoneFrameProbeActivity')
+Assert-Jpq (Get-JpqForegroundState ($probe+"`n"+$rear) $unlocked $awake -SyntheticProbe).SafeToRecord 'explicit synthetic mode accepts only our probe activity'
+Assert-Jpq (-not (Get-JpqForegroundState $primaryGame $unlocked $awake -SyntheticProbe).SafeToRecord) 'synthetic mode cannot record the game'
+Assert-Jpq (-not (Get-JpqForegroundState $probe $unlocked $awake).SafeToRecord) 'real-game mode cannot record the test activity'
+Assert-Jpq ((Get-JpqPrimaryPhysicalDisplayId "Display 123 (HWC display 0): primary`nDisplay 456 (HWC display 3): rear") -eq '123') 'physical main panel is selected without guessing the first display'
+Assert-Jpq ($null -eq (Get-JpqPrimaryPhysicalDisplayId 'Display 456 (HWC display 3): rear')) 'unknown physical panel fails closed'
+Assert-Jpq ($null -eq (Get-JpqPrimaryPhysicalDisplayId "Display 123 (HWC display 0): one`nDisplay 456 (HWC display 0): two")) 'ambiguous physical panels fail closed'
+$png=[Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aEVsAAAAASUVORK5CYII=')
+Assert-Jpq ((ConvertTo-JpqPng $png).Length -eq $png.Length) 'binary PNG is preserved without text encoding'
+$prefixed=[Text.Encoding]::UTF8.GetBytes("OEM warning`n")+$png
+Assert-Jpq ((ConvertTo-JpqPng $prefixed).Length -eq $png.Length) 'OEM text prefix is excluded from the frame'
+Assert-Jpq ($null -eq (ConvertTo-JpqPng $png[0..($png.Length-2)])) 'truncated PNG is rejected'
+Assert-Jpq ($null -eq (ConvertTo-JpqPng ([byte[]](1,2,3)))) 'non-PNG output is rejected'
 
 $jpqPwsh=(Get-Process -Id $PID).Path
 $jpqPipes=Join-Path $jpqTestFolder 'pipes.ps1'
@@ -35,6 +56,17 @@ $jpqSleep=Join-Path $jpqTestFolder 'sleep.ps1'
 'Start-Sleep -Seconds 10' | Set-Content -LiteralPath $jpqSleep -Encoding utf8
 $jpqTimeout=Invoke-JpqReadCommand $jpqPwsh @('-NoProfile','-NonInteractive','-File',$jpqSleep) 250
 Assert-Jpq (-not $jpqTimeout.Ok -and $jpqTimeout.Error -eq 'read_timeout') 'hung read is bounded'
+$jpqBinary=Join-Path $jpqTestFolder 'binary.ps1'
+@'
+$png=[Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aEVsAAAAASUVORK5CYII=')
+$stream=[Console]::OpenStandardOutput()
+$stream.Write($png,0,$png.Length); $stream.Flush()
+[Console]::Error.Write(('e'*65536))
+'@ | Set-Content -LiteralPath $jpqBinary -Encoding utf8
+$jpqBinaryResult=Invoke-JpqReadPng $jpqPwsh @('-NoProfile','-NonInteractive','-File',$jpqBinary) 5000
+Assert-Jpq ($jpqBinaryResult.Ok -and [Convert]::ToBase64String($jpqBinaryResult.Bytes) -eq [Convert]::ToBase64String($png)) 'binary child capture drains stderr and preserves every PNG byte'
+$jpqBinaryTimeout=Invoke-JpqReadPng $jpqPwsh @('-NoProfile','-NonInteractive','-File',$jpqSleep) 250
+Assert-Jpq (-not $jpqBinaryTimeout.Ok -and $jpqBinaryTimeout.Error -eq 'screencap_timeout') 'screenshot child timeout is bounded'
 
 $jpqMock=Join-Path $jpqTestFolder 'mock console with spaces.ps1'
 @'

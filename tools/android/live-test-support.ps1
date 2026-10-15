@@ -111,10 +111,28 @@ if ($SignalProcessId -gt 0) {
     return
 }
 
-function Get-JpqForegroundState([string]$Activity, [string]$Policy, [string]$Power) {
-    $packages=@([regex]::Matches($Activity, 'topResumedActivity=ActivityRecord\{[^\r\n]*?\s([A-Za-z0-9_.]+)/'))
-    # Ambiguous/multiple resumed activities, missing fields and timeouts fail closed.
+function Get-JpqForegroundState([string]$Activity, [string]$Policy, [string]$Power, [switch]$SyntheticProbe) {
+    # Only display 0 is recorded. A rear-panel launcher can be resumed at the
+    # same time on display 1; it must neither veto nor authorize display 0.
+    $displayHeaders=@([regex]::Matches($Activity,'(?m)^\s*Display #(\d+) \(activities from top to bottom\):\s*$'))
+    $activityScope=$Activity
+    if($displayHeaders.Count -gt 0) {
+        $primary=@($displayHeaders | Where-Object { $_.Groups[1].Value -eq '0' })
+        if($primary.Count -ne 1) { $activityScope='' }
+        else {
+            $start=$primary[0].Index+$primary[0].Length
+            $next=@($displayHeaders | Where-Object { $_.Index -gt $primary[0].Index } | Select-Object -First 1)
+            $end=if($next.Count -eq 1) { $next[0].Index } else { $Activity.Length }
+            $activityScope=$Activity.Substring($start,$end-$start)
+        }
+    }
+    $packages=@([regex]::Matches($activityScope, 'topResumedActivity=ActivityRecord\{[^\r\n]*?\s([A-Za-z0-9_.]+)/'))
+    # Ambiguity within the recorded display, missing fields and timeouts fail closed.
     $gameOnly=$packages.Count -eq 1 -and $packages[0].Groups[1].Value -eq 'com.tencent.guandansy'
+    if($SyntheticProbe) {
+        $gameOnly=$packages.Count -eq 1 -and
+            $activityScope -match 'topResumedActivity=ActivityRecord\{[^\r\n]*\scom\.cyotun\.jpq\.tests/com\.cyotun\.jpq\.vision\.PhoneFrameProbeActivity(?:\s|\})'
+    }
     # HyperOS emits numeric wakefulness and screen-on fields for both displays.
     # Use the named global state, rather than an any(true) test across panels.
     $wakefulness=[regex]::Match($Power, '(?m)^\s*mWakefulness=(Awake|Asleep|Dozing|Dreaming)\s*$')
@@ -141,6 +159,52 @@ function Invoke-JpqReadCommand([string]$Executable, [string[]]$Arguments, [int]$
         [pscustomobject]@{ Ok=($process.ExitCode -eq 0); Text=$outTask.GetAwaiter().GetResult();
             Error=$errTask.GetAwaiter().GetResult(); ExitCode=$process.ExitCode }
     } finally { $process.Dispose() }
+}
+
+function Get-JpqPrimaryPhysicalDisplayId([string]$Displays) {
+    $primary=@([regex]::Matches($Displays,'(?m)^Display (\d+) \(HWC display 0\):'))
+    if($primary.Count -eq 1) { $primary[0].Groups[1].Value } else { $null }
+}
+
+function ConvertTo-JpqPng([byte[]]$Bytes) {
+    # Explicit physical display selection normally has no prefix. Some OEMs
+    # print a plain-text warning before the PNG even with exec-out.
+    $signature=[byte[]](137,80,78,71,13,10,26,10)
+    $start=-1
+    for($i=0;$i -le [Math]::Min(1024,$Bytes.Length-8);$i++) {
+        $sameSignature=$true
+        for($j=0;$j -lt 8;$j++) { if($Bytes[$i+$j] -ne $signature[$j]) { $sameSignature=$false; break } }
+        if($sameSignature) { $start=$i; break }
+    }
+    if($start -lt 0 -or $Bytes.Length-$start -lt 45) { return $null }
+    # A killed/truncated screencap must not be mistaken for a complete frame.
+    $end=[byte[]](0,0,0,0,73,69,78,68,174,66,96,130)
+    for($j=0;$j -lt 12;$j++) { if($Bytes[$Bytes.Length-12+$j] -ne $end[$j]) { return $null } }
+    $png=[byte[]]::new($Bytes.Length-$start)
+    [Array]::Copy($Bytes,$start,$png,0,$png.Length)
+    return ,$png
+}
+
+function Invoke-JpqReadPng([string]$Executable,[string[]]$Arguments,[int]$TimeoutMs=3000) {
+    $info=[Diagnostics.ProcessStartInfo]::new()
+    $info.FileName=$Executable; $info.UseShellExecute=$false; $info.CreateNoWindow=$true
+    $info.RedirectStandardOutput=$true; $info.RedirectStandardError=$true
+    foreach($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+    $process=[Diagnostics.Process]::Start($info)
+    $memory=[IO.MemoryStream]::new()
+    $copy=$process.StandardOutput.BaseStream.CopyToAsync($memory)
+    $errors=$process.StandardError.ReadToEndAsync()
+    try {
+        if(-not $process.WaitForExit($TimeoutMs)) {
+            $process.Kill(); [void]$process.WaitForExit(1000)
+            try { $copy.GetAwaiter().GetResult() } catch { }
+            return [pscustomobject]@{Ok=$false; Bytes=$null; Error='screencap_timeout'}
+        }
+        $copy.GetAwaiter().GetResult()
+        [void]$errors.GetAwaiter().GetResult()
+        $png=if($process.ExitCode -eq 0) { ConvertTo-JpqPng $memory.ToArray() } else { $null }
+        [pscustomobject]@{Ok=($null -ne $png); Bytes=$png; Error=if($null -eq $png) {'invalid_screencap'} else {''}}
+    } finally { $memory.Dispose(); $process.Dispose() }
 }
 
 function Stop-JpqOwnedConsole([Diagnostics.Process]$Process, [int]$GraceMs=2500) {
