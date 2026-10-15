@@ -35,7 +35,10 @@ class RecoveryTest {
         val widths=HistoryWidth(); var config=DisplayConfig()
         repeat(4) { config=config.copy(showHistory=!config.showHistory,showReset=!config.showReset,doubleTapHide=!config.doubleTapHide); widths.measure(config,120f,870f) }
         assertEquals(before,ledger.snapshot())
-        o.observe(TableFrame(360,TableScene.UNKNOWN,null)); o.observe(TableFrame(480,TableScene.TABLE,baseline,empty()))
+        o.observe(TableFrame(360,TableScene.UNKNOWN,null))
+        assertEquals(before,ledger.snapshot())
+        assertTrue(o.diagnosticStatus().recovering)
+        for(t in 480L..660L step 60) o.observe(TableFrame(t,TableScene.TABLE,baseline,empty()))
         assertEquals(before,ledger.snapshot())
     }
     @Test fun tributeHidesProvisionalBaselineUntilItEnds() {

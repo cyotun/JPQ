@@ -11,7 +11,6 @@ import com.cyotun.jpq.core.TencentGradeHeaderTone
 import com.cyotun.jpq.core.WildcardMode
 import com.cyotun.jpq.core.tencentRoundGradeReading
 import com.cyotun.jpq.core.tencentGradeHeaderTone
-import com.cyotun.jpq.core.tencentGradeHeaderPixelColour
 import com.cyotun.jpq.core.tencentGradeHudToken
 
 data class GradeSourceReading(
@@ -61,7 +60,20 @@ class GradeSourceReader {
         }
         val active=tones.filterValues { it==TencentGradeHeaderTone.ACTIVE }.keys
         val reading = tencentRoundGradeReading(hints, cornerRanks, mode,active)
-        val measured=headerBoxes.filter { it.first in active }.mapNotNull { measuredPanel(bitmap,it.second,masks) }
+        val measured=if(active.isEmpty()) emptyList() else TencentHudPanels.detect(bitmap).mapNotNull { panel ->
+            if(!panel.active || panel.team !in active) return@mapNotNull null
+            val header=GlyphBox(panel.header.left.toFloat()/bitmap.width,panel.header.top.toFloat()/bitmap.height,
+                panel.header.right.toFloat()/bitmap.width,panel.header.bottom.toFloat()/bitmap.height)
+            // Require the fresh, unmasked OCR header to belong to this measured
+            // panel. A coloured header alone cannot predict a number body.
+            if(headerBoxes.none { (team,box) -> team==panel.team && overlap(header,box)>=box.width*box.height*.5f })
+                return@mapNotNull null
+            val region=GlyphBox(minOf(panel.header.left,panel.body.left).toFloat()/bitmap.width,
+                minOf(panel.header.top,panel.body.top).toFloat()/bitmap.height,
+                maxOf(panel.header.right,panel.body.right).toFloat()/bitmap.width,
+                maxOf(panel.header.bottom,panel.body.bottom).toFloat()/bitmap.height)
+            region.takeIf { masks.none { mask -> overlap(region,mask)>0f } }
+        }
         val observed=measured.takeIf { it.isNotEmpty() }?.let { regions ->
             GlyphBox(regions.minOf { it.left },regions.minOf { it.top },regions.maxOf { it.right },regions.maxOf { it.bottom })
         }
@@ -105,9 +117,13 @@ class GradeSourceReader {
     }.distinct()
 
     private fun headerTone(bitmap: Bitmap,box: GlyphBox,masks: List<GlyphBox>): TencentGradeHeaderTone {
-        val area=GlyphBox((box.left-.002f).coerceAtLeast(0f),(box.top-.001f).coerceAtLeast(0f),
+        if(masks.any { overlap(box,it)>0 }) return TencentGradeHeaderTone.UNKNOWN
+        val padded=GlyphBox((box.left-.002f).coerceAtLeast(0f),(box.top-.001f).coerceAtLeast(0f),
             (box.right+.002f).coerceAtMost(1f),(box.bottom+.001f).coerceAtMost(1f))
-        if(masks.any { overlap(area,it)>0 }) return TencentGradeHeaderTone.UNKNOWN
+        // Padding helps sample the background around tight white lettering,
+        // but it is not observed header geometry. A nearby overlay can cover
+        // only that extra margin while leaving the actual OCR header visible.
+        val area=if(masks.any { overlap(padded,it)>0 }) box else padded
         val left=(area.left*bitmap.width).toInt(); val top=(area.top*bitmap.height).toInt()
         val right=kotlin.math.ceil(area.right*bitmap.width).toInt(); val bottom=kotlin.math.ceil(area.bottom*bitmap.height).toInt()
         val width=right-left; val height=bottom-top
@@ -115,38 +131,6 @@ class GradeSourceReader {
         val pixels=IntArray(width*height)
         bitmap.getPixels(pixels,0,width,left,top,width,height)
         return tencentGradeHeaderTone(width,height,pixels)
-    }
-
-    private fun measuredPanel(bitmap: Bitmap,box: GlyphBox,masks: List<GlyphBox>): GlyphBox? {
-        val left=((box.left-.015f).coerceAtLeast(0f)*bitmap.width).toInt()
-        val top=((box.top-.004f).coerceAtLeast(0f)*bitmap.height).toInt()
-        val right=kotlin.math.ceil((box.right+.015f).coerceAtMost(1f)*bitmap.width).toInt()
-        val bottom=kotlin.math.ceil(minOf(box.bottom+.006f,.065f)*bitmap.height).toInt()
-        val width=right-left; val height=bottom-top
-        if(width !in 4..340 || height !in 3..180) return null
-        val pixels=IntArray(width*height); bitmap.getPixels(pixels,0,width,left,top,width,height)
-        val seedLeft=((box.left*bitmap.width).toInt()-left).coerceIn(0,width-1)
-        val seedRight=(kotlin.math.ceil(box.right*bitmap.width).toInt()-left).coerceIn(seedLeft+1,width)
-        var blue=0; var red=0
-        for(y in 0 until height) for(x in seedLeft until seedRight) {
-            when(tencentGradeHeaderPixelColour(pixels[y*width+x])) { 1 -> blue++; 2 -> red++ }
-        }
-        val colour=if(blue>=red) 1 else 2
-        if(maxOf(blue,red)<16) return null
-        val columns=IntArray(width); val rows=IntArray(height)
-        for(y in 0 until height) for(x in 0 until width) {
-            val nx=(left+x+.5f)/bitmap.width; val ny=(top+y+.5f)/bitmap.height
-            if(masks.any { nx>=it.left && nx<it.right && ny>=it.top && ny<it.bottom }) continue
-            if(tencentGradeHeaderPixelColour(pixels[y*width+x])==colour) { columns[x]++; rows[y]++ }
-        }
-        val validColumns=columns.indices.filter { columns[it]>=maxOf(3f,height*.18f) }
-        val validRows=rows.indices.filter { rows[it]>=maxOf(3f,width*.18f) }
-        if(validColumns.isEmpty() || validRows.isEmpty()) return null
-        val l=(left+validColumns.first()).toFloat()/bitmap.width
-        val r=(left+validColumns.last()+1).toFloat()/bitmap.width
-        val t=(top+validRows.first()).toFloat()/bitmap.height
-        val b=(top+validRows.last()+1).toFloat()/bitmap.height
-        return GlyphBox(l,t,r,minOf(.15f,b+.07f))
     }
 
     private fun overlap(a: GlyphBox,b: GlyphBox): Float {

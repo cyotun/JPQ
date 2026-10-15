@@ -18,7 +18,7 @@ fun Card.colorKey(): String = when(suit) {
     Suit.NONE -> rank.name
 }
 enum class Seat(val label: String) { SELF("自己"), PREVIOUS("上"), OPPOSITE("对"), NEXT("下") }
-enum class RoundPhase { WAITING, ACTIVE, SELF_FINISHED, UNAVAILABLE, FINISHED }
+enum class RoundPhase { WAITING, ACTIVE, SELF_FINISHED, RECOVERING, UNAVAILABLE, FINISHED }
 enum class CountTone { ZERO, WHITE, RED, UNKNOWN }
 fun countTone(rank: Rank, remaining: Int?): CountTone = when {
     remaining == null || remaining < 0 -> CountTone.UNKNOWN

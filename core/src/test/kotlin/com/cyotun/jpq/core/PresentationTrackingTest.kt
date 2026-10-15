@@ -15,6 +15,31 @@ class PresentationTrackingTest {
     private fun show(observer: RoundObserver,play: ObservedPlay,start: Long,end: Long) {
         for(time in start..end step 60) observer.observe(TableFrame(time,TableScene.TABLE,null,mapOf(Seat.NEXT to play)))
     }
+    @Test fun sameBoxJokerRankFlickerCannotCreateAnotherPlay() {
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)
+        val small=play(listOf(Card(Rank.SMALL,Suit.NONE)))
+        val big=play(listOf(Card(Rank.BIG,Suit.NONE)))
+        show(observer,small,480,660)
+        val before=ledger.snapshot()
+        show(observer,ObservedPlay(emptyList(),1f,regionObserved=false),720,840)
+        show(observer,big,900,1380) // False class persists longer than the ordinary four votes.
+        show(observer,small,1440,1800)
+        assertEquals(before,ledger.snapshot())
+    }
+    @Test fun lastingJokerChangeCanStillBecomeANewPlay() {
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)
+        show(observer,play(listOf(Card(Rank.SMALL,Suit.NONE))),480,660)
+        show(observer,play(listOf(Card(Rank.BIG,Suit.NONE))),720,1740)
+        assertEquals(2,ledger.snapshot().played(Seat.NEXT))
+        assertEquals(listOf(Rank.SMALL,Rank.BIG),ledger.snapshot().plays.getValue(Seat.NEXT).flatMap { it.cards }.map { it.rank })
+    }
+    @Test fun provedEmptyBoundaryDoesNotDelayADifferentJoker() {
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)
+        show(observer,play(listOf(Card(Rank.SMALL,Suit.NONE))),480,660)
+        show(observer,ObservedPlay(emptyList(),1f),720,840)
+        show(observer,play(listOf(Card(Rank.BIG,Suit.NONE))),900,1080)
+        assertEquals(2,ledger.snapshot().played(Seat.NEXT))
+    }
     @Test fun aGrowingBombIsOnePresentationAndOneHistoryEntry() {
         val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)
         show(observer,play(listOf(ace)),480,660)
@@ -48,7 +73,7 @@ class PresentationTrackingTest {
         show(observer,play(listOf(ace)),480,660)
         val bomb=listOf(ace,ace,Card(Rank.A,Suit.BLACK),Card(Rank.A,Suit.BLACK))
         show(observer,play(bomb,.68f),720,1740)
-        assertEquals(1,ledger.snapshot().played(Seat.NEXT)); assertEquals(RoundPhase.UNAVAILABLE,ledger.snapshot().phase)
+        assertEquals(1,ledger.snapshot().played(Seat.NEXT)); assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
         assertNull(ledger.snapshot().remaining)
     }
     @Test fun cardsMovingIntoPlaceMustSettleBeforeConfirmation() {

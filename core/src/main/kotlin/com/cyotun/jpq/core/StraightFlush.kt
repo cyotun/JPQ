@@ -13,21 +13,25 @@ data class StraightFlushResult(
     val state: StraightFlushState,
     val witness: StraightFlushWitness? = null,
     val reason: String? = null,
+    /** Logical slots in every feasible window, including slots filled by a heart wildcard. */
+    val candidateRanks: Set<Rank> = if (state == StraightFlushState.IMPOSSIBLE) emptySet()
+        else Rank.entries.filterNot { it.isJoker }.toSet(),
 )
 
 /** Accepted ledger counts are independent of uncertain suit/substitution metadata. */
-fun straightFlushRemainingHandSizes(snapshot: RoundSnapshot): List<Int>? {
+fun straightFlushRemainingHandSizes(snapshot: RoundSnapshot,teammate: RemainingPoolExclusion?=null): List<Int>? {
     if(snapshot.roundId==null || snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED,RoundPhase.FINISHED)) return null
     val counts=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).map { 27-snapshot.played(it) }
     if(counts.any { it !in 0..27 }) return null
     if(snapshot.remaining!=null && snapshot.remaining.values.sum()!=counts.sum()) return null
-    return counts
+    // Preserve seat positions; a revealed teammate contributes no unknown cards.
+    return if(teammate?.matches(snapshot)==true) listOf(counts[0],0,counts[2]) else counts
 }
 
-fun straightFlushHandCapacityExclusion(snapshot: RoundSnapshot): StraightFlushResult? {
-    val hands=straightFlushRemainingHandSizes(snapshot) ?: return null
+fun straightFlushHandCapacityExclusion(snapshot: RoundSnapshot,teammate: RemainingPoolExclusion?=null): StraightFlushResult? {
+    val hands=straightFlushRemainingHandSizes(snapshot,teammate) ?: return null
     if(hands.maxOrNull()!!<5) return StraightFlushResult(StraightFlushState.IMPOSSIBLE,reason="insufficient_seat_hand")
-    val ranks=snapshot.remaining
+    val ranks=remainingOutsidePool(snapshot,teammate)
     if(ranks!=null && ranks.keys==Rank.entries.toSet() && ranks.all { (rank,n) -> n in 0..rank.capacity } &&
         ranks.filterKeys { !it.isJoker }.values.sum()<5)
         return StraightFlushResult(StraightFlushState.IMPOSSIBLE,reason="insufficient_ordinary_cards")
@@ -42,7 +46,8 @@ fun tencentUnresolvedReplacementBound(playedOrdinary: Int,mode: WildcardMode): I
 
 /**
  * Side-channel analysis only: consumed must be the immutable initial own hand plus confirmed plays
- * from the other three seats. Own plays must not be consumed a second time.
+ * from the other three seats, plus any confirmed current teammate hand excluded from the
+ * unknown pool. Own plays must not be consumed a second time.
  *
  * RED and BLACK preserve uncertainty about the physical suit. POSSIBLE requires a constructive
  * proof using remaining lower bounds. IMPOSSIBLE requires ruling out every compatible physical
@@ -50,6 +55,8 @@ fun tencentUnresolvedReplacementBound(playedOrdinary: Int,mode: WildcardMode): I
  * UNKNOWN. Until the effective rule is confirmed, every ordinary HEART rank is
  * treated as a potential wildcard: this is an ability superset, not a guessed
  * level. Absence must also hold under that superset.
+ * candidateRanks unions the logical slots of every window not ruled out by those same
+ * constraints; one constructive witness does not exclude other uncertain windows.
  *
  * TABLE cards may show a wildcard's declared replacement. In that case the
  * displayed residual pool loses the replacement but retains an extra heart
@@ -104,10 +111,10 @@ object StraightFlushEvaluator {
             IntArray(suits.size) { suitIndex -> choices.minOf { it[suitIndex] } }
         }
 
+        var witness: StraightFlushWitness? = null
         for (suitIndex in suits.indices) for (window in windows) {
             if (window.all { lower.getValue(it)[suitIndex] > 0 }) {
-                return StraightFlushResult(StraightFlushState.POSSIBLE,
-                    StraightFlushWitness(suits[suitIndex], window, 0))
+                if (witness == null) witness = StraightFlushWitness(suits[suitIndex], window, 0)
             }
         }
         val completeRule = ruleConfirmed && wildcardRanks != null
@@ -120,35 +127,47 @@ object StraightFlushEvaluator {
             val reservedNaturalWildcards = if (suits[suitIndex] == Suit.HEART) {
                 window.count { it in possibleWildRanks && lower.getValue(it)[heartIndex] > 0 }
             } else 0
-            if (completeRule && missing <= guaranteedWildcards - reservedNaturalWildcards) {
-                return StraightFlushResult(StraightFlushState.POSSIBLE,
-                    StraightFlushWitness(suits[suitIndex], window, missing))
+            if (witness == null && completeRule && missing <= guaranteedWildcards - reservedNaturalWildcards) {
+                witness = StraightFlushWitness(suits[suitIndex], window, missing)
             }
         }
 
-        for (suitIndex in suits.indices) for (window in windows) {
-            val windowRanks = window.toSet()
+        val candidateRanks = linkedSetOf<Rank>()
+        val outside = ordinaryRanks.associateWith { rank ->
+            allocations.getValue(rank).maxOf { remaining ->
+                if (rank in possibleWildRanks) remaining[heartIndex] else 0
+            }
+        }
+        val outsideBalance = outside.values.sum()
+        for (suitIndex in suits.indices) {
             // Each rank's RED/BLACK allocation is independent of other ranks. For a chosen
             // allocation, natural cards cover a slot first. HEART wildcards used naturally
             // are reserved, and remaining HEART wildcards must cover the missing slots.
             // Maximizing this resource balance independently per rank is an exact existence
             // check, while retaining HEART/DIAMOND correlation within each rank.
-            val bestBalance = ordinaryRanks.sumOf { rank ->
+            // Cache both contributions once per rank/suit. A window only changes whether
+            // a rank is a required slot; it does not change its compatible allocations.
+            val insideDelta = ordinaryRanks.associateWith { rank ->
                 allocations.getValue(rank).maxOf { remaining ->
-                    val natural = rank in windowRanks && remaining[suitIndex] > 0
+                    val natural = remaining[suitIndex] > 0
                     val wild = if (rank in possibleWildRanks) remaining[heartIndex] else 0
-                    val missing = if (rank in windowRanks && !natural) 1 else 0
+                    val missing = if (!natural) 1 else 0
                     val reserved = if (natural && suits[suitIndex] == Suit.HEART &&
                         rank in possibleWildRanks) 1 else 0
                     wild - missing - reserved
-                }
+                } - outside.getValue(rank)
             }
-            if (bestBalance + unresolvedReplacements >= 0) {
-                return StraightFlushResult(StraightFlushState.UNKNOWN,
-                    reason = if(unresolvedReplacements>0) "rendered_substitution_uncertain"
-                    else if (completeRule) "suit_uncertain" else "wildcard_rule_unknown")
+            for (window in windows) {
+                val bestBalance = outsideBalance + window.sumOf { insideDelta.getValue(it) }
+                if (bestBalance + unresolvedReplacements >= 0) candidateRanks.addAll(window)
             }
         }
+        if (witness != null) return StraightFlushResult(StraightFlushState.POSSIBLE,
+            witness = witness, candidateRanks = candidateRanks)
+        if (candidateRanks.isNotEmpty()) return StraightFlushResult(StraightFlushState.UNKNOWN,
+            reason = if(unresolvedReplacements>0) "rendered_substitution_uncertain"
+            else if (completeRule) "suit_uncertain" else "wildcard_rule_unknown",
+            candidateRanks = candidateRanks)
         return StraightFlushResult(StraightFlushState.IMPOSSIBLE)
     }
 

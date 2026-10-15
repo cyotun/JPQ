@@ -11,6 +11,41 @@ data class GradeCounterState(val roundId: String?=null,val gradeRanks: Set<Rank>
 /** A displayed replacement is not a second physical card. Null means not proved either way. */
 data class PhysicalPlayedCard(val rendered: Card,val wildcard: Boolean?=null)
 
+/** An accepted evidence version can be re-evaluated against a new committed ledger. */
+class GradeCounterProjection private constructor(
+    private val roundId: String?,private val initial: List<Card>,
+    private val events: Map<String,List<PhysicalPlayedCard>>,private val rule: WildcardRuleEvidence,
+    private val outside: List<PlayEvent>,private val teammate: RemainingPoolExclusion?,val state: GradeCounterState,
+) {
+    fun rebase(snapshot: RoundSnapshot,currentRule: WildcardRuleEvidence,
+        currentTeammate: RemainingPoolExclusion?=null): GradeCounterProjection? {
+        if(snapshot.roundId!=roundId || currentRule!=rule || !eligible(snapshot)) return null
+        val validTeammate=currentTeammate?.takeIf { it.matches(snapshot) }?.let { current ->
+            teammate?.takeIf { it.sameHandVersion(current) } ?: current
+        }
+        if(outside==outside(snapshot) && teammate==validTeammate) return this
+        // New opponent events are evaluated now; never display the old number
+        // while waiting for their suit annotations. Unproved identity remains a bound.
+        return create(snapshot,initial,events,rule,validTeammate)
+    }
+    companion object {
+        private fun eligible(snapshot: RoundSnapshot)=snapshot.roundId!=null && snapshot.remaining!=null &&
+            snapshot.phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)
+        private fun outside(snapshot: RoundSnapshot)=snapshot.plays.values.flatten().filter { it.seat!=Seat.SELF }
+            .sortedWith(compareBy({it.sequence},{it.seat.ordinal},{it.eventId})).map { it.copy(cards=it.cards.toList()) }
+        fun create(snapshot: RoundSnapshot,initial: List<Card>,events: Map<String,List<PhysicalPlayedCard>>,
+            rule: WildcardRuleEvidence,teammate: RemainingPoolExclusion?=null): GradeCounterProjection {
+            val ownedInitial=initial.toList()
+            val ownedEvents=events.mapValues { (_,cards)->cards.toList() }
+            val ownedRule=rule.copy(ranks=rule.ranks?.toSet())
+            val ownedTeammate=teammate?.takeIf { it.matches(snapshot) }?.copy(cards=teammate.cards.toList(),
+                teammateEvents=teammate.teammateEvents.map { it.copy(cards=it.cards.toList()) })
+            return GradeCounterProjection(snapshot.roundId,ownedInitial,ownedEvents,ownedRule,outside(snapshot),ownedTeammate,
+                GradeCardCounter.evaluate(snapshot,ownedInitial,ownedEvents,ownedRule,ownedTeammate))
+        }
+    }
+}
+
 /** Capacity-constrained physical allocations, independent of the rank ledger and SF indicator. */
 object GradeCardCounter {
     private val ordinary=Rank.entries.filterNot { it.isJoker }
@@ -19,7 +54,7 @@ object GradeCardCounter {
         Rank.entries.filter { it.isJoker }.map { Card(it,Suit.NONE) }
 
     fun evaluate(snapshot: RoundSnapshot,initial: List<Card>,events: Map<String,List<PhysicalPlayedCard>>,
-        rule: WildcardRuleEvidence): GradeCounterState {
+        rule: WildcardRuleEvidence,teammate: RemainingPoolExclusion?=null): GradeCounterState {
         val grades=rule.ranks.orEmpty().filterNot { it.isJoker }.toSet()
         if(!rule.confirmed || grades.isEmpty() || grades.size>2 || snapshot.remaining==null || initial.size!=27)
             return GradeCounterState(snapshot.roundId,reason="grade_or_baseline_unconfirmed")
@@ -33,6 +68,9 @@ object GradeCardCounter {
             }
         }.toSet()
         val choices=initial.map { natural(it) }.toMutableList()
+        // Hand corners show actual physical cards; unlike table combinations,
+        // they cannot represent a wildcard's declared replacement.
+        teammate?.takeIf { it.matches(snapshot) }?.cards?.forEach { choices+=natural(it) }
         for(event in snapshot.plays.values.flatten().filter { it.seat!=Seat.SELF }) {
             val annotation=events[event.eventId]?.takeIf { cards -> cards.size==event.cards.size &&
                 cards.map { it.rendered.colorKey() }.sorted()==event.cards.map { it.colorKey() }.sorted() }

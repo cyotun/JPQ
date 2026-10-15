@@ -33,7 +33,7 @@ class PresentationConfidenceGapTest {
         for(t in 1300L..2900L step 200) show(observer,t,play(five.take(2),.62f))
         val six=five+Card(Rank.NINE,Suit.BLACK)
         for(t in 3100L..4300L step 100) show(observer,t,play(six,.9f))
-        assertEquals(RoundPhase.UNAVAILABLE,ledger.snapshot().phase)
+        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
         assertEquals(5,ledger.snapshot().played(Seat.PREVIOUS))
     }
     @Test fun aBlindRegionCannotMergeAnUnseenExpansion() {
@@ -41,7 +41,7 @@ class PresentationConfidenceGapTest {
         for(t in 1000L..1240L step 60) show(observer,t,play(five,.9f))
         for(t in 1300L..2200L step 150) show(observer,t,play(five,.9f).copy(regionObserved=false))
         for(t in 2350L..3450L step 100) show(observer,t,play(five+Card(Rank.NINE,Suit.BLACK),.9f))
-        assertEquals(RoundPhase.UNAVAILABLE,ledger.snapshot().phase)
+        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
         assertEquals(5,ledger.snapshot().played(Seat.PREVIOUS))
     }
     @Test fun anAbsentObservationCannotMergeAnUnseenExpansion() {
@@ -49,7 +49,7 @@ class PresentationConfidenceGapTest {
         for(t in 1000L..1240L step 60) show(observer,t,play(five,.9f))
         for(t in 1500L..2100L step 150) observer.observe(TableFrame(t,TableScene.TABLE,null))
         for(t in 2300L..3400L step 100) show(observer,t,play(five+Card(Rank.NINE,Suit.BLACK),.9f))
-        assertEquals(RoundPhase.UNAVAILABLE,ledger.snapshot().phase)
+        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
         assertEquals(5,ledger.snapshot().played(Seat.PREVIOUS))
     }
 }

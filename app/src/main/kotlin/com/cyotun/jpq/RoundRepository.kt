@@ -25,6 +25,7 @@ class RoundRepository(context: Context,databaseName: String="rounds.db"): SQLite
     @Synchronized fun save(ledger: RoundLedger) {
         val s=ledger.snapshot(); val id=s.roundId ?: return
         val state=JSONObject().put("schemaVersion",1).put("roundId",id).put("phase",s.phase.name)
+            .put("phaseBeforeRecovery",ledger.phaseBeforeRecovery()?.name ?: JSONObject.NULL)
             .put("reason",s.reason ?: JSONObject.NULL).put("initial",cards(ledger.initialHand()))
         val events=JSONArray()
         s.plays.values.flatten().sortedBy { it.sequence }.forEach { p ->

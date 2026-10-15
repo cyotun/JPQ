@@ -1,16 +1,20 @@
 package com.cyotun.jpq.vision
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Rect
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Color
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.cyotun.jpq.core.GlyphBox
 import com.cyotun.jpq.core.Rank
 import com.cyotun.jpq.core.TableScene
 import com.cyotun.jpq.core.WildcardMode
 import com.cyotun.jpq.core.TencentGradeTeam
+import com.cyotun.jpq.core.GradeOcclusionRect
+import com.cyotun.jpq.core.GradeOcclusionSession
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -20,7 +24,8 @@ import org.junit.runner.RunWith
 class GradeSourceReaderTest {
     private fun rect(left: Float,top: Float,right: Float,bottom: Float,width: Int,height: Int) =
         Rect((left*width).toInt(),(top*height).toInt(),(right*width).toInt(),(bottom*height).toInt())
-    private fun hudBitmap(width: Int,height: Int,ownActive: Boolean=true,otherActive: Boolean=false): Bitmap {
+    private fun hudBitmap(width: Int,height: Int,ownActive: Boolean=true,otherActive: Boolean=false,
+        bodies: Boolean=true): Bitmap {
         val bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888)
         val canvas=Canvas(bitmap); val paint=Paint()
         bitmap.eraseColor(Color.rgb(9,108,97))
@@ -28,6 +33,13 @@ class GradeSourceReaderTest {
         canvas.drawRect(rect(.075f,.004f,.125f,.04f,width,height),paint)
         paint.color=if(otherActive) Color.rgb(194,52,45) else Color.rgb(146,154,149)
         canvas.drawRect(rect(.125f,.004f,.175f,.04f,width,height),paint)
+        if(bodies) {
+            // Separate physical white panels, including their real bottom edge.
+            // OCR metadata alone must not stand in for these source pixels.
+            paint.color=Color.rgb(247,247,239)
+            canvas.drawRect(rect(.076f,.042f,.124f,.10f,width,height),paint)
+            canvas.drawRect(rect(.126f,.042f,.174f,.10f,width,height),paint)
+        }
         return bitmap
     }
     private fun text(bitmap: Bitmap,time: Long=1000L): SceneText {
@@ -214,6 +226,110 @@ class GradeSourceReaderTest {
             assertEquals(.175f,target.right,.002f)
             assertFalse(result.obscured)
             assertTrue(target.right<bar.left)
+        } finally { bitmap.recycle() }
+    }
+
+    @Test fun reportedRedTwoHeaderRemainsVisibleWhenOnlyItsSamplingPaddingTouchesTheBar() {
+        val bitmap=InstrumentationRegistry.getInstrumentation().context.assets
+            .open("fixtures/grade-reported-red-two.jpg").use { checkNotNull(BitmapFactory.decodeStream(it)) }
+        try {
+            // Actual production OCR boxes from the reported question-mark
+            // screenshot. The wider duplicate OTHER title crosses the bar;
+            // the 368..466 title and both overlapping 2 readings remain clear.
+            val snapshot=SceneText(emptyList(),1000,bitmap.width,bitmap.height,metadataElements=listOf(
+                OcrLine("我方",Rect(252,10,374,60)),
+                OcrLine("2",Rect(281,69,329,128)),
+                OcrLine("2",Rect(291,69,374,125)),
+                OcrLine("对方",Rect(368,11,466,55)),
+                OcrLine("对方",Rect(372,10,475,60)),
+                OcrLine("2",Rect(372,69,435,128)),
+                OcrLine("2",Rect(407,69,461,125)),
+            ))
+            val reader=GradeSourceReader()
+            val result=reader.read(bitmap,1000,snapshot,listOf(GlyphBox(.1798f,.0042f,.8409f,.1175f)),
+                TableScene.TEAMMATE,emptySet(),WildcardMode.UNKNOWN)
+            assertEquals(setOf(TencentGradeTeam.OTHER),result.activeHudTeams)
+            assertEquals(setOf(Rank.TWO),result.reading.ranks)
+            assertEquals("HUD_ACTIVE",result.reading.source)
+            assertTrue(checkNotNull(result.hudRegion).right<.1798f)
+            assertFalse(result.obscured)
+            // Covering the actual remaining title must still withdraw its
+            // evidence rather than reading the cached digit through the mask.
+            val covered=reader.read(bitmap,1250,snapshot,listOf(GlyphBox(465/2608f,0f,.8409f,.1175f)),
+                TableScene.TEAMMATE,emptySet(),WildcardMode.UNKNOWN)
+            assertTrue(covered.activeHudTeams.isEmpty())
+            assertNull(covered.reading.ranks)
+        } finally { bitmap.recycle() }
+    }
+
+    @Test fun barBelowActualPanelButInsideOldExtrapolatedRegionDoesNotWarn() {
+        val bitmap=hudBitmap(1280,588)
+        try {
+            val bar=GlyphBox(.075f,.102f,.125f,.109f)
+            val result=GradeSourceReader().read(bitmap,1000,text(bitmap),listOf(bar),TableScene.TABLE,
+                emptySet(),WildcardMode.SINGLE)
+            val target=checkNotNull(result.hudRegion)
+            assertEquals(58f/588f,target.bottom,.00001f)
+            assertTrue(target.bottom<bar.top)
+            assertFalse(result.obscured)
+            val physicalTarget=GradeOcclusionRect((target.left*1280).toInt(),(target.top*588).toInt(),
+                kotlin.math.ceil(target.right*1280).toInt(),kotlin.math.ceil(target.bottom*588).toInt())
+            assertFalse(GradeOcclusionSession().shouldShow(true,false,false,true,
+                GradeOcclusionRect(96,60,160,64),physicalTarget))
+        } finally { bitmap.recycle() }
+    }
+
+    @Test fun colouredHeadersBeforeNumberPanelsAppearCannotCreateWarningTarget() {
+        val bitmap=hudBitmap(1280,588,bodies=false)
+        val complete=hudBitmap(1280,588)
+        try {
+            val reader=GradeSourceReader()
+            // Even plausible cached OCR digits cannot replace a missing panel.
+            val early=reader.read(bitmap,1000,text(bitmap),emptyList(),TableScene.DEALING,
+                emptySet(),WildcardMode.SINGLE)
+            assertEquals(setOf(TencentGradeTeam.OWN),early.activeHudTeams)
+            assertNull(early.hudRegion)
+            assertFalse(early.obscured)
+            assertNotNull(reader.read(complete,1250,text(complete,1250),emptyList(),TableScene.DEALING,
+                emptySet(),WildcardMode.SINGLE).hudRegion)
+        } finally { bitmap.recycle(); complete.recycle() }
+    }
+
+    @Test fun coveringOnlyGreyPanelCannotTriggerWarningForVisibleRedGrade() {
+        val bitmap=hudBitmap(1280,588,ownActive=false,otherActive=true)
+        try {
+            val reader=GradeSourceReader()
+            val initial=reader.read(bitmap,1000,text(bitmap),emptyList(),TableScene.TABLE,
+                emptySet(),WildcardMode.SINGLE)
+            val target=checkNotNull(initial.hudRegion)
+            assertEquals(.125f,target.left,.00001f)
+            val covered=reader.read(bitmap,1250,text(bitmap,1250),listOf(GlyphBox(.075f,0f,.124f,.105f)),
+                TableScene.TABLE,emptySet(),WildcardMode.SINGLE)
+            assertEquals(target,covered.hudRegion)
+            assertFalse(covered.obscured)
+            assertEquals(setOf(TencentGradeTeam.OTHER),covered.activeHudTeams)
+        } finally { bitmap.recycle() }
+    }
+
+    @Test fun maskedNumberBodyCanOnlyRetainATargetSeenEarlierInThisDeal() {
+        val bitmap=hudBitmap(1280,588)
+        try {
+            val mask=listOf(GlyphBox(.075f,.042f,.125f,.10f))
+            val firstCovered=GradeSourceReader().read(bitmap,1000,text(bitmap),mask,TableScene.TABLE,
+                emptySet(),WildcardMode.SINGLE)
+            assertNull(firstCovered.hudRegion)
+            assertFalse(firstCovered.obscured)
+            val reader=GradeSourceReader()
+            val initial=reader.read(bitmap,1000,text(bitmap),emptyList(),TableScene.TABLE,
+                emptySet(),WildcardMode.SINGLE)
+            assertNotNull(initial.hudRegion)
+            val subsequentlyCovered=reader.read(bitmap,1250,text(bitmap,1250),mask,TableScene.TABLE,
+                emptySet(),WildcardMode.SINGLE)
+            assertEquals(initial.hudRegion,subsequentlyCovered.hudRegion)
+            assertTrue(subsequentlyCovered.obscured)
+            reader.reset()
+            assertNull(reader.read(bitmap,1500,text(bitmap,1500),mask,TableScene.TABLE,
+                emptySet(),WildcardMode.SINGLE).hudRegion)
         } finally { bitmap.recycle() }
     }
 }

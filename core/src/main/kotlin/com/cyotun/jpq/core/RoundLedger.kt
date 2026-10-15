@@ -5,6 +5,7 @@ class RoundLedger {
     private var id: String? = null
     private var phase = RoundPhase.WAITING
     private var reason: String? = null
+    private var recoveryPhase: RoundPhase? = null
     private var initial = emptyList<Card>()
     private var selfHand = emptyList<Card>()
     private val events = linkedMapOf<String, PlayEvent>()
@@ -18,8 +19,8 @@ class RoundLedger {
             require(initial.groupingBy { it }.eachCount() == cardsAfterTribute.groupingBy { it }.eachCount()) { "Initial hand is immutable within a round" }
             return snapshot()
         }
-        check(phase != RoundPhase.ACTIVE && phase != RoundPhase.SELF_FINISHED) { "Previous round must end before a new baseline" }
-        id = roundId; phase = RoundPhase.ACTIVE; reason = null
+        check(phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED,RoundPhase.RECOVERING)) { "Previous round must end before a new baseline" }
+        id = roundId; phase = RoundPhase.ACTIVE; reason = null; recoveryPhase=null
         initial = cardsAfterTribute.toList(); selfHand = initial
         events.clear(); lastSequence = -1
         return snapshot()
@@ -50,7 +51,34 @@ class RoundLedger {
     }
 
     @Synchronized fun invalidate(message: String): RoundSnapshot {
-        phase = RoundPhase.UNAVAILABLE; reason = message
+        phase = RoundPhase.UNAVAILABLE; reason = message; recoveryPhase=null
+        return snapshot()
+    }
+    /** Retain the immutable checkpoint, but never expose its counts as current. */
+    @Synchronized fun suspendForRecovery(message: String): RoundSnapshot {
+        if(phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) {
+            recoveryPhase=phase; phase=RoundPhase.RECOVERING; reason=message
+        }
+        return snapshot()
+    }
+    @Synchronized fun phaseBeforeRecovery(): RoundPhase = recoveryPhase ?: phase
+
+    /** Validate atomically, including a proved short gap still within display grace. */
+    @Synchronized internal fun resumeAfterRecovery(expansions: Map<String,List<Card>>): RoundSnapshot {
+        check((phase==RoundPhase.RECOVERING && recoveryPhase!=null) ||
+            phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED))
+        val replacements=events.toMutableMap()
+        for((eventId,cards) in expansions) {
+            val old=events[eventId] ?: error("Unknown presentation")
+            require(old.seat!=Seat.SELF && events.values.lastOrNull { it.seat==old.seat }?.eventId==eventId)
+            val rest=cards.toMutableList()
+            require(old.cards.all { rest.remove(it) })
+            replacements[eventId]=old.copy(cards=cards.toList())
+        }
+        require(Seat.entries.all { seat -> replacements.values.filter { it.seat==seat }.sumOf { it.cards.size }<=27 })
+        checkCapacity(initial+replacements.values.filter { it.seat!=Seat.SELF }.flatMap { it.cards })
+        events.clear(); events.putAll(replacements)
+        phase=recoveryPhase ?: phase; recoveryPhase=null; reason=null
         return snapshot()
     }
     /** Internal visual-track review of the latest presentation for one opponent. No manual editing flow. */
@@ -70,7 +98,10 @@ class RoundLedger {
         return snapshot()
     }
     @Synchronized fun finish(): RoundSnapshot {
-        if(phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) phase = RoundPhase.FINISHED
+        // A result boundary may end a suspended round, but cannot certify its counts.
+        if(phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED,RoundPhase.RECOVERING)) {
+            phase = RoundPhase.FINISHED; recoveryPhase=null
+        }
         return snapshot()
     }
     @Synchronized fun selfFinished(): RoundSnapshot {
@@ -79,12 +110,12 @@ class RoundLedger {
     }
     @Synchronized fun waitForNext(): RoundSnapshot {
         id = null; initial = emptyList(); selfHand = emptyList(); events.clear()
-        phase = RoundPhase.WAITING; reason = null; lastSequence = -1
+        phase = RoundPhase.WAITING; reason = null; recoveryPhase=null; lastSequence = -1
         return snapshot()
     }
     @Synchronized fun snapshot(): RoundSnapshot {
         val plays = Seat.entries.associateWith { seat -> events.values.filter { it.seat == seat }.toList() }
-        val known = phase in setOf(RoundPhase.ACTIVE, RoundPhase.SELF_FINISHED, RoundPhase.FINISHED)
+        val known = phase in setOf(RoundPhase.ACTIVE, RoundPhase.SELF_FINISHED, RoundPhase.FINISHED) && reason==null
         val consumed = initial + events.values.filter { it.seat != Seat.SELF }.flatMap { it.cards }
         val byRank = consumed.groupingBy { it.rank }.eachCount()
         return RoundSnapshot(id, phase,

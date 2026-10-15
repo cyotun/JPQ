@@ -119,6 +119,37 @@ class StraightFlushEvidenceTest {
         assertEquals(listOf(true,false),tracker.physicalEventCards.getValue("pair").map { it.wildcard })
     }
 
+    @Test fun aProvenGoldHeartSurvivesLaterSuitAbstentionOnTheSamePresentation() {
+        val tracker=StraightFlushEvidenceTracker()
+        val cards=listOf(Card(Rank.TWO,Suit.HEART),Card(Rank.SIX,Suit.CLUB))
+        val snap=snapshot(listOf(event("gold",cards)))
+        vote(tracker,0,snap,groups=mapOf(Seat.PREVIOUS to group(cards).copy(physicalWildcards=listOf(true,null))))
+        vote(tracker,750,snap,groups=mapOf(Seat.PREVIOUS to group(neutral(cards))))
+        assertEquals(cards,tracker.eventCards.getValue("gold"))
+        assertEquals(listOf(true,null),tracker.physicalEventCards.getValue("gold").map { it.wildcard })
+    }
+
+    @Test fun refiningAnotherCardsSuitDoesNotEraseAProvenGoldHeart() {
+        val tracker=StraightFlushEvidenceTracker()
+        val partial=listOf(Card(Rank.TWO,Suit.HEART),Card(Rank.SIX,Suit.BLACK))
+        val exact=listOf(partial[0],Card(Rank.SIX,Suit.CLUB))
+        val snap=snapshot(listOf(event("gold",exact)))
+        vote(tracker,0,snap,groups=mapOf(Seat.PREVIOUS to group(partial).copy(physicalWildcards=listOf(true,null))))
+        vote(tracker,750,snap,groups=mapOf(Seat.PREVIOUS to group(exact)))
+        assertEquals(exact,tracker.eventCards.getValue("gold"))
+        assertEquals(listOf(true,null),tracker.physicalEventCards.getValue("gold").map { it.wildcard })
+    }
+
+    @Test fun aMarkerConflictStillWithdrawsProofWhenAnotherCardsSuitIsRefined() {
+        val tracker=StraightFlushEvidenceTracker()
+        val partial=listOf(Card(Rank.TWO,Suit.HEART),Card(Rank.SIX,Suit.BLACK))
+        val exact=listOf(partial[0],Card(Rank.SIX,Suit.CLUB))
+        val snap=snapshot(listOf(event("gold",exact)))
+        vote(tracker,0,snap,groups=mapOf(Seat.PREVIOUS to group(partial).copy(physicalWildcards=listOf(true,null))))
+        vote(tracker,750,snap,groups=mapOf(Seat.PREVIOUS to group(exact).copy(physicalWildcards=listOf(false,null))))
+        assertTrue(tracker.physicalEventCards.getValue("gold").all { it.wildcard==null })
+    }
+
     @Test fun ownPlaysAreNotConsumedAgainAndCannotRefineTheInitialHand() {
         val tracker = StraightFlushEvidenceTracker()
         vote(tracker, own = group(initial))
@@ -314,6 +345,30 @@ class StraightFlushEvidenceTest {
         update(tracker, 250, snap, groups = mapOf(Seat.PREVIOUS to reversed))
         update(tracker, 500, snap, groups = mapOf(Seat.PREVIOUS to original))
         assertEquals(neutral(initial) + cards, tracker.consumed)
+    }
+    @Test fun teammateHandSuitProofHasItsOwnVersionAndNeverRewritesOwnInitial() {
+        val ledger=RoundLedger(); ledger.begin("r1",initial)
+        ledger.commit(event("teammate-before",deck.drop(27).take(23),Seat.OPPOSITE))
+        val snap=ledger.selfFinished()
+        val hand=deck.drop(50).take(4)
+        val excluded=RemainingPoolExclusion("r1",1,snap.plays[Seat.OPPOSITE].orEmpty(),neutral(hand))
+        val tracker=StraightFlushEvidenceTracker()
+        listOf(0L,250L).forEach { tracker.update(it,snap,neutral(initial),group(hand),emptyMap(),rule,excluded) }
+        assertEquals(neutral(hand),tracker.teammateCards)
+        tracker.update(500,snap,neutral(initial),group(hand),emptyMap(),rule,excluded)
+        assertEquals(hand,tracker.teammateCards)
+        assertEquals(neutral(initial),tracker.initialCards)
+        assertEquals(54,tracker.consumed.size)
+        tracker.clearCandidateVotes()
+        tracker.update(750,snap,neutral(initial),null,emptyMap(),rule,excluded)
+        assertEquals(hand,tracker.teammateCards)
+        val recovery=snap.copy(phase=RoundPhase.RECOVERING,remaining=null)
+        assertEquals(StraightFlushState.UNKNOWN,tracker.update(1000,recovery,neutral(initial),null,emptyMap(),rule).state)
+        tracker.update(1250,snap,neutral(initial),null,emptyMap(),rule,excluded)
+        assertEquals(hand,tracker.teammateCards)
+        tracker.update(1500,snap,neutral(initial),null,emptyMap(),rule,null)
+        assertTrue(tracker.teammateCards.isEmpty())
+        assertEquals(50,tracker.consumed.size)
     }
 }
 

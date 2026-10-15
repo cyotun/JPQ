@@ -21,6 +21,12 @@ class GradeOcrFixtureTest {
     @Test fun actualClearRedQueenFromSecondLiveRoundConfirmsItsActivePanel() =
         assertActivePanel("grade-active-red-queen-clear.png",Rank.Q,TencentGradeTeam.OTHER)
 
+    @Test fun reportedQuestionMarkRoundKeepsTheRedOtherTwoAsItsGrade() =
+        assertActivePanel("grade-reported-red-two.jpg",Rank.TWO,TencentGradeTeam.OTHER)
+
+    @Test fun reportedTeammateViewUsesTheBlueOwnFiveRatherThanGreyProgress() =
+        assertActivePanel("grade-reported-blue-five.jpg",Rank.FIVE,TencentGradeTeam.OWN)
+
     @Test fun actualCoveredHudDoesNotGuessTheGradeFromGreyOrStatusIcons() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("gradeOcrFixtureProbe")=="true")
         check(!AppState.running)

@@ -56,8 +56,17 @@ class CaptureService : Service() {
                     restoreVisibility(generation,visibilityEpoch)
                 }
                 if(!visible && AppState.ledger.snapshot().remaining!=null) {
-                    AppState.ledger.invalidate("游戏画面被遮挡，本局无法完整观察")
-                    AppState.notifyChanged()
+                    AppState.markCaptureUnobserved()
+                    val currentRecognizer=recognizer
+                    val lostAt=SystemClock.elapsedRealtime()
+                    worker?.post {
+                        synchronized(sessionGuard) {
+                            if(generation==session && !closed && recognizer===currentRecognizer) {
+                                currentRecognizer.observationGap(lostAt,"正在重新核对牌面，恢复后继续记牌")
+                                AppState.captureGapCheckpointed()
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -94,6 +103,7 @@ class CaptureService : Service() {
         }
         if (projection != null || intent == null) return START_NOT_STICKY
         closed=false
+        AppState.captureGapCheckpointed()
         capturedVisible=true; requestedVisible=true; visibilityEpoch=0L
         referenceCapture=getSharedPreferences("jpq-runtime",MODE_PRIVATE).getString("captureProfile","reference")!="adaptive_scaled"
         val generation=++session
@@ -132,8 +142,8 @@ class CaptureService : Service() {
                     // Old session observations/close must finish before clearing its ledger.
                     AppState.ledger.waitForNext()
                     health.visionStage("recognizer_init_start")
-                    val prepared=TencentRecognizer(this,{ generation==session && !closed && capturedVisible },
-                        { visibilityEpoch },sessionGuard,health::visionStage)
+                    val prepared=TencentRecognizer(this,{ generation==session && !closed },
+                        { visibilityEpoch },sessionGuard,health::visionStage,{ capturedVisible })
                     health.visionStage("recognizer_init_end")
                     // Publish on main, serialized with shutdown. A stopped initialization
                     // must never overwrite the next session or escape its close chain.
@@ -191,8 +201,15 @@ class CaptureService : Service() {
         val now=SystemClock.elapsedRealtime()
         if(now-lastFrameError>5000) { lastFrameError=now; android.util.Log.e("JPQCapture","frame_failed",error) }
         if(generation==session && !closed) {
+            AppState.markCaptureUnobserved()
+            val currentRecognizer=recognizer
             worker?.post {
-                if(generation==session && !closed) { AppState.ledger.invalidate("识别暂时不可用，等待下一局"); AppState.notifyChanged() }
+                synchronized(sessionGuard) {
+                    if(generation==session && !closed && recognizer===currentRecognizer) {
+                        currentRecognizer.observationGap(now,"识别暂时中断，正在重新核对牌面")
+                        AppState.captureGapCheckpointed()
+                    }
+                }
             }
         }
     }
@@ -301,10 +318,11 @@ class CaptureService : Service() {
         healthTick?.let { main.removeCallbacks(it) }; healthTick=null
         pipelineHealth?.close(); pipelineHealth=null
         AppState.running=false; AppState.recognitionReady=false; AppState.message=message
-        AppState.straightFlushState=StraightFlushState.UNKNOWN
-        AppState.straightFlushIncludesWildcards=false
+        AppState.captureGapCheckpointed()
+        AppState.publishStraightFlush(com.cyotun.jpq.core.StraightFlushResult(StraightFlushState.UNKNOWN),false)
         AppState.publishCounterState(com.cyotun.jpq.core.GradeCounterState())
         AppState.gradeRegion=null; AppState.gradeTipMask=null
+        AppState.resetRemainingPool()
         com.cyotun.jpq.updates.UpdateManager.scheduleDownload(this)
         overlay?.close(); overlay=null
         visualContext=null

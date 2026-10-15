@@ -92,7 +92,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
         view.post { publishMask() }
     }
     fun previewView(): View { refresh(); return view }
-    private fun snapshot()=if(preview) PreviewData.snapshot else AppState.ledger.snapshot()
+    private fun snapshot()=if(preview) PreviewData.snapshot else AppState.displaySnapshot()
     private fun counter(snapshot: RoundSnapshot): GradeCounterState = if(preview)
         GradeCounterState(snapshot.roundId,setOf(Rank.EIGHT),GradeCountBounds(2,2),mapOf(Rank.EIGHT to GradeCountBounds(4,4)))
         else AppState.counterState.takeIf { it.roundId==snapshot.roundId } ?: GradeCounterState()
@@ -209,7 +209,8 @@ class OverlayController(private val context: Context,private val preview: Boolea
         GradeOcclusionGeometry.safeTopPosition(screen.width(),screen.height(),bar.width,bar.height,bar.left,grade,dp(4f).roundToInt())
     private fun updateGradeTip() {
         if(!added || disposed || preview || view.width<=0 || view.height<=0) { removeTip(); return }
-        if(snapshot().phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) { removeTip(); return }
+        // Actual current-deal HUD evidence also permits a warning while dealing;
+        // waiting for the 27-card baseline is unrelated to physical occlusion.
         val screen=bounds(); val grade=gradeRect(screen); val bar=actualBarRect()
         if(!gradeSession.shouldShow(AppState.running,preview,hidden,config.showGradeOcclusionTip,bar,grade)) { removeTip(); return }
         val hint=GradeOcclusionGeometry.hintPosition(screen.width(),screen.height(),bar,dp(380f).roundToInt(),
@@ -395,6 +396,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
             canvas.save(); val clip=Path().apply { addRoundRect(inside,dp(11f),dp(11f),Path.Direction.CW) }; canvas.clipPath(clip)
             val gridStart=start+dp(1f)
             val grades=counter(snap)
+            val remaining=if(preview) snap.remaining else AppState.displayRemaining(snap)
             val weights=cellWeights(grades.gradeRanks.isNotEmpty())
             val unit=(size.grid-(weights.size-1))/weights.sum()
             val height=22*config.gridHeight
@@ -410,7 +412,11 @@ class OverlayController(private val context: Context,private val preview: Boolea
                     p.color=GOLD; canvas.save()
                     canvas.translate(header.centerX()-dp(6f),header.centerY()-dp(5.5f))
                     canvas.scale(d,d); canvas.drawPath(this@BarView.heart,p); canvas.restore()
-                } else text(canvas,header,label,16*config.headerText,Color.WHITE,true,false)
+                } else {
+                    val candidate=config.showStraightFlush && rank!=null && !rank.isJoker &&
+                        (preview || rank in AppState.straightFlushCandidateRanks)
+                    text(canvas,header,label,16*config.headerText,if(candidate) CANDIDATE_GOLD else Color.WHITE,true,false)
+                }
                 if(grade) {
                     p.color=GOLD
                     canvas.drawPath(Path().apply { moveTo(header.right-dp(5f),header.top); lineTo(header.right,header.top); lineTo(header.right,header.top+dp(5f)); close() },p)
@@ -423,7 +429,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
             if(grades.gradeRanks.isNotEmpty()) drawCell("♥",grades.heartCount?.exact,1f,heart=true)
             config.order.forEach { rank ->
                 val isGrade=rank in grades.gradeRanks
-                drawCell(rank.label,if(isGrade) grades.ordinaryCounts[rank]?.exact else snap.remaining!![rank],
+                drawCell(rank.label,if(isGrade) grades.ordinaryCounts[rank]?.exact else remaining?.get(rank),
                     if(rank==Rank.TEN) 1.55f else 1f,isGrade,rank)
             }
             val indicatorWidth=if(config.showStraightFlush) HistoryWidth.STRAIGHT_FLUSH_SLOT else 0f
@@ -467,9 +473,14 @@ class OverlayController(private val context: Context,private val preview: Boolea
             val b=RectF(dp(this@OverlayController.left),0f,this.width.toFloat(),dp(46f))
             p.color=Color.BLACK; canvas.drawRoundRect(b,dp(12f),dp(12f),p)
             b.inset(dp(1f),dp(1f)); p.color=GOLD; canvas.drawRoundRect(b,dp(11f),dp(11f),p)
-            val title=if(snap.phase==RoundPhase.UNAVAILABLE) "本局画面不完整，等待下一局" else AppState.message
+            val title=when(snap.phase) {
+                RoundPhase.RECOVERING -> "正在重新核对牌面"
+                RoundPhase.UNAVAILABLE -> "正在复核本局记录"
+                else -> AppState.message
+            }
             val subtitle=when {
-                snap.phase==RoundPhase.UNAVAILABLE -> snap.reason ?: "本局不显示推测数字，下一局自动恢复"
+                snap.phase==RoundPhase.RECOVERING -> "画面恢复后自动续记，无需重新开始"
+                snap.phase==RoundPhase.UNAVAILABLE -> "本局存在记录冲突，正在等待可验证的牌局边界"
                 !AppState.recognitionReady -> "正在准备识别，稍后会自动开始"
                 else -> "请从游戏大厅进入房间；进行中的牌局需等待下一局"
             }
@@ -492,5 +503,8 @@ class OverlayController(private val context: Context,private val preview: Boolea
             canvas.drawText(value,x,y,p); canvas.restore()
         }
     }
-    companion object { val GOLD=Color.rgb(255,227,149) }
+    companion object {
+        val GOLD=Color.rgb(255,227,149)
+        val CANDIDATE_GOLD=Color.rgb(255,208,74)
+    }
 }

@@ -21,6 +21,8 @@ interface FrameRecognizer : AutoCloseable {
     val ready: Boolean
     /** The dispatcher owns the frame and releases it after this call. No Image crosses threads. */
     fun observe(captured: CapturedFrame)
+    /** Delivered on the vision owner thread; captures already queued in the old epoch are retired. */
+    fun observationGap(timeMs: Long,reason: String) = Unit
     override fun close()
 }
 
