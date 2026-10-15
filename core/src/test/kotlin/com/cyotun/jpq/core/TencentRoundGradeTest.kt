@@ -322,4 +322,92 @@ class TencentRoundGradeTest {
         tracker.observe(1000,1000,read(hud(),setOf(Rank.K),WildcardMode.UNKNOWN))
         assertFalse(tracker.current().confirmed)
     }
+    @Test fun freshColoredHudAndExactPhysicalCornerAgreementRecoversAfterTransientConflict() {
+        val tracker=RoundGradeTracker()
+        val active=setOf(TencentGradeTeam.OTHER)
+        val conflict=read(hud("Q","K"),setOf(Rank.Q),active=active)
+        assertTrue(conflict.conflict)
+        tracker.observe(0,0,conflict)
+        // The grey own score has no authority. No SINGLE mode is inferred:
+        // these ranks come from the one complete coloured HUD and actual corners.
+        val agreement=read(hud("3","Q"),setOf(Rank.Q),active=active)
+        assertEquals("HUD_ACTIVE",agreement.source)
+        assertEquals(setOf(Rank.Q),agreement.ranks)
+        for(time in listOf(250L,500L)) tracker.observe(time,time,agreement)
+        assertFalse(tracker.current().confirmed)
+        tracker.observe(750,750,agreement)
+        assertEquals(setOf(Rank.Q),tracker.current().ranks)
+        assertTrue(tracker.current().confirmed)
+    }
+    @Test fun actualChineseSymbolBoundsRecoverATitleBesideABorderWithoutSplittingItsWord() {
+        val own=SceneHint("我",GlyphBox(.102f,.01f,.115f,.043f))
+        val end=SceneHint("方",GlyphBox(.115f,.01f,.128f,.043f))
+        val rank=SceneHint("Q",GlyphBox(.105f,.06f,.12f,.10f))
+        val parsed=tencentGradeSymbolTokens(listOf(SceneHint("「",GlyphBox(.09f,.01f,.102f,.043f)),own,rank,end))
+        assertTrue(SceneHint("我方",GlyphBox(.102f,.01f,.128f,.043f)) in parsed)
+        assertTrue(rank in parsed)
+        assertFalse(parsed.any { it.text.contains("「") })
+        assertFalse(tencentGradeSymbolTokens(listOf(own,end.copy(box=GlyphBox(.115f,.06f,.128f,.093f))))
+            .any { it.text=="我方" })
+        assertFalse(tencentGradeSymbolTokens(listOf(own,end,end.copy(box=GlyphBox(.117f,.01f,.13f,.043f))))
+            .any { it.text=="我方" })
+    }
+    @Test fun aHeaderCharacterBetweenTheActualOneAndZeroDoesNotHideTenOrReuseAZero() {
+        val one=SceneHint("1",GlyphBox(.110f,.045f,.115f,.100f))
+        val zero=SceneHint("0",GlyphBox(.117f,.045f,.127f,.100f))
+        val end=SceneHint("方",GlyphBox(.116f,.010f,.126f,.040f))
+        val parsed=tencentGradeSymbolTokens(listOf(one,end,zero))
+        assertEquals(listOf(SceneHint("10",GlyphBox(.110f,.045f,.127f,.100f))),parsed)
+        assertTrue(tencentGradeSymbolTokens(listOf(one,zero,zero.copy(box=GlyphBox(.118f,.045f,.128f,.100f))))
+            .isEmpty())
+        assertTrue(tencentGradeSymbolTokens(listOf(one,one.copy(box=GlyphBox(.111f,.045f,.116f,.100f)),zero))
+            .isEmpty())
+        assertTrue(tencentGradeSymbolTokens(listOf(one,zero.copy(box=GlyphBox(.117f,.010f,.127f,.040f))))
+            .isEmpty())
+    }
+    @Test fun recoveryRequiresIndependentFreshAgreementVotesAndDoesNotUseHudOnly() {
+        val tracker=RoundGradeTracker()
+        val active=setOf(TencentGradeTeam.OTHER)
+        tracker.observe(0,0,read(hud("Q","K"),setOf(Rank.Q),active=active))
+        val hudOnly=read(hud("3","Q"),active=active)
+        for(time in listOf(250L,500L,750L)) tracker.observe(time,time,hudOnly)
+        assertFalse(tracker.current().confirmed)
+        val agreement=read(hud("3","Q"),setOf(Rank.Q),active=active)
+        tracker.observe(1000,1000,agreement)
+        for(time in listOf(1250L,1500L,1750L)) tracker.observe(time,1000,agreement)
+        assertFalse(tracker.current().confirmed)
+        tracker.observe(2000,1500,agreement)
+        assertFalse(tracker.current().confirmed)
+        tracker.observe(2250,2000,agreement)
+        assertEquals(setOf(Rank.Q),tracker.current().ranks)
+    }
+    @Test fun renewedConflictOrInterruptedFramesRequireANewFullAgreementSequence() {
+        val tracker=RoundGradeTracker()
+        val active=setOf(TencentGradeTeam.OTHER)
+        val conflict=read(hud("Q","K"),setOf(Rank.Q),active=active)
+        val agreement=read(hud("3","Q"),setOf(Rank.Q),active=active)
+        tracker.observe(0,0,conflict)
+        tracker.observe(250,250,agreement); tracker.observe(500,500,agreement)
+        tracker.observe(750,750,conflict)
+        tracker.observe(1000,1000,agreement); tracker.observe(1250,1250,agreement)
+        assertFalse(tracker.current().confirmed)
+        tracker.observe(1500,1500,reading(null,"UNAVAILABLE"))
+        tracker.observe(1750,1750,agreement); tracker.observe(2000,2000,agreement)
+        assertFalse(tracker.current().confirmed)
+        tracker.observe(2250,2250,agreement)
+        assertEquals(setOf(Rank.Q),tracker.current().ranks)
+    }
+    @Test fun exactAgreementDoesNotDowngradeAnAnnouncementFenceOrInventUnknownDoubleMode() {
+        val tracker=RoundGradeTracker()
+        for(time in listOf(0L,250L,500L)) tracker.observe(time,time,reading(Rank.J,"ANNOUNCEMENT"))
+        tracker.observe(750,750,read(hud("3","K"),setOf(Rank.Q),active=setOf(TencentGradeTeam.OTHER)))
+        val agreement=read(hud("3","Q"),setOf(Rank.Q),active=setOf(TencentGradeTeam.OTHER))
+        for(time in listOf(1000L,1250L,1500L)) tracker.observe(time,time,agreement)
+        assertFalse(tracker.current().confirmed)
+        assertNull(read(hud("3","Q"),setOf(Rank.Q),WildcardMode.DOUBLE,
+            setOf(TencentGradeTeam.OTHER)).ranks)
+        assertNull(read(hud("3","Q"),setOf(Rank.THREE,Rank.Q),WildcardMode.UNKNOWN).ranks)
+        assertNull(read(emptyList(),setOf(Rank.Q),WildcardMode.UNKNOWN).ranks)
+        assertNull(read(hud("3","Q"),setOf(Rank.Q),active=emptySet()).ranks)
+    }
 }

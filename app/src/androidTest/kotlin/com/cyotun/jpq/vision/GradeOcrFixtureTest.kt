@@ -18,6 +18,9 @@ class GradeOcrFixtureTest {
     @Test fun actualBlueOwnJackIgnoresTheGreyNeighbourAndDoesNotWarnAboutTheBarToItsRight() =
         assertActivePanel("grade-active-blue-j.jpg",Rank.J,TencentGradeTeam.OWN)
 
+    @Test fun actualClearRedQueenFromSecondLiveRoundConfirmsItsActivePanel() =
+        assertActivePanel("grade-active-red-queen-clear.png",Rank.Q,TencentGradeTeam.OTHER)
+
     @Test fun actualCoveredHudDoesNotGuessTheGradeFromGreyOrStatusIcons() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("gradeOcrFixtureProbe")=="true")
         check(!AppState.running)
@@ -50,22 +53,40 @@ class GradeOcrFixtureTest {
         val reader=GradeSourceReader(); val tracker=RoundGradeTracker(); val ocr=SceneOcr()
         val bar=listOf(GlyphBox(.1798f,.0042f,.8409f,.1175f))
         var last: GradeSourceReading?=null
+        var lastSnapshot: SceneText?=null
         try {
             val deadline=SystemClock.elapsedRealtime()+15000
             while(SystemClock.elapsedRealtime()<deadline && tracker.current().ranks!=setOf(expected)) {
                 val now=SystemClock.elapsedRealtime(); ocr.request(source,now)
                 val snapshot=ocr.snapshot(source.width,source.height,now)
                 if(snapshot!=null) {
+                    lastSnapshot=snapshot
                     last=reader.read(source,now,snapshot,bar,TableScene.TEAMMATE,emptySet(),WildcardMode.UNKNOWN)
                     tracker.observe(now,last.sourceTime,last.reading)
                 }
                 SystemClock.sleep(80)
             }
             val tokens=last?.hints?.filter { it.box!!.cx in .055f.. .23f && it.box!!.cy<=.13f }
-            assertEquals("$asset source=${last?.reading?.source} tokens=$tokens",setOf(expected),tracker.current().ranks)
+            val rawHud=(lastSnapshot?.lines.orEmpty()+lastSnapshot?.metadataElements.orEmpty()).filter {
+                val b=it.box; b!=null && b.exactCenterX()/source.width in .055f.. .23f && b.exactCenterY()/source.height<=.13f
+            }
+            assertEquals("$asset source=${last?.reading?.source} tokens=$tokens rawHud=$rawHud",setOf(expected),tracker.current().ranks)
             assertEquals(setOf(team),last!!.activeHudTeams)
             assertNotNull(last.hudRegion); assertFalse(last.obscured)
             assertTrue(last.hudRegion!!.right<bar.single().left)
+            // Cached OCR must not read through a newly covering bar. Retain
+            // only the same-deal measured target, then recover after moving.
+            val region=last.hudRegion!!
+            val masked=reader.read(source,SystemClock.elapsedRealtime(),lastSnapshot,listOf(region),
+                TableScene.TEAMMATE,emptySet(),WildcardMode.UNKNOWN)
+            assertNull(masked.reading.ranks)
+            assertEquals(region,masked.hudRegion)
+            assertTrue(masked.obscured)
+            assertEquals(setOf(expected),tracker.observe(SystemClock.elapsedRealtime(),masked.sourceTime,masked.reading).ranks)
+            val clear=reader.read(source,SystemClock.elapsedRealtime(),lastSnapshot,bar,
+                TableScene.TEAMMATE,emptySet(),WildcardMode.UNKNOWN)
+            assertEquals(setOf(expected),clear.reading.ranks)
+            assertFalse(clear.obscured)
         } finally { ocr.close(); source.recycle() }
     }
 

@@ -9,6 +9,7 @@ import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.cyotun.jpq.core.GlyphBox
 import com.cyotun.jpq.core.SceneHint
 import com.cyotun.jpq.core.tencentGradeSymbolTokens
+import com.cyotun.jpq.core.tencentGradeHudToken
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class OcrLine(val text: String,val box: Rect?)
@@ -26,61 +27,54 @@ class SceneOcr: AutoCloseable {
     fun request(bitmap: Bitmap,now: Long,visibilityEpoch: Long=0L) {
         if(closed || now-requestedAt<250 || !busy.compareAndSet(false,true)) return
         requestedAt=now
-        var copy: Bitmap?=null
+        var copy: SceneOcrImage?=null
         try {
             val sourceWidth=bitmap.width; val sourceHeight=bitmap.height
-            val scale=minOf(1f,1280f/maxOf(sourceWidth,sourceHeight))
-            val owned=if(scale<1f) Bitmap.createScaledBitmap(bitmap,(sourceWidth*scale).toInt().coerceAtLeast(1),
-                (sourceHeight*scale).toInt().coerceAtLeast(1),true)
-                else bitmap.copy(Bitmap.Config.ARGB_8888,false)
+            val owned=SceneOcrImage(bitmap)
             copy=owned
-            recognizer.process(InputImage.fromBitmap(owned,0)).addOnCompleteListener { task ->
+            recognizer.process(InputImage.fromBitmap(owned.bitmap,0)).addOnCompleteListener { task ->
                 try {
                     if(task.isSuccessful) {
                         val result=task.result
-                        val sx=sourceWidth.toFloat()/owned.width; val sy=sourceHeight.toFloat()/owned.height
                         val elements=result.textBlocks.flatMap { it.lines }.flatMap { it.elements }
                         // Use the recognizer's actual character boxes for merged
                         // HUD points such as JJ. Never divide a word box into
                         // guessed equal halves, and never split 10 into 1/0.
-                        val hudSymbols=elements.flatMap { element ->
+                        val hudSymbols=elements.filter { owned.toSource(it.boundingBox)!=null }.flatMap { element ->
                             tencentGradeSymbolTokens(element.symbols.map { symbol ->
-                                SceneHint(symbol.text,symbol.boundingBox?.let { b -> GlyphBox(
-                                    b.left.toFloat()/owned.width,b.top.toFloat()/owned.height,
-                                    b.right.toFloat()/owned.width,b.bottom.toFloat()/owned.height) })
+                                SceneHint(symbol.text,owned.symbolToSource(symbol.boundingBox,element.boundingBox)?.let { b -> GlyphBox(
+                                    b.left.toFloat()/sourceWidth,b.top.toFloat()/sourceHeight,
+                                    b.right.toFloat()/sourceWidth,b.bottom.toFloat()/sourceHeight) })
                             })
                         }.map { token ->
                             val b=token.box!!
                             OcrLine(token.text,Rect((b.left*sourceWidth).toInt(),(b.top*sourceHeight).toInt(),
                                 kotlin.math.ceil(b.right*sourceWidth).toInt(),kotlin.math.ceil(b.bottom*sourceHeight).toInt()))
                         }
-                        val text=SceneText(result.textBlocks.flatMap { it.lines }.map { line ->
-                            OcrLine(line.text.replace(" ",""),line.boundingBox?.let { b ->
-                                Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
-                            })
+                        val text=SceneText(result.textBlocks.flatMap { it.lines }.filter { owned.isScene(it.boundingBox) }.map { line ->
+                            OcrLine(line.text.replace(" ",""),owned.toSource(line.boundingBox))
                         },now,sourceWidth,sourceHeight,visibilityEpoch,
                             elements
-                                .filter { it.text.replace(" ","")=="级" }.map { element ->
-                                    OcrLine("级",element.boundingBox?.let { b ->
-                                        Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
-                                    })
+                                .filter { owned.isScene(it.boundingBox) && it.text.replace(" ","")=="级" }.map { element ->
+                                    OcrLine("级",owned.toSource(element.boundingBox))
                                 },
-                            elements
+                            (elements.map { OcrLine(it.text,owned.toSource(it.boundingBox)) }+
+                                result.textBlocks.flatMap { it.lines }.filter { !owned.isScene(it.boundingBox) }
+                                    .map { OcrLine(it.text,owned.toSource(it.boundingBox)) })
                                 .filter { element ->
-                                    val compact=element.text.filterNot(Char::isWhitespace)
-                                    compact.uppercase() in setOf("我方","对方","我方对方","2","3","4","5","6","7","8","9","10","J","Q","K","A")
+                                    val compact=tencentGradeHudToken(element.text).uppercase()
+                                    element.box!=null && (compact in setOf("我方","对方","我方对方","2","3","4","5","6","7","8","9","10","J","Q","K","A") ||
+                                        Regex("^(?:我方|对方)(?:[2-9AJQK]|10)$").matches(compact))
                                 }.map { element ->
-                                    OcrLine(element.text.filterNot(Char::isWhitespace),element.boundingBox?.let { b ->
-                                        Rect((b.left*sx).toInt(),(b.top*sy).toInt(),kotlin.math.ceil(b.right*sx).toInt(),kotlin.math.ceil(b.bottom*sy).toInt())
-                                    })
-                                }+hudSymbols)
+                                    OcrLine(tencentGradeHudToken(element.text),element.box)
+                                }.distinct()+hudSymbols)
                         synchronized(resultLock) { if(!closed) latest=text }
                     }
                 } catch(error: Exception) { android.util.Log.w("JPQVision","ocr_result_unavailable",error) }
-                finally { owned.recycle(); busy.set(false) }
+                finally { owned.close(); busy.set(false) }
             }
         } catch(error: Throwable) {
-            copy?.recycle(); busy.set(false)
+            copy?.close(); busy.set(false)
             if(error !is Exception) throw error
             android.util.Log.w("JPQVision","ocr_request_unavailable",error)
         }

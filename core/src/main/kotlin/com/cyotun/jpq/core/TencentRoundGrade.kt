@@ -66,13 +66,32 @@ fun tencentGradeSymbolTokens(symbols: List<SceneHint>): List<SceneHint> {
     val hud=symbols.filter { validGradeBox(it.box) && it.box!!.cx in .055f.. .23f && it.box.cy<=.13f }
         .sortedBy { it.box!!.left }
     val points=hud.filter { gradePoint(it.text)!=null }.toMutableList()
-    hud.zipWithNext().forEach { (one,zero) ->
-        val a=one.box!!; val b=zero.box!!
-        if(one.text=="1" && zero.text=="0" &&
-            abs(a.cy-b.cy)<=minOf(a.height,b.height)*.25f &&
+    val tens=hud.filter { it.text=="1" }.mapNotNull { one ->
+        val a=one.box!!
+        val zero=hud.filter { token ->
+            val b=token.box!!
+            token.text=="0" && abs(a.cy-b.cy)<=minOf(a.height,b.height)*.25f &&
             minOf(a.height,b.height)>=maxOf(a.height,b.height)*.65f &&
-            b.left-a.right in -a.width*.25f..a.width*1.5f)
-            points.add(SceneHint("10",GlyphBox(a.left,minOf(a.top,b.top),b.right,maxOf(a.bottom,b.bottom))))
+            b.left-a.right in -a.width*.25f..a.width*1.5f
+        }.singleOrNull() ?: return@mapNotNull null
+        one to zero
+    }
+    tens.filter { pair -> tens.count { it.second==pair.second }==1 }.forEach { (one,zero) ->
+        val a=one.box!!; val b=zero.box!!
+        points.add(SceneHint("10",GlyphBox(a.left,minOf(a.top,b.top),b.right,maxOf(a.bottom,b.bottom))))
+    }
+    // A border can join the label's OCR word. Combine only the actual two
+    // Chinese character boxes on the same row; a rank below may sort between
+    // them in X and must not suppress a genuine label or become part of it.
+    hud.filter { it.text in setOf("我","对") }.forEach { one ->
+        val a=one.box!!
+        val next=hud.filter { token ->
+            val b=token.box!!
+            token.text=="方" && abs(a.cy-b.cy)<=minOf(a.height,b.height)*.25f &&
+                minOf(a.height,b.height)>=maxOf(a.height,b.height)*.65f &&
+                b.left-a.right in -a.width*.25f..a.width*.5f
+        }.singleOrNull()
+        next?.box?.let { b -> points.add(SceneHint(one.text+"方",GlyphBox(a.left,minOf(a.top,b.top),b.right,maxOf(a.bottom,b.bottom)))) }
     }
     return points.distinct()
 }
@@ -217,7 +236,19 @@ class RoundGradeTracker {
             sourceTime > now || now - sourceTime > 2000) return current()
         lastSource = sourceTime
         val ranks = reading.ranks?.takeIf { it.size in 1..2 && it.none(Rank::isJoker) }?.toSet()
-        val sourcePriority = priority(reading.source)
+        val sourcePriority = if (!reading.conflict && ranks != null &&
+            reading.source in setOf("HUD_EQUAL", "HUD_ACTIVE", "HUD_ACTIVE_DOUBLE") &&
+            reading.physicalCornerRanks == ranks) {
+            // The parser has already required a complete coloured HUD and
+            // applied the mode constraints. Exact agreement with this deal's
+            // physical corner evidence is stronger than an uncorroborated HUD.
+            // Otherwise a transient HUD/corner contradiction raises the fence
+            // to 2 forever, even after both independent sources agree again.
+            // Keep the original source name and OCR time: one cached HUD result
+            // still cannot provide multiple recovery votes. This does not infer
+            // SINGLE from a lone corner or lower an announcement's fence of 3.
+            2
+        } else priority(reading.source)
         if (reading.conflict) {
             if (reading.source == "HUD_CORNER_CONFLICT" && reading.physicalCornerRanks.isNotEmpty() &&
                 ((confirmedPriority == 3 && confirmed?.containsAll(reading.physicalCornerRanks) == true) ||

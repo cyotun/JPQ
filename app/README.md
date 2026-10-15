@@ -1,8 +1,8 @@
 # 记牌器 Android 工程
 
-**最新实局结论：0.2.15 本轮整局未启动记牌，验收失败。已在专用动态画面复现第二路录像退出造成供帧停止；定位和替代取证验证见[失败记录](../docs/development/live-round-failure-0.2.15.md)。不能把非对局检查当作整局通过。**
+**最新实局结论：0.2.15 第二轮主流程连续到结算，级牌与提示仍未通过验收；前一轮整局未启动和取证干扰的失败继续保留，见[失败记录](../docs/development/live-round-failure-0.2.15.md)。**
 
-当前 0.2.15-regression（versionCode 17）已安装到手机并校验持续签名，310 项核心检查通过、静态检查零错误。38 项不同的非对局手机检查及连续横竖屏恢复通过；边界、初始失败和修复见 [手机检查记录](../docs/development/phone-preflight-0.2.15.md)。已实现新首页、彩色级牌读取、独立逢人配计数边界、单家容量排除同花顺，以及不会侵入采牌区域的遮挡提醒。识别沿用此前适配的原 APK 快速管线；硬件与采集适配见 [识别适配记录](../docs/development/adaptation.md)。0.2.13 的实际整局验收失败，原因边界见 [失败记录](../docs/development/live-round-failure-0.2.13.md)；不能以对局前检查代替整局验收。下一轮按 [真机计划](../docs/development/live-test-plan.md) 由用户正常操作牌局。
+当前 0.2.16-regression（versionCode 18）已安装到手机并校验持续签名，316 项核心检查和本轮 35 项级牌相关手机回放检查通过，静态检查零错误。真实 Q 面板识别与冲突恢复的修复、原条下提示的空间限制和单应用共享验证方向见 [本轮记录](../docs/development/repair-0.2.16.md)。此前 38 项界面/采集检查与连续横竖屏恢复见 [0.2.15 手机记录](../docs/development/phone-preflight-0.2.15.md)，不能代替新版本完整实局验收。识别沿用原 APK 快速管线的个人适配，见 [适配记录](../docs/development/adaptation.md)；下一轮按 [真机计划](../docs/development/live-test-plan.md) 由用户正常操作牌局。
 
 固定 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、compile/target SDK 36、min SDK 28，此前连接手机实际 API 37；首版 ABI arm64-v8a。界面为 Kotlin 原生 View / Canvas，内部保存使用 SharedPreferences / SQLite。
 
