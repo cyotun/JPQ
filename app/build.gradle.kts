@@ -9,8 +9,8 @@ android {
         applicationId = "com.cyotun.jpq"
         minSdk = 28
         targetSdk = 36
-        versionCode = 19
-        versionName = "0.2.17-regression"
+        versionCode = 20
+        versionName = "0.2.18-regression"
         testApplicationId = "com.cyotun.jpq.tests"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }

@@ -41,7 +41,7 @@ class FirstRoundBombOcclusionRegressionTest {
     }
     @Test fun treatingTheSameObstructionAsClearReproducesTheActualCapacityConflict() {
         val snapshot=replay(false)
-        assertEquals(RoundPhase.UNAVAILABLE,snapshot.phase)
+        assertEquals(RoundPhase.RECOVERING,snapshot.phase)
         assertEquals(6,snapshot.played(Seat.OPPOSITE)); assertEquals(4,snapshot.played(Seat.PREVIOUS))
         assertNull(snapshot.remaining)
     }

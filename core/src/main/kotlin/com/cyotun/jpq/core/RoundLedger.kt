@@ -63,8 +63,9 @@ class RoundLedger {
     }
     @Synchronized fun phaseBeforeRecovery(): RoundPhase = recoveryPhase ?: phase
 
-    /** Validate atomically, including a proved short gap still within display grace. */
-    @Synchronized internal fun resumeAfterRecovery(expansions: Map<String,List<Card>>): RoundSnapshot {
+    /** A reconciled display and any independently proved new play are one transaction. */
+    @Synchronized internal fun resumeAfterRecovery(expansions: Map<String,List<Card>>,
+        additional: List<PlayEvent> = emptyList()): RoundSnapshot {
         check((phase==RoundPhase.RECOVERING && recoveryPhase!=null) ||
             phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED))
         val replacements=events.toMutableMap()
@@ -75,9 +76,18 @@ class RoundLedger {
             require(old.cards.all { rest.remove(it) })
             replacements[eventId]=old.copy(cards=cards.toList())
         }
+        var nextSequence=lastSequence
+        for(event in additional) {
+            require(event.roundId==id && event.seat!=Seat.SELF)
+            require(event.eventId.isNotBlank() && event.cards.isNotEmpty() && event.eventId !in replacements)
+            require(event.sequence>nextSequence) { "New event boundary required" }
+            replacements[event.eventId]=event.copy(cards=event.cards.toList())
+            nextSequence=event.sequence
+        }
         require(Seat.entries.all { seat -> replacements.values.filter { it.seat==seat }.sumOf { it.cards.size }<=27 })
         checkCapacity(initial+replacements.values.filter { it.seat!=Seat.SELF }.flatMap { it.cards })
         events.clear(); events.putAll(replacements)
+        lastSequence=nextSequence
         phase=recoveryPhase ?: phase; recoveryPhase=null; reason=null
         return snapshot()
     }

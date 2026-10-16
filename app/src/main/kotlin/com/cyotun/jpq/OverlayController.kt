@@ -215,8 +215,8 @@ class OverlayController(private val context: Context,private val preview: Boolea
         if(!gradeSession.shouldShow(AppState.running,preview,hidden,config.showGradeOcclusionTip,bar,grade)) { removeTip(); return }
         val hint=GradeOcclusionGeometry.hintPosition(screen.width(),screen.height(),bar,dp(380f).roundToInt(),
             dp(32f).roundToInt(),dp(left).roundToInt(),dp(4f).roundToInt(),if(config.showReset) dp(48f).roundToInt() else 0)
-        // Keep actions readable on unusual displays; never enlarge the window
-        // across live cards just to make a hint fit.
+        // Keep the approved aligned reminder readable. Its full real footprint
+        // remains masked, so covered cards cannot be certified as observed.
         if(hint==null || hint.width<dp(190f)) { removeTip(); return }
         val canMove=grade!=null && safeGradePosition(screen,bar,grade)!=null
         tipMove.text=if(canMove) "一键挪开" else "请手动拖动"

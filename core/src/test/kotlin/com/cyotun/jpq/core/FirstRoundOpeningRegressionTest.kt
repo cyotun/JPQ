@@ -34,7 +34,7 @@ class FirstRoundOpeningRegressionTest {
         for(time in 60L..4800L step 60) observer.observe(TableFrame(time,TableScene.TABLE,baseline,empty))
         val before=ledger.snapshot().roundId
         val different=baseline.drop(1)+Card(Rank.K,Suit.RED)
-        for(time in 4860L..5100L step 60) observer.observe(TableFrame(time,TableScene.DEALING,different,empty))
+        for(time in 4860L..5100L step 60) observer.observe(TableFrame(time,TableScene.DEALING,different,empty,dealingChoicesObserved=true))
         assertNotEquals(before,ledger.snapshot().roundId)
         assertEquals(different,ledger.initialHand())
         assertEquals(81,ledger.snapshot().remaining!!.values.sum())

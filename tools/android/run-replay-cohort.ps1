@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory=$true)][string]$SourceLock,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [Parameter(Mandatory=$true)][string]$Python,
-    [string]$Exclusions
+    [string]$Exclusions,
+    [string]$RawArchive
 )
 $ErrorActionPreference='Stop'
 $jpqRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -67,15 +68,33 @@ if($Exclusions) {
 $before=SourceFingerprint
 $before | Set-Content -LiteralPath (Join-Path $output 'source-fingerprint.json') -Encoding UTF8
 $buildPassed=$false; $unchanged=$false; $gatePassed=$false; $failure=$null
+$replayDirectory=$parents[0]; $visibility=$null; $archivePath=$null
 try {
+    if($RawArchive) {
+        $archivePath=WorkspacePath $RawArchive
+        $replayDirectory=Join-Path $output 'source-mask-replay'
+        $visibilityPath=Join-Path $output 'source-mask-manifest.json'
+        & $Python (Join-Path $PSScriptRoot 'prepare-replay-visibility.py') --archive $archivePath --inputs $frozenPath --output $replayDirectory --manifest $visibilityPath *> (Join-Path $output 'source-mask-preparation.txt')
+        if($LASTEXITCODE -ne 0) { throw 'Original source-mask verification failed.' }
+        $visibility=Get-Content -LiteralPath $visibilityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if($visibility.sources.Count -ne 33) { throw 'Incomplete source-mask provenance.' }
+    }
     & (Join-Path $PSScriptRoot 'build.ps1') -Tasks @(':core:cleanTest',':core:test',':core:replayLoggedFrames',
-        ('-PloggedTape='+$parents[0]),('-PloggedOutput='+(Join-Path $output 'reports')),
-        ':app:assembleRelease',':app:assembleReleaseAndroidTest',':app:lintRelease') *> (Join-Path $output 'build.txt')
+        ('-PloggedTape='+$replayDirectory),('-PloggedOutput='+(Join-Path $output 'reports')),
+        ':app:assembleRelease',':app:assembleReleaseAndroidTest',':app:lintRelease','--continue') *> (Join-Path $output 'build.txt')
     $buildPassed=$true
+} catch { $failure=$_.Exception.Message }
+try {
     $unchanged=$before -eq (SourceFingerprint)
     foreach($item in $frozen) {
         if((Get-FileHash -LiteralPath $item.path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $item.sha256) { $unchanged=$false }
+        if($visibility) {
+            $provenance=@($visibility.sources | Where-Object { $_.session -eq $item.session })
+            if($provenance.Count -ne 1 -or $provenance[0].originalTapeSha256 -ne $item.sha256 -or
+                (Get-FileHash -LiteralPath (Join-Path $replayDirectory ($item.session+'.tape')) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $provenance[0].replaySha256) { $unchanged=$false }
+        }
     }
+    if($visibility -and (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $visibility.archiveSha256) { $unchanged=$false }
     if(!$unchanged) { throw 'Code or sample changed during the sweep. Discard this run and restart the full cohort.' }
     $arguments=@((Join-Path $PSScriptRoot 'audit-replay-cohort.py'),'--inputs',$frozenPath,
         '--reports',(Join-Path $output 'reports'),'--output',(Join-Path $output 'audit.json'))
@@ -83,7 +102,10 @@ try {
     & $Python @arguments *> (Join-Path $output 'audit.txt')
     if($LASTEXITCODE -notin @(0,1)) { throw 'Replay audit could not complete.' }
     $gatePassed=(Get-Content -LiteralPath (Join-Path $output 'audit.json') -Raw -Encoding UTF8 | ConvertFrom-Json).gatePassed -eq $true
-} catch { $failure=$_.Exception.Message }
+} catch {
+    $messages=@($failure,$_.Exception.Message) | Where-Object { $_ }
+    $failure=$messages -join '; '
+}
 [ordered]@{ buildPassed=$buildPassed; codeAndInputsUnchanged=$unchanged; gatePassed=$gatePassed;
     recordedReplayGatePassed=($buildPassed -and $unchanged -and $gatePassed -and !$failure); failure=$failure;
     scope='Fixed recorded model/scene replay; independent card truth is a separate requirement.' } |

@@ -51,6 +51,25 @@ fun tencentSelfFinished(hints: List<SceneHint>)=hints.any { hint ->
         ((b.cx<.18f && b.cy in .68f.. .84f) || (b.cx in .3f.. .7f && b.cy in .60f.. .84f && b.height>=.035f))
 }
 
+/** Avatar captions can repeat doubling words. Only count positioned, button-shaped labels in the central UI. */
+private fun doublingLabel(text: String)=text.filterNot(Char::isWhitespace).let {
+    when(it) {
+        "加倍","加倍x2","加倍X2","加倍×2" -> "加倍"
+        "超级加倍","超级加倍x4","超级加倍X4","超级加倍×4" -> "超级加倍"
+        "不加倍" -> "不加倍"
+        else -> null
+    }
+}
+private fun centralDoublingChoice(hint: SceneHint): Boolean {
+    if(doublingLabel(hint.text)==null) return false
+    val b=hint.box ?: return false
+    if(!listOf(b.left,b.top,b.right,b.bottom).all { it.isFinite() } ||
+        b.left<0 || b.top<0 || b.right>1 || b.bottom>1 || b.width<=0 || b.height<=0) return false
+    return b.cx in .30f.. .70f && b.cy in .14f.. .56f &&
+        b.width in .035f.. .36f && b.height in .03f.. .18f &&
+        b.width/b.height in .60f..4.0f
+}
+
 /** Match table UI regions, including the last player's revealed unplayed hand. */
 fun tencentScene(hints: List<SceneHint>,hasCards: Boolean,hasHandCards: Boolean): TableScene {
     val lines=hints.filter { (it.box?.cy ?: 0f)>.12f }
@@ -63,9 +82,11 @@ fun tencentScene(hints: List<SceneHint>,hasCards: Boolean,hasHandCards: Boolean)
     return when {
         lastPlace || threeCompletedFinishers(lines) -> TableScene.RESULT
         listOf("进贡","还贡","还牌","贡牌").any { all.contains(it) } -> TableScene.TRIBUTE
-        lines.count { it.text.replace(" ","") in setOf("加倍","不加倍","超级加倍") }>=2 -> TableScene.DEALING
-        all.contains("队友手牌") || all.contains("对家手牌") -> TableScene.TEAMMATE
         listOf("再来一局","继续游戏","本局结束","本局结算").any { all.contains(it) } -> TableScene.RESULT
+        all.contains("队友手牌") || all.contains("对家手牌") -> TableScene.TEAMMATE
+        lines.filter(::centralDoublingChoice).let { choices ->
+            choices.map { doublingLabel(it.text) }.distinct().size>=2 && choices.any { it.box!!.cy>=.30f }
+        } -> TableScene.DEALING
         listOf("快速开始","私人房","经典","组队").count { all.contains(it) }>=3 && !hasHandCards -> TableScene.LOBBY
         hasCards || tencentSelfFinished(hints) || all.contains("一键理") || (all.contains("理牌") && all.contains("聊天")) -> TableScene.TABLE
         else -> TableScene.UNKNOWN

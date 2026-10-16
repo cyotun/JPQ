@@ -4,7 +4,9 @@ enum class TableScene { TABLE, DEALING, LOBBY, TRIBUTE, TEAMMATE, RESULT, UNKNOW
 data class ObservedPlay(val cards: List<Card>,val confidence: Float,val glyphs: List<PlayGlyph> = emptyList(),val regionObserved: Boolean = true)
 data class TableFrame(val timeMs: Long,val scene: TableScene,val hand: List<Card>?,val plays: Map<Seat,ObservedPlay?> = emptyMap(),val selfFinished: Boolean = false,
                       val incompleteReason: String? = null,val ambiguousPresentation: Boolean = false,val captureGap: Boolean = false,
-                      val teammateHand: List<Card>? = null)
+                      val teammateHand: List<Card>? = null,val teammateHandConfidence: Float = 0f,
+                      val dealingChoicesObserved: Boolean = false,
+                      val remainingHandCounts: Map<Seat,RemainingHandCount> = emptyMap())
 data class ObserverStatus(val armed: Boolean,val locked: Boolean,val baselineWindow: Boolean,val tribute: Boolean,
     val handVotes: Int,val playVotes: Map<Seat,Int>,val pendingPlays: Int,val sequence: Long,val recovering: Boolean = false)
 
@@ -55,6 +57,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     }
     private val handVote=Vote(3)
     private val tributeVote=Vote(2)
+    private val newDealVote=Vote(3)
     private val playVotes=Seat.entries.associateWith { Vote(4) }
     private val emptyVotes=Seat.entries.associateWith { Vote(2) }
     private val visible=Seat.entries.associateWith { "" }.toMutableMap()
@@ -74,15 +77,17 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     private var shortJokerAnimation=false
     private var jokerTableReturnedAt: Long?=null
     private val jokerTeammateVote=Vote(3)
+    private val teammateHandProof=TeammateHandPlayProofTracker()
     private val observedEmptyAt=mutableMapOf<Seat,Long>()
     fun diagnosticStatus()=ObserverStatus(armed,locked,baselineWindow,tribute,handVote.count,playVotes.mapValues { it.value.count },pending.size,sequence,recovery!=null)
     private fun key(cards: List<Card>)=cards.map { "${it.rank.name}:${it.suit.name}" }.sorted().joinToString(",")
     private fun emit() { runCatching { changed(ledger.snapshot()) } }
     private fun clearCandidates() {
-        handVote.clear(); tributeVote.clear(); playVotes.values.forEach { it.clear() }; emptyVotes.values.forEach { it.clear() }; pending.clear()
+        handVote.clear(); tributeVote.clear(); newDealVote.clear(); playVotes.values.forEach { it.clear() }; emptyVotes.values.forEach { it.clear() }; pending.clear()
         visible.keys.forEach { visible[it]=""; presentations[it]=null; previousGlyphs[it]=emptyList(); empty[it]=0 }; unknownSince=null
         recovery=null; recoveryStartedAt=-1L; recoveryReason=""; ambiguitySince=null
         shortJokerAnimation=false; jokerTableReturnedAt=null; jokerTeammateVote.clear(); observedEmptyAt.clear()
+        teammateHandProof.reset()
     }
     fun interrupted(reason: String) { locked=true; ledger.invalidate(reason); clearCandidates(); emit() }
     /** A fragmented confirmed display stays that event; no missing glyph is invented. */
@@ -112,7 +117,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     /** A capture/ownership gap is not a ledger conflict and must remain recoverable. */
     fun incomplete(reason: String,timeMs: Long=lastTime,immediate: Boolean=false) {
         val snapshot=ledger.snapshot()
-        if(recovery!=null) { publishRecoveryIfDue(timeMs,immediate); return }
+        if(recovery!=null) { recovery!!.observationInterrupted(timeMs); publishRecoveryIfDue(timeMs,immediate); return }
         if(snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) return
         if(snapshot.roundId!=lastRound) { clearCandidates(); lastRound=snapshot.roundId }
         val anchors=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).filter { snapshot.played(it)<27 }.associateWith { seat ->
@@ -120,8 +125,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             if(p?.eventId!=null) RoundRecovery.Anchor(p.cards.toList(),p.glyphs.toList(),p.eventId,p.lastSeen)
             else RoundRecovery.Anchor(emptyList(),emptyList(),null,observedEmptyAt[seat] ?: -10000L)
         }
+        val knownTeammate=teammateHandProof.checkpointHand(snapshot)
         recovery=RoundRecovery(timeMs,ledger.currentHand(),snapshot.phase==RoundPhase.SELF_FINISHED,anchors,
-            snapshot.plays.values.all { it.isEmpty() })
+            snapshot.plays.values.all { it.isEmpty() },anchors.keys.associateWith { 27-snapshot.played(it) },knownTeammate)
+        teammateHandProof.reset()
         shortJokerAnimation=false; jokerTableReturnedAt=null; jokerTeammateVote.clear()
         recoveryStartedAt=timeMs; recoveryReason=reason
         handVote.clear(); playVotes.values.forEach { it.clear() }; emptyVotes.values.forEach { it.clear() }; pending.clear()
@@ -184,6 +191,8 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         if(snap.roundId!=lastRound) {
             if(lastRound!=null && snap.roundId==null) { locked=true; armed=false; baselineWindow=false }
             clearCandidates(); lastRound=snap.roundId
+            // A preconfirmed checkpoint already owns its event sequences.
+            sequence=snap.plays.values.flatten().maxOfOrNull { it.sequence } ?: 0L
         }
         if(lastTime>=0 && frame.timeMs-lastTime>2500 && snap.remaining!=null)
             incomplete("画面连续性中断，正在重新核对",lastTime,immediate=true)
@@ -196,21 +205,33 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             clearCandidates(); return
         }
         if(frame.scene==TableScene.DEALING) {
-            // A visible new dealing/doubling stage is a boundary even without visiting the lobby.
-            if(sceneBeforeDeal!=TableScene.DEALING && frame.timeMs-lastDealAt>3000) {
-                val current=ledger.snapshot()
-                val sameOpening=current.phase==RoundPhase.ACTIVE && current.plays.values.all { it.isEmpty() } &&
-                    frame.hand?.size==27 && key(frame.hand)==key(ledger.initialHand())
-                // Doubling labels appear and disappear while each player decides. That is still
-                // the same opening when the complete hand and empty event history are unchanged.
-                if(!sameOpening) {
+            val current=ledger.snapshot()
+            val tracked=current.roundId!=null && current.phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED,RoundPhase.RECOVERING)
+            val sameOpening=current.phase==RoundPhase.ACTIVE && current.plays.values.all { it.isEmpty() } &&
+                frame.hand?.size==27 && key(frame.hand)==key(ledger.initialHand())
+            if(sameOpening) {
+                // Latch a positively matched opening stage. A later short
+                // detector variation inside that same stage is not a new deal.
+                newDealVote.clear(); sceneBeforeDeal=TableScene.DEALING; lastDealAt=frame.timeMs
+            }
+            // Persistent avatar doubling badges can be misclassified as DEALING.
+            // An ongoing round needs an independently stable, different complete
+            // opening hand and an empty outside table before its ledger is replaced.
+            val newHand=frame.hand?.takeIf { frame.dealingChoicesObserved && it.size==27 && key(it)!=key(ledger.initialHand()) &&
+                !frame.captureGap && !frame.ambiguousPresentation && frame.incompleteReason==null &&
+                listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).all { seat -> observedEmpty(frame.plays[seat]) } }
+            val boundaryReady=if(sameOpening) false else if(!tracked) true else if(newHand!=null) newDealVote.accept(key(newHand),frame.timeMs)
+                else { newDealVote.clear(); false }
+            if(boundaryReady && sceneBeforeDeal!=TableScene.DEALING && frame.timeMs-lastDealAt>3000) {
                     if(current.roundId!=null) { ledger.finish(); emit(); ledger.waitForNext(); lastRound=null; emit() }
                     clearCandidates(); locked=false; tribute=false; armed=true; freshDeal=true; baselineWindow=true
-                }
                 lastDealAt=frame.timeMs
+                sceneBeforeDeal=TableScene.DEALING
             }
-            sceneBeforeDeal=TableScene.DEALING
-        } else if(frame.scene!=TableScene.UNKNOWN) sceneBeforeDeal=frame.scene
+        } else {
+            newDealVote.clear()
+            if(frame.scene!=TableScene.UNKNOWN) sceneBeforeDeal=frame.scene
+        }
         if(confirmedRoundFinished(ledger.snapshot()) && frame.scene !in setOf(TableScene.DEALING,TableScene.TRIBUTE)) {
             finishConfirmedRound(); return
         }
@@ -237,13 +258,35 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             tribute=false; ledger.waitForNext(); lastRound=null; armed=true; baselineWindow=true; freshDeal=true; clearCandidates()
         }
         if(locked || ledger.snapshot().phase==RoundPhase.UNAVAILABLE) return
+        if(recovery==null) {
+            val proof=teammateHandProof.observe(frame,ledger.snapshot())
+            if(proof!=null) {
+                // This is an independently observed hand difference, including
+                // a same-value next play that has no clean empty-table boundary.
+                // It does not infer any other player's missing cards.
+                if(!commit(Seat.OPPOSITE,proof.cards)) return
+                val event=ledger.snapshot().plays.getValue(Seat.OPPOSITE).last()
+                presentations[Seat.OPPOSITE]=Presentation(proof.cards.toList(),proof.glyphs.toList(),frame.timeMs,event.eventId)
+                visible[Seat.OPPOSITE]=key(proof.cards)
+                previousGlyphs[Seat.OPPOSITE]=proof.glyphs.toList()
+                playVotes.getValue(Seat.OPPOSITE).clear()
+                emptyVotes.getValue(Seat.OPPOSITE).clear()
+            }
+        }
+        if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
         if(frame.ambiguousPresentation) {
+            // Independent own-hand proof survives another seat's ambiguity.
+            // Unowned outside cards are still never committed by this path.
+            val ownQualified=if(recovery==null) observeIndependentSelf(frame) else false
+            if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
             if(ambiguitySince==null) ambiguitySince=frame.timeMs
             // Retain the original 1500ms ownership-animation tolerance. These
             // unconfirmed candidates receive no play/empty/hand votes; they are
             // distinct from a genuinely UNKNOWN capture's stricter checkpoint.
             if(recovery==null && frame.timeMs-ambiguitySince!!<=1500) {
-                handVote.clear(); playVotes.values.forEach { it.clear() }; emptyVotes.values.forEach { it.clear() }
+                if(!ownQualified) { handVote.clear(); playVotes.getValue(Seat.SELF).clear() }
+                playVotes.filterKeys { it!=Seat.SELF }.values.forEach { it.clear() }
+                emptyVotes.values.forEach { it.clear() }
                 return
             }
             incomplete(frame.incompleteReason ?: "出牌归属待核对，正在重新识别",ambiguitySince!!)
@@ -251,8 +294,17 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         frame.incompleteReason?.let { incomplete(it,frame.timeMs) }
         recovery?.let { checkpoint ->
             val expansions=checkpoint.reconcile(frame) ?: run { publishRecoveryIfDue(frame.timeMs); return }
-            if(!runCatching { ledger.resumeAfterRecovery(expansions) }.isSuccess) {
-                interrupted("识别结果存在冲突，等待下一局"); return
+            val recovered=checkpoint.recoveredTeammatePlay
+            val recoveredEvent=if(recovered!=null) {
+                val id=ledger.snapshot().roundId ?: return
+                val nextSequence=sequence+1
+                PlayEvent(id,"$id:$nextSequence",nextSequence,Seat.OPPOSITE,recovered.cards)
+            } else null
+            if(!runCatching { ledger.resumeAfterRecovery(expansions,listOfNotNull(recoveredEvent)) }.isSuccess) {
+                // A contradictory recovery candidate cannot replace a valid
+                // checkpoint or permanently stop subsequent reconciliation.
+                checkpoint.observationInterrupted(frame.timeMs)
+                publishRecoveryIfDue(frame.timeMs,immediate=true); return
             }
             for((seat,presentation) in presentations) {
                 if(presentation?.eventId in expansions.keys) {
@@ -261,6 +313,13 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                     presentation.lastSeen=frame.timeMs; presentation.colorReturnAnchor=observed.glyphs.toList()
                     presentation.colorReturnSeen=frame.timeMs; visible[seat]=key(observed.cards)
                 }
+            }
+            if(recovered!=null && recoveredEvent!=null) {
+                sequence=recoveredEvent.sequence
+                presentations[Seat.OPPOSITE]=Presentation(recovered.cards.toList(),recovered.glyphs.toList(),frame.timeMs,recoveredEvent.eventId)
+                visible[Seat.OPPOSITE]=key(recovered.cards)
+                previousGlyphs[Seat.OPPOSITE]=recovered.glyphs.toList()
+                playVotes.getValue(Seat.OPPOSITE).clear(); emptyVotes.getValue(Seat.OPPOSITE).clear(); empty[Seat.OPPOSITE]=0
             }
             recovery=null; recoveryStartedAt=-1L; recoveryReason=""; shortJokerAnimation=false; jokerTableReturnedAt=null; emit()
         }
@@ -302,6 +361,19 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         }
         if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
         if(!bufferedOthers && ledger.snapshot().remaining!=null) collectOthers(frame,true)
+    }
+    private fun observeIndependentSelf(frame: TableFrame): Boolean {
+        val snapshot=ledger.snapshot()
+        val hand=frame.hand
+        val play=frame.plays[Seat.SELF]
+        if(snapshot.phase!=RoundPhase.ACTIVE || frame.captureGap || frame.scene!=TableScene.TABLE ||
+            hand==null || play==null || !play.regionObserved || play.confidence<.65f ||
+            play.cards.isEmpty() || !hasGeometry(play)) return false
+        val removed=ledger.currentHand().toMutableList()
+        if(!hand.all { removed.remove(it) } || removed.isEmpty() || key(removed)!=key(play.cards)) return false
+        val ready=playVotes.getValue(Seat.SELF).accept(key(play.cards),frame.timeMs)
+        if(handVote.accept(key(hand),frame.timeMs) && ready) commit(Seat.SELF,removed)
+        return true
     }
     private fun observedEmpty(play: ObservedPlay?)=play!=null && play.regionObserved && play.confidence>=.65f && play.cards.isEmpty()
     private fun collectOthers(frame: TableFrame,commitNow: Boolean) {
@@ -388,7 +460,11 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             // suffice before its effect clears; all other plays retain four votes.
             val fourJokerProof=p.confidence>=.80f && hasGeometry(p) && p.cards.size==4 &&
                 p.cards.count { it.rank==Rank.BIG }==2 && p.cards.count { it.rank==Rank.SMALL }==2
-            if(playVotes[seat]!!.accept(k,frame.timeMs,fastProof=fourJokerProof)) {
+            // An existing physical prefix can gain directly seen missing cards
+            // through three stable full readings; a new play still needs four.
+            val trackedExpansion=presentation?.eventId!=null && p.confidence>=.70f && trackedPresentation &&
+                p.cards.size>presentation.cards.size && isSubset(presentation.cards,p.cards)
+            if(playVotes[seat]!!.accept(k,frame.timeMs,fastProof=fourJokerProof || trackedExpansion)) {
                 // A same-box BIG/SMALL flip during an arrival effect is a new
                 // identity candidate, not automatically another play. A real
                 // lasting switch still commits; a proved empty clears the anchor.
@@ -404,7 +480,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                         if(commitNow) {
                             val id=presentation.eventId
                             if(id==null || !runCatching { ledger.replaceLatestObservedPresentation(id,p.cards); true }.getOrDefault(false)) {
-                                interrupted("识别结果存在冲突，等待下一局"); return
+                                incomplete("牌面变化待复核，正在重新识别",frame.timeMs,immediate=true); return
                             }
                             emit()
                         }
@@ -454,7 +530,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     }
     private fun commit(seat: Seat,cards: List<Card>): Boolean {
         val id=ledger.snapshot().roundId ?: return false
-        return runCatching { ledger.commit(PlayEvent(id,"$id:${++sequence}",sequence,seat,cards)); emit(); true }
-            .getOrElse { interrupted("识别结果存在冲突，等待下一局"); false }
+        val nextSequence=sequence+1
+        return runCatching {
+            ledger.commit(PlayEvent(id,"$id:$nextSequence",nextSequence,seat,cards))
+            sequence=nextSequence; emit(); true
+        }.getOrElse { incomplete("牌面变化待复核，正在重新识别",lastTime,immediate=true); false }
     }
 }

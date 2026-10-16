@@ -79,7 +79,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
             // Publish immediately with the committed counts, even when the suit
             // worker is busy or the final table presentation is clearing.
             publishUnknown()
-            val hands=straightFlushRemainingHandSizes(snapshot).orEmpty()
+            val hands=straightFlushRemainingHandSizes(snapshot,hand).orEmpty()
             val fingerprint="${snapshot.roundId}:$hands:${snapshot.phase}"
             if(fingerprint!=lastCapacityTrace) {
                 lastCapacityTrace=fingerprint

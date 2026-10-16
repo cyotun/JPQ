@@ -43,16 +43,18 @@ object GradeOcclusionGeometry {
         }?.let { OverlayPoint(it,0) }
     }
 
-    /** A helper window must stay entirely above the .13 card-region boundary. */
+    /** Preserve the approved separate reminder below the bar. Its real capture
+     * mask must still participate in visibility checks; it is never empty-table evidence. */
     fun hintPosition(screenWidth: Int,screenHeight: Int,bar: GradeOcclusionRect,
         desiredWidth: Int,hintHeight: Int,bodyOffset: Int,gap: Int,bodyRightInset: Int=0): GradeOcclusionRect? {
         require(screenWidth>0 && screenHeight>0 && desiredWidth>0 && hintHeight>0 && bodyOffset>=0 && gap>=0)
         if(screenWidth<screenHeight) return null
-        // The diagnostic reminder is itself masked from recognition. Placing it
-        // below .13 would hide a possible side/opposite play and invalidate the
-        // round. Do not create that obstruction just to display a warning.
+        // A default-height bar leaves too little space in the top .13 band.
+        // Silently dropping the reminder hides its one-key move/ignore actions.
+        // If the reminder covers cards, capture must retain that obstruction and
+        // reconcile after dismissal; never pretend those pixels were readable.
         val y=listOf(bar.bottom+gap,bar.top-gap-hintHeight).firstOrNull {
-            it>=0 && it+hintHeight<=screenHeight*.13f
+            it>=0 && it+hintHeight<=screenHeight
         } ?: return null
         require(bodyRightInset>=0)
         val x=bar.left+bodyOffset

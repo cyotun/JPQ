@@ -7,6 +7,8 @@ internal class RoundRecovery(
     private val selfFinished: Boolean,
     private val anchors: Map<Seat,Anchor>,
     private val opening: Boolean,
+    private val expectedHandCounts: Map<Seat,Int>,
+    private val knownTeammateHand: List<Card>? = null,
 ) {
     data class Anchor(val cards: List<Card>,val glyphs: List<PlayGlyph>,val eventId: String?,val observedAt: Long)
     private val emptySeen=anchors.filterValues { it.cards.isEmpty() }.mapValues { it.value.observedAt }.toMutableMap()
@@ -16,13 +18,35 @@ internal class RoundRecovery(
     private var firstVote=0L
     private var lastVote=-1L
     private var previousGlyphs=emptyMap<Seat,List<PlayGlyph>>()
+    private var countVotes=0
+    private var firstCountSource=-1L
+    private var lastCountSource=-1L
+    private var countSourceCutoff=startedAt
+    var recoveredTeammatePlay: ObservedPlay? = null
+        private set
+    private var teammateHandKey=""
+    private var teammateDesk: ObservedPlay?=null
+    private var teammateCountVotes=0
+    private var firstTeammateSource=-1L
+    private var lastTeammateSource=-1L
     private fun key(cards: List<Card>)=cards.map { it.colorKey() }.sorted().joinToString(",")
+    fun observationInterrupted(timeMs: Long) {
+        countSourceCutoff=maxOf(countSourceCutoff,timeMs)
+        countVotes=0; firstCountSource=-1; lastCountSource=-1
+        resetTeammateProof()
+    }
 
     /** Null also means the old checkpoint cannot prove that no play was missed. */
     fun reconcile(frame: TableFrame): Map<String,List<Card>>? {
+        // Fresh independent remaining-card badges can establish that no outside
+        // player lost a card, even after the physical-presentation window expired.
+        // A cached OCR result is one observation, regardless of frame rate.
+        if(unchangedCountsProven(frame)) return emptyMap()
+        if(teammateDifferenceProven(frame)) return emptyMap()
         if(frame.timeMs-startedAt !in 0L..4000L) { votes=0; return null }
         val expansions=mutableMapOf<String,List<Card>>()
         var complete=frame.scene in setOf(TableScene.TABLE,TableScene.TEAMMATE) && frame.incompleteReason==null &&
+            !frame.captureGap && !frame.ambiguousPresentation &&
             anchors.values.all { startedAt-it.observedAt in 0L..500L }
         val ownProven=if(selfFinished) frame.scene==TableScene.TEAMMATE || frame.selfFinished
             else frame.hand?.let { key(it)==key(ownHand) }==true || frame.selfFinished || frame.scene==TableScene.TEAMMATE
@@ -63,6 +87,97 @@ internal class RoundRecovery(
         previousGlyphs=anchors.keys.associateWith { frame.plays.getValue(it)!!.glyphs.toList() }
         return if(votes>=4 && frame.timeMs-firstVote>=180) expansions else null
     }
+    private fun unchangedCountsProven(frame: TableFrame): Boolean {
+        val sceneValid=frame.scene in setOf(TableScene.TABLE,TableScene.TEAMMATE) &&
+            !frame.captureGap && !frame.ambiguousPresentation && frame.incompleteReason==null
+        if(!sceneValid) observationInterrupted(frame.timeMs)
+        val ownValid=if(selfFinished) frame.scene==TableScene.TEAMMATE || frame.selfFinished
+            else frame.hand?.let { key(it)==key(ownHand) }==true
+        val readings=expectedHandCounts.keys.mapNotNull { seat -> frame.remainingHandCounts[seat]?.let { seat to it } }.toMap()
+        val countsValid=expectedHandCounts.isNotEmpty() && readings.keys==expectedHandCounts.keys && readings.all { (seat,reading) ->
+            reading.count==expectedHandCounts[seat] && reading.sourceTimeMs>countSourceCutoff &&
+                frame.timeMs-reading.sourceTimeMs in 0L..1000L
+        }
+        val source=readings.values.map { it.sourceTimeMs }.distinct().singleOrNull()
+        val tableConsistent=anchors.all { (seat,anchor) ->
+            val play=frame.plays[seat]
+            play!=null && play.regionObserved && play.confidence>=.65f &&
+                (play.cards.isEmpty() || (anchor.cards.isNotEmpty() && play.glyphs.size==play.cards.size &&
+                    key(play.cards)==key(play.glyphs.map { it.card }) &&
+                    containsTracked(anchor.glyphs,play.glyphs)))
+        }
+        if(!sceneValid || !ownValid || !countsValid || source==null || !tableConsistent) {
+            countVotes=0; firstCountSource=-1; lastCountSource=-1; return false
+        }
+        if(source==lastCountSource) return false
+        if(lastCountSource<0 || source-lastCountSource !in 1L..1500L) {
+            countVotes=1; firstCountSource=source
+        } else countVotes++
+        lastCountSource=source
+        return countVotes>=3 && source-firstCountSource>=300L
+    }
+    /** A complete known teammate hand accounts for every new card; other seats
+     * still need independent unchanged quantities, never an inferred pass. */
+    private fun teammateDifferenceProven(frame: TableFrame): Boolean {
+        fun reject(): Boolean { resetTeammateProof(); return false }
+        val known=knownTeammateHand ?: return reject()
+        val expected=expectedHandCounts[Seat.OPPOSITE] ?: return reject()
+        val hand=frame.teammateHand ?: return reject()
+        if(!selfFinished || frame.scene!=TableScene.TEAMMATE || frame.captureGap ||
+            frame.ambiguousPresentation || frame.incompleteReason!=null ||
+            !(frame.teammateHandConfidence>=.80f) || known.size!=expected ||
+            known.isEmpty() || hand.size>=known.size || !validCards(known) || !validCards(hand)) return reject()
+        val removed=known.toMutableList()
+        if(!hand.all { removed.remove(it) } || removed.isEmpty()) return reject()
+        val play=frame.plays[Seat.OPPOSITE] ?: return reject()
+        if(!play.regionObserved || !(play.confidence>=.80f) || play.cards.size!=play.glyphs.size ||
+            key(play.cards)!=key(removed) || key(play.glyphs.map { it.card })!=key(removed) ||
+            play.glyphs.any { !(it.confidence>=.80f) || !validBox(it.box) }) return reject()
+
+        val otherSeats=expectedHandCounts.keys-Seat.OPPOSITE
+        if(!anchors.keys.containsAll(otherSeats)) return reject()
+        if(otherSeats.any { seat ->
+            val anchor=anchors.getValue(seat)
+            val observed=frame.plays[seat]
+            observed==null || !observed.regionObserved || !(observed.confidence>=.65f) ||
+                (observed.cards.isNotEmpty() && (anchor.cards.isEmpty() ||
+                    observed.glyphs.size!=observed.cards.size ||
+                    key(observed.cards)!=key(observed.glyphs.map { it.card }) ||
+                    !containsTracked(anchor.glyphs,observed.glyphs)))
+        }) return reject()
+        val readings=otherSeats.mapNotNull { seat -> frame.remainingHandCounts[seat]?.let { seat to it } }.toMap()
+        if(readings.keys!=otherSeats || readings.any { (seat,reading) -> reading.count!=expectedHandCounts[seat] }) return reject()
+        val opposite=frame.remainingHandCounts[Seat.OPPOSITE]
+        if(opposite!=null && opposite.count!=hand.size) return reject()
+        val sources=readings.values.toList()+listOfNotNull(opposite)
+        if(sources.isEmpty() || sources.any { it.sourceTimeMs<=countSourceCutoff ||
+                frame.timeMs-it.sourceTimeMs !in 0L..1000L }) return reject()
+        val source=sources.map { it.sourceTimeMs }.distinct().singleOrNull() ?: return reject()
+        if(lastTeammateSource>=0 && source<lastTeammateSource) return reject()
+        val previous=teammateDesk
+        val sameCandidate=teammateHandKey==key(hand) && previous!=null &&
+            previous.cards.size==play.cards.size && containsTracked(play.glyphs,previous.glyphs)
+        if(!sameCandidate || lastTeammateSource<0 || source-lastTeammateSource>1500L) {
+            resetTeammateProof()
+            teammateHandKey=key(hand)
+            teammateDesk=play.copy(cards=play.cards.toList(),glyphs=play.glyphs.toList())
+            teammateCountVotes=1; firstTeammateSource=source; lastTeammateSource=source
+            return false
+        }
+        if(source==lastTeammateSource) return false
+        teammateCountVotes++; lastTeammateSource=source
+        if(teammateCountVotes<3 || source-firstTeammateSource<300L) return false
+        recoveredTeammatePlay=teammateDesk
+        return true
+    }
+    private fun resetTeammateProof() {
+        teammateHandKey=""; teammateDesk=null; teammateCountVotes=0
+        firstTeammateSource=-1L; lastTeammateSource=-1L; recoveredTeammatePlay=null
+    }
+    private fun validCards(cards: List<Card>)=cards.groupingBy { it.rank }.eachCount().all { (rank,count) -> count<=rank.capacity } &&
+        cards.groupingBy { it.colorKey() }.eachCount().all { (color,count) -> count<=if(':' in color) 4 else 2 }
+    private fun validBox(box: GlyphBox)=listOf(box.left,box.top,box.right,box.bottom).all { it.isFinite() } &&
+        box.left>=0 && box.top>=0 && box.right<=1 && box.bottom<=1 && box.width>0 && box.height>0
     private fun containsTracked(current: List<PlayGlyph>,old: List<PlayGlyph>): Boolean {
         if(old.isEmpty()) return false
         val rest=current.toMutableList()

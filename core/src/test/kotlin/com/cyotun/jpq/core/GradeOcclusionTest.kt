@@ -50,16 +50,17 @@ class GradeOcclusionTest {
         assertEquals(OverlayPoint(288,0),GradeOcclusionGeometry.safeTopPosition(2608,1200,800,138,900,central,12))
     }
 
-    @Test fun belowBarHintAvoidsTheCentralAndSidePlayedCardRegions() {
+    @Test fun approvedReminderFitsBelowDefaultBarAndFallsBackAboveOnlyAtTheScreenEdge() {
         val shortBar=bar.copy(bottom=60)
         val hint=assertNotNull(GradeOcclusionGeometry.hintPosition(2608,1200,shortBar,1050,80,144,12))
         assertEquals(GradeOcclusionRect(144,72,1194,152),hint)
         assertEquals(shortBar.left+144,hint.left)
         assertTrue(hint.top>=shortBar.bottom)
         assertTrue(hint.bottom<=1200*.13f)
-        assertNull(GradeOcclusionGeometry.hintPosition(2608,1200,bar,1050,90,144,12))
-        assertEquals(GradeOcclusionRect(144,58,1194,148),GradeOcclusionGeometry.hintPosition(2608,1200,bar.copy(top=160,bottom=298),1050,90,144,12))
-        assertNull(GradeOcclusionGeometry.hintPosition(2608,1200,bar.copy(top=500,bottom=638),1050,90,144,12))
+        assertEquals(GradeOcclusionRect(144,150,1194,240),GradeOcclusionGeometry.hintPosition(2608,1200,bar,1050,90,144,12))
+        assertEquals(GradeOcclusionRect(144,310,1194,400),GradeOcclusionGeometry.hintPosition(2608,1200,bar.copy(top=160,bottom=298),1050,90,144,12))
+        assertEquals(GradeOcclusionRect(144,650,1194,740),GradeOcclusionGeometry.hintPosition(2608,1200,bar.copy(top=500,bottom=638),1050,90,144,12))
+        assertEquals(GradeOcclusionRect(144,998,1194,1088),GradeOcclusionGeometry.hintPosition(2608,1200,bar.copy(top=1100,bottom=1190),1050,90,144,12))
         assertNull(GradeOcclusionGeometry.hintPosition(1200,2608,bar,1050,90,144,12))
     }
     @Test fun reminderTracksTheBodyAndNeverMovesSeparatelyToTheLeftEdge() {
@@ -73,12 +74,14 @@ class GradeOcclusionTest {
         assertEquals(594,narrow.left)
     }
 
-    @Test fun exportedReminderMaskCannotInterruptItsOwnRound() {
-        // The user's exported mask occupied .1233..2033 and interrupted all
-        // three observers. Keep actual mask checks; reject the unsafe window.
-        val rejected=GradeOcclusionGeometry.hintPosition(2608,1200,
-            GradeOcclusionRect(468,6,2040,138),1043,96,0,10)
-        assertNull(rejected)
+    @Test fun visibleReminderDoesNotOverrideTheMaskProtectingActualPlayedCards() {
+        val reminder=assertNotNull(GradeOcclusionGeometry.hintPosition(2608,1200,
+            GradeOcclusionRect(468,6,2040,138),1043,96,0,10))
+        assertEquals(468,reminder.left); assertEquals(148,reminder.top)
+        val blocked=EmptyRegionEvidence().evaluate(IntArray(10*10),10,10,TableScene.TABLE,0,
+            Seat.entries.associateWith { emptyList() },"actual-reminder",
+            listOf(GlyphBox(reminder.left/2608f,reminder.top/1200f,reminder.right/2608f,reminder.bottom/1200f)))
+        assertTrue(listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).all { blocked.getValue(it).reason=="overlay_occlusion" })
         val safe=assertNotNull(GradeOcclusionGeometry.hintPosition(2608,1200,
             GradeOcclusionRect(0,0,1800,60),1043,80,0,10))
         val evidence=EmptyRegionEvidence().evaluate(IntArray(10*10),10,10,TableScene.TABLE,27,
@@ -91,5 +94,31 @@ class GradeOcclusionTest {
         assertFalse(grade.intersects(grade.copy(left=450,right=650)))
         assertTrue(grade.padded(1).intersects(grade.copy(left=450,right=650)))
         assertFailsWith<IllegalArgumentException> { GradeOcclusionGeometry.safeTopPosition(0,1200,100,100,0,grade) }
+    }
+
+    @Test fun dismissingTheApprovedReminderCanResumeAnUnchangedRoundWithoutRestarting() {
+        val hand=Rank.entries.filterNot { it.isJoker }.flatMap { listOf(Card(it,Suit.RED),Card(it,Suit.BLACK)) }+Card(Rank.SMALL,Suit.NONE)
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger)
+        val clear=Seat.entries.associateWith { ObservedPlay(emptyList(),1f) }
+        observer.observe(TableFrame(0,TableScene.LOBBY,null))
+        for(t in 60L..240L step 60) observer.observe(TableFrame(t,TableScene.TABLE,hand,clear))
+        fun play(rank: Rank,x: Float)=Card(rank,Suit.RED).let { card ->
+            ObservedPlay(listOf(card),.99f,listOf(PlayGlyph(card,.99f,GlyphBox(x,.30f,x+.02f,.35f))))
+        }
+        val groups=clear+mapOf(Seat.PREVIOUS to play(Rank.K,.20f),Seat.OPPOSITE to play(Rank.Q,.48f),Seat.NEXT to play(Rank.A,.75f))
+        for(t in 300L..480L step 60) observer.observe(TableFrame(t,TableScene.TABLE,hand,groups))
+        val before=ledger.snapshot()
+        val tip=assertNotNull(GradeOcclusionGeometry.hintPosition(2608,1200,bar,1050,96,144,12))
+        val mask=GlyphBox(tip.left/2608f,tip.top/1200f,tip.right/2608f,tip.bottom/1200f)
+        val evidence=EmptyRegionEvidence().evaluate(IntArray(10*10),10,10,TableScene.TABLE,27,
+            groups.mapValues { it.value.glyphs },"reminder",listOf(mask))
+        assertTrue(listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).all { !evidence.getValue(it).observed })
+        for(t in 600L..1200L step 120) observer.observe(TableFrame(t,TableScene.UNKNOWN,null,incompleteReason="reminder occludes card region"))
+        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
+        assertNull(ledger.snapshot().remaining)
+        assertFalse(observer.diagnosticStatus().locked)
+        for(t in 1260L..1440L step 60) observer.observe(TableFrame(t,TableScene.TABLE,hand,groups))
+        assertEquals(before,ledger.snapshot())
+        assertFalse(observer.diagnosticStatus().recovering)
     }
 }

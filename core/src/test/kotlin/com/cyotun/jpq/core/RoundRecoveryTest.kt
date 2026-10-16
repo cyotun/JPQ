@@ -64,6 +64,18 @@ class RoundRecoveryTest {
             assertEquals(1,ledger.snapshot().played(Seat.NEXT))
         }
     }
+    @Test fun captureLossOrAmbiguityCannotUseTheUnchangedPhysicalFallback() {
+        for(captureLoss in listOf(true,false)) {
+            val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(ledger,observer)
+            observer.incomplete("actual interruption",540,immediate=true)
+            for(t in 600L..1200L step 60) observer.observe(TableFrame(t,TableScene.TABLE,baseline,groups,
+                captureGap=captureLoss,ambiguousPresentation=!captureLoss))
+            assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
+            assertNull(ledger.snapshot().remaining)
+            assertTrue(observer.diagnosticStatus().recovering)
+            assertFalse(observer.diagnosticStatus().locked)
+        }
+    }
     @Test fun blankReturnAndLongBlindEmptySeatCannotProveThatNoPlayWasMissed() {
         val ledger=RoundLedger(); val observer=RoundObserver(ledger)
         start(ledger,observer,empty()+(Seat.NEXT to next))

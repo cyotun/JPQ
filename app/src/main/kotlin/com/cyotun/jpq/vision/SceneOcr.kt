@@ -15,7 +15,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 data class OcrLine(val text: String,val box: Rect?)
 data class SceneText(val lines: List<OcrLine>,val timeMs: Long,val width: Int,val height: Int,val visibilityEpoch: Long=0L,
                      val gradeElements: List<OcrLine> = emptyList(),
-                     val metadataElements: List<OcrLine> = emptyList())
+                     val metadataElements: List<OcrLine> = emptyList(),
+                     val remainingCountPixels: RemainingCountPixels? = null)
 /** OCR never blocks card inference. Its owned immutable snapshot survives the next frame. */
 class SceneOcr: AutoCloseable {
     private val recognizer=TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
@@ -24,12 +25,15 @@ class SceneOcr: AutoCloseable {
     @Volatile private var latest: SceneText?=null
     @Volatile private var closed=false
     private var requestedAt=0L
-    fun request(bitmap: Bitmap,now: Long,visibilityEpoch: Long=0L) {
+    fun request(bitmap: Bitmap,now: Long,visibilityEpoch: Long=0L,captureRemainingCounts: Boolean=false) {
         if(closed || now-requestedAt<250 || !busy.compareAndSet(false,true)) return
         requestedAt=now
         var copy: SceneOcrImage?=null
         try {
             val sourceWidth=bitmap.width; val sourceHeight=bitmap.height
+            // Ordinary play/startup keeps its original allocation path. These
+            // optional patches are needed only while reconciling an interruption.
+            val countPixels=if(captureRemainingCounts) RemainingCountPixels.capture(bitmap) else null
             val owned=SceneOcrImage(bitmap)
             copy=owned
             recognizer.process(InputImage.fromBitmap(owned.bitmap,0)).addOnCompleteListener { task ->
@@ -67,7 +71,7 @@ class SceneOcr: AutoCloseable {
                                         Regex("^(?:我方|对方)(?:[2-9AJQK]|10)$").matches(compact))
                                 }.map { element ->
                                     OcrLine(tencentGradeHudToken(element.text),element.box)
-                                }.distinct()+hudSymbols)
+                                }.distinct()+hudSymbols,remainingCountPixels=countPixels)
                         synchronized(resultLock) { if(!closed) latest=text }
                     }
                 } catch(error: Exception) { android.util.Log.w("JPQVision","ocr_result_unavailable",error) }

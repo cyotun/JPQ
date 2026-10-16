@@ -14,7 +14,7 @@ fun main(args: Array<String>) {
     replayLoggedTape(args)
 }
 
-private fun replayLoggedTape(args: Array<String>) {
+internal fun replayLoggedTape(args: Array<String>) {
     data class Coverage(val roundId: String,val startedAt: Long,var lastPhase: RoundPhase,
         var endedAt: Long?=null,var observedFrames: Int=0,var recoveringFrames: Int=0,
         var recoveryStartedAt: Long?=null,var longestRecoveryMs: Long=0,
@@ -22,7 +22,7 @@ private fun replayLoggedTape(args: Array<String>) {
         var selfFinished: Boolean=false,var completionObserved: Boolean=false,
         var resultSceneObserved: Boolean=false,var endingScene: TableScene?=null,var unresolvedReason: String?=null)
     val ledger=RoundLedger(); var time=0L; var failures=0; var frames=0; var baselineCount=0
-    val history=StringBuilder(); val ownExit=OwnExitPresentationTracker()
+    val history=StringBuilder(); val ownExit=OwnExitPresentationTracker(); val visibility=EmptyRegionEvidence()
     val coverage=linkedMapOf<String,Coverage>(); var currentRound: String?=null
     val observer=RoundObserver(ledger) { snap ->
         val id=snap.roundId
@@ -45,7 +45,7 @@ private fun replayLoggedTape(args: Array<String>) {
         history.append("{\"timeMs\":$time,\"phase\":\"${snap.phase}\",\"reason\":${snap.reason?.let { "\"$it\"" } ?: "null"},\"previous\":${snap.played(Seat.PREVIOUS)},\"opposite\":${snap.played(Seat.OPPOSITE)},\"next\":${snap.played(Seat.NEXT)},\"remaining\":${snap.remaining?.values?.sum()}}")
     }
     File(args[0]).forEachLine { line ->
-        val fields=line.split(';',limit=9); time=fields[0].toLong(); val detectedScene=TableScene.valueOf(fields[1])
+        val fields=line.split(';',limit=11); time=fields[0].toLong(); val detectedScene=TableScene.valueOf(fields[1])
         currentRound?.let { id -> coverage[id]?.let { round ->
             round.endingScene=detectedScene
             if(detectedScene==TableScene.RESULT) round.resultSceneObserved=true
@@ -53,6 +53,17 @@ private fun replayLoggedTape(args: Array<String>) {
         val selfFinished=fields[2].toBoolean(); val observed=fields[3].split(',').map { it.toBoolean() }
         val selfClean=fields[4].toBoolean(); val adjusting=fields[5].toBoolean()
         val captureGap=fields.getOrNull(8)?.toBoolean() ?: false
+        // Legacy scene enums alone did not distinguish persistent avatar badges.
+        val dealingChoicesObserved=fields.getOrNull(9)?.toBoolean() ?: false
+        // An optional, source-verified raw mask set permits the same nonempty
+        // geometry check as production. Missing metadata never means no masks.
+        val masks=fields.getOrNull(10)?.takeIf { it!="?" }?.let { encoded ->
+            if(encoded.isEmpty()) emptyList() else encoded.split('|').map { value ->
+                val box=value.split(',').map(String::toFloat)
+                require(box.size==4 && box.all { it.isFinite() && it in 0f..1f } && box[0]<box[2] && box[1]<box[3])
+                GlyphBox(box[0],box[1],box[2],box[3])
+            }
+        }
         val glyphs=if(fields[6].isBlank()) emptyList() else fields[6].split('|').map { value ->
             val g=value.split(','); val rank=Rank.valueOf(g[0]); val suit=Suit.valueOf(g[1])
             PlayGlyph(Card(rank,suit),g[2].toFloat(),GlyphBox(g[3].toFloat(),g[4].toFloat(),g[5].toFloat(),g[6].toFloat()))
@@ -73,23 +84,27 @@ private fun replayLoggedTape(args: Array<String>) {
             confirmedFinishedSeats(snapshot.copy(phase=trackingPhase)),ownExit.blocksCentralFallback())
         val ownership=if(adjusting) assignedOwnership else observer.reassociatePresentationFragments(assignedOwnership,time)
         val self=ownership.seats.getValue(Seat.SELF)
-        // The original trace may have classified a now-owned exit as ambiguous.
-        // As with non-empty plays below, its fresh positive glyphs re-establish
-        // region observation; recorded empty-surface evidence applies to empty groups.
-        if(!adjusting && self.isNotEmpty()) ownExit.observe(time,trackingPhase,previous,hand,self)
+        fun regionObserved(seat: Seat,cards: List<PlayGlyph>) = !adjusting &&
+            if(cards.isNotEmpty() && masks!=null) visibility.directlyObserved(scene,seat,cards,masks) else observed[seat.ordinal]
+        // Reassigning a visible fragment cannot undo an explicit recorded
+        // occlusion: a hidden tail may still be missing behind the overlay.
+        if(regionObserved(Seat.SELF,self) && self.isNotEmpty()) ownExit.observe(time,trackingPhase,previous,hand,self)
         ownExit.emptySurface(selfClean,self.isNotEmpty(),
             ownership.ambiguous.any { it.box.cy in .285f.. .48f && it.box.cx in .32f.. .70f })
+        val plays=ownership.seats.mapValues { (seat,p) -> ObservedPlay(p.map { it.card },p.minOfOrNull { it.confidence } ?: 1f,p,
+            regionObserved(seat,p)) }
         if(confirmedRoundFinished(snapshot) && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.DEALING,TableScene.TRIBUTE)) {
             observer.observe(TableFrame(time,scene,null))
         } else if(ownership.ambiguous.isNotEmpty() && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)) {
             observer.observe(TableFrame(time,scene,if(scene==TableScene.TEAMMATE || adjusting) null else hand,
-                selfFinished=selfFinished,incompleteReason="出牌归属待核对，正在重新识别",ambiguousPresentation=true,captureGap=captureGap))
+                plays=plays,selfFinished=selfFinished,incompleteReason="出牌归属待核对，正在重新识别",ambiguousPresentation=true,captureGap=captureGap,
+                teammateHand=hand.takeIf { scene==TableScene.TEAMMATE && !adjusting && partition.hand.all { it.confidence>=.65f } },
+                teammateHandConfidence=partition.hand.minOfOrNull { it.confidence } ?: 1f,dealingChoicesObserved=dealingChoicesObserved))
         } else {
-            val plays=ownership.seats.mapValues { (seat,p) -> ObservedPlay(p.map { it.card },p.minOfOrNull { it.confidence } ?: 1f,p,
-                if(p.isNotEmpty()) !adjusting else observed[Seat.entries.indexOf(seat)]) }
             observer.observe(TableFrame(time,scene,if(scene==TableScene.TEAMMATE || adjusting) null else hand,plays,selfFinished,
                 if(adjusting) "正在调整悬浮条，等待完整牌面" else null,captureGap=captureGap,
-                teammateHand=hand.takeIf { scene==TableScene.TEAMMATE && !adjusting && partition.hand.all { it.confidence>=.65f } }))
+                teammateHand=hand.takeIf { scene==TableScene.TEAMMATE && !adjusting && partition.hand.all { it.confidence>=.65f } },
+                teammateHandConfidence=partition.hand.minOfOrNull { it.confidence } ?: 1f,dealingChoicesObserved=dealingChoicesObserved))
         }
         ledger.snapshot().roundId?.let { id -> coverage[id]?.let { round ->
             round.observedFrames++

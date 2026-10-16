@@ -51,16 +51,19 @@ fun main(args: Array<String>) {
         if(seen.getValue(Seat.SELF).observed) ownExit.observe(time,trackingPhase,previous,hand,self)
         ownExit.emptySurface(seen.getValue(Seat.SELF).observed && seen.getValue(Seat.SELF).reason=="table_surface_visible",self.isNotEmpty(),
             owned.ambiguous.any { it.box.cy in .285f.. .48f && it.box.cx in .32f.. .70f })
+        val plays=owned.seats.mapValues { (seat,g) -> ObservedPlay(g.map { it.card },g.minOfOrNull { it.confidence } ?: 1f,g,seen.getValue(seat).observed) }
         trace?.appendLine("{\"timeMs\":$time,\"scene\":${quote(scene.name)},\"hand\":${cards(hand)},\"phase\":${quote(ledger.snapshot().phase.name)},\"groups\":{${owned.seats.entries.joinToString(",") { (seat,g) -> "${quote(seat.name)}:${cards(g.map { it.card })}" }}},\"empty\":{${seen.entries.joinToString(",") { (seat,e) -> "${quote(seat.name)}:{\"observed\":${e.observed},\"reason\":${quote(e.reason)}}" }}}" + "}")
         if(confirmedRoundFinished(round) && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.DEALING,TableScene.TRIBUTE)) {
             observer.observe(TableFrame(time,scene,null))
         } else if(owned.ambiguous.isNotEmpty() && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)) {
             ambiguous++; observer.observe(TableFrame(time,scene,if(scene==TableScene.TEAMMATE) null else hand,
-                selfFinished=f[6].toBoolean(),incompleteReason="出牌归属待核对，正在重新识别",ambiguousPresentation=true))
+                plays=plays,selfFinished=f[6].toBoolean(),incompleteReason="出牌归属待核对，正在重新识别",ambiguousPresentation=true,
+                teammateHand=hand.takeIf { scene==TableScene.TEAMMATE && partition.hand.all { it.confidence>=.65f } },
+                teammateHandConfidence=partition.hand.minOfOrNull { it.confidence } ?: 1f))
         } else {
-            val plays=owned.seats.mapValues { (seat,g) -> ObservedPlay(g.map { it.card },g.minOfOrNull { it.confidence } ?: 1f,g,seen.getValue(seat).observed) }
             observer.observe(TableFrame(time,scene,if(scene==TableScene.TEAMMATE) null else hand,plays,f[6].toBoolean(),
-                teammateHand=hand.takeIf { scene==TableScene.TEAMMATE && partition.hand.all { it.confidence>=.65f } }))
+                teammateHand=hand.takeIf { scene==TableScene.TEAMMATE && partition.hand.all { it.confidence>=.65f } },
+                teammateHandConfidence=partition.hand.minOfOrNull { it.confidence } ?: 1f))
         }
         frames++
     } }

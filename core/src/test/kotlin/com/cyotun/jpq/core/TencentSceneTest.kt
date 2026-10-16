@@ -14,6 +14,61 @@ class TencentSceneTest {
     @Test fun remainingCountAloneDoesNotMeanResult() {
         assertEquals(TableScene.TABLE,tencentScene(listOf(hint("剩5张",.9f,.4f)),true,true))
     }
+    @Test fun persistentVerticalAvatarDoubleTagsDoNotBecomeDealing() {
+        // Persistent side-player captions from the real midgame capture.
+        val avatarTags=listOf(
+            SceneHint("加倍",GlyphBox(.1319f,.27f,.1453f,.3575f)),
+            SceneHint("加倍",GlyphBox(.8528f,.2767f,.8658f,.3558f))
+        )
+        assertEquals(TableScene.TABLE,tencentScene(avatarTags,true,true))
+    }
+    @Test fun twoActualCentralDoublingChoicesBecomeDealing() {
+        // Observed central choice presentation in diagnostics: a top-center
+        // choice and the broad central "超级加倍" button.
+        val choices=listOf(
+            SceneHint("不加倍",GlyphBox(.4594f,.1558f,.5406f,.215f)),
+            SceneHint("超级加倍",GlyphBox(.3746f,.365f,.625f,.5108f))
+        )
+        assertEquals(TableScene.DEALING,tencentScene(choices,true,true))
+    }
+    @Test fun oneCentralDoublingChoiceIsNotEnough() {
+        assertEquals(TableScene.TABLE,tencentScene(listOf(
+            SceneHint("加倍",GlyphBox(.4732f,.1575f,.5268f,.2167f))
+        ),true,true))
+    }
+    @Test fun unpositionedAndMalformedDoublingLabelsDoNotCompleteThePair() {
+        val oneValid=SceneHint("加倍",GlyphBox(.4732f,.1575f,.5268f,.2167f))
+        assertEquals(TableScene.TABLE,tencentScene(listOf(
+            oneValid,
+            SceneHint("不加倍",null),
+            SceneHint("超级加倍",GlyphBox(Float.NaN,.36f,.62f,.51f))
+        ),true,true))
+    }
+    @Test fun teammateAndTerminalScenesKeepPriorityOverCentralDoublingChoices() {
+        val choices=listOf(
+            SceneHint("不加倍",GlyphBox(.4594f,.1558f,.5406f,.215f)),
+            SceneHint("超级加倍",GlyphBox(.3746f,.365f,.625f,.5108f))
+        )
+        assertEquals(TableScene.TEAMMATE,tencentScene(choices+hint("队友手牌",.5f,.78f),true,true))
+        assertEquals(TableScene.RESULT,tencentScene(choices+hint("末游",.77f,.34f),true,true))
+        assertEquals(TableScene.RESULT,tencentScene(choices+hint("再来一局",.5f,.8f),true,true))
+    }
+    @Test fun duplicateOcrOrTwoUpperAvatarLabelsAreNotTwoChoiceControls() {
+        val button=SceneHint("加倍",GlyphBox(.4f,.36f,.52f,.43f))
+        assertEquals(TableScene.TABLE,tencentScene(listOf(button,button),true,true))
+        assertEquals(TableScene.TABLE,tencentScene(listOf(
+            SceneHint("加倍",GlyphBox(.4732f,.1575f,.5268f,.2167f)),
+            SceneHint("不加倍",GlyphBox(.4594f,.1558f,.5406f,.215f))
+        ),true,true))
+    }
+    @Test fun actualMultiplierButtonLabelsAreCentralDealEvidence() {
+        // The reviewed red-Q fixture has these three large controls.
+        assertEquals(TableScene.DEALING,tencentScene(listOf(
+            SceneHint("加倍×2",GlyphBox(.26f,.34f,.37f,.42f)),
+            SceneHint("超级加倍x4",GlyphBox(.42f,.34f,.57f,.42f)),
+            SceneHint("不加倍",GlyphBox(.66f,.34f,.78f,.42f))
+        ),true,true))
+    }
     @Test fun nicknameOutsideFinishRegionIsNotATerminalBadge() {
         assertEquals(TableScene.TABLE,tencentScene(listOf(hint("末游",.90f,.52f)),true,true))
     }

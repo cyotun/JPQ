@@ -43,6 +43,18 @@ class CohortGateTest(unittest.TestCase):
         result = self.run_case([self.valid("one"), {**self.valid("two"), "confirmedEvents": 0}])
         self.assertEqual(1, result["passedRounds"])
         self.assertFalse(result["gatePassed"])
+        self.assertFalse(self.run_case([self.valid("one"), {**self.valid("empty"), "confirmedEvents": 0}, self.valid("two")])["gatePassed"])
+
+    def test_user_policy_requires_all_normal_rounds_not_a_fixed_33_round_streak(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)
+            report={"frames":100,"rounds":[self.valid("only-normal-round")]}
+            (path/"source.json").write_text(json.dumps(report),encoding="utf-8")
+            result=cohort.audit([{"session":"source","frames":100}],path,expected_sources=1)
+            self.assertTrue(result["gatePassed"])
+            report["rounds"].append({**self.valid("unfinished-normal-round"),"countsVerified":False})
+            (path/"source.json").write_text(json.dumps(report),encoding="utf-8")
+            self.assertFalse(cohort.audit([{"session":"source","frames":100}],path,expected_sources=1)["gatePassed"])
 
     def test_only_proved_allowed_occlusion_can_be_excluded(self):
         rounds = [self.valid("one"), {**self.valid("masked"), "countsVerified": False}, self.valid("three")]
@@ -86,6 +98,22 @@ class CohortGateTest(unittest.TestCase):
             result = cohort.audit([{"session": "missing", "frames": 100}], Path(folder), expected_sources=1)
             self.assertFalse(result["gatePassed"])
             self.assertEqual("missing_report", result["problems"][0]["reason"])
+
+    def test_reviewed_cut_off_source_is_not_a_way_to_hide_completed_round_failures(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder); artifact=path/"source-tail.txt"; artifact.write_text("Integrity fixture only")
+            review=path/"review.json"; source_sha="c"*64
+            body={"session":"source","roundId":"cut","category":"source_fragment","sourceSha256":source_sha,
+                  "frameRange":[90,100],"confirmedIncompleteSource":True,"reviewedBy":"test reviewer",
+                  "artifacts":[{"path":str(artifact),"sha256":hashlib.sha256(artifact.read_bytes()).hexdigest()}]}
+            review.write_text(json.dumps(body),encoding="utf-8")
+            exclusion={"session":"source","roundId":"cut","category":"source_fragment","reason":"Verified source EOF",
+                       "evidence":{"path":str(review),"sha256":hashlib.sha256(review.read_bytes()).hexdigest()}}
+            fragment={**self.valid("cut"),"endedAt":None,"lastPhase":"ACTIVE","completionObserved":False}
+            self.assertTrue(self.run_case([self.valid("one"),fragment,self.valid("two")],[exclusion],source_sha)["gatePassed"])
+            for change in [{"endedAt":1000},{"resultSceneObserved":True},{"completionObserved":True},{"lastPhase":"FINISHED"}]:
+                with self.assertRaises(ValueError):
+                    self.run_case([self.valid("one"),{**fragment,**change},self.valid("two")],[exclusion],source_sha)
 
 
 if __name__ == "__main__":

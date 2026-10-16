@@ -66,12 +66,13 @@ class OpponentDoubleFinishTest {
         observer.observe(TableFrame(1000,TableScene.TABLE,null))
         assertEquals(RoundPhase.ACTIVE,l.snapshot().phase)
     }
-    @Test fun genuineCapacityConflictStillInvalidatesAnUnfinishedRound() {
+    @Test fun genuineCapacityConflictRetainsAnUnfinishedCheckpointWithoutInventingTheOverflow() {
         val fixture=ObservedFixture()
         val overflow=ObservedPlay(listOf(Card(Rank.TWO,Suit.RED),Card(Rank.TWO,Suit.BLACK)),.99f)
         repeat(2) { fixture.tick(Seat.NEXT,ObservedPlay(emptyList(),1f)) }
         repeat(4) { fixture.tick(Seat.NEXT,overflow) }
-        assertEquals(RoundPhase.UNAVAILABLE,fixture.ledger.snapshot().phase)
+        assertEquals(RoundPhase.RECOVERING,fixture.ledger.snapshot().phase)
+        assertNull(fixture.ledger.snapshot().remaining)
         assertEquals(26,fixture.ledger.snapshot().played(Seat.NEXT))
     }
     @Test fun finalOpponentPlayArchivesBothFinishersInTheFourthVoteFrame() {

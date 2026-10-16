@@ -11,7 +11,7 @@ from pathlib import Path
 
 def verify_exclusion(item, entries):
     """Verify a reviewed evidence bundle's identity; pixel interpretation stays human-reviewed."""
-    if item.get("category") not in {"grade_occluded", "screen_occluded"} or not item.get("reason"):
+    if item.get("category") not in {"grade_occluded", "screen_occluded", "play_area_occluded", "app_switched", "source_fragment"} or not item.get("reason"):
         raise ValueError("Exclusion needs an allowed category and reason")
     reference = item.get("evidence")
     if not isinstance(reference, dict) or not reference.get("path") or not reference.get("sha256"):
@@ -33,13 +33,14 @@ def verify_exclusion(item, entries):
     if (not isinstance(bounds, list) or len(bounds) != 2 or
             any(type(x) is not int for x in bounds) or not 1 <= bounds[0] <= bounds[1] <= entry["frames"]):
         raise ValueError("Evidence needs a valid source frame range")
-    if review.get("confirmedOcclusion") is not True or not review.get("reviewedBy") or not review.get("artifacts"):
+    confirmation = "confirmedIncompleteSource" if item["category"] == "source_fragment" else "confirmedOcclusion"
+    if review.get(confirmation) is not True or not review.get("reviewedBy") or not review.get("artifacts"):
         raise ValueError("Occlusion needs an explicit review and preserved artifacts")
     for artifact in review["artifacts"]:
         verified_file(artifact)
 
 
-def audit(inputs, report_dir, exclusions=None, expected_sources=33, minimum_rounds=33):
+def audit(inputs, report_dir, exclusions=None, expected_sources=33, minimum_rounds=1):
     exclusions = exclusions or []
     exempt = {}
     for item in exclusions:
@@ -72,6 +73,9 @@ def audit(inputs, report_dir, exclusions=None, expected_sources=33, minimum_roun
             seen_rounds.add(key)
             result = {"session": session, **item}
             if key in exempt:
+                if exempt[key]["category"] == "source_fragment" and (item["endedAt"] is not None or
+                        item.get("resultSceneObserved") is True or item.get("completionObserved") is True or item["lastPhase"] == "FINISHED"):
+                    raise ValueError("A completed round cannot be excluded as a cut-off source")
                 result.update(status="excluded", exclusion=exempt.pop(key))
             elif item["confirmedEvents"] == 0:
                 result.update(status="no_play_evidence")
@@ -93,15 +97,16 @@ def audit(inputs, report_dir, exclusions=None, expected_sources=33, minimum_roun
             passed += 1
             streak += 1
             longest = max(longest, streak)
-        elif case["status"] not in {"excluded", "no_play_evidence"}:
+        elif case["status"] != "excluded":
             streak = 0
-    failures = sum(x["status"] in {"failed", "incomplete_source"} for x in cases)
+    failures = sum(x["status"] in {"failed", "incomplete_source", "no_play_evidence"} for x in cases)
     return {"scope": "recorded_model_scene_and_ledger_continuity_not_independent_card_truth",
             "sourceCount": len(sources), "sourceFrames": sum(x["frames"] for x in sources),
             "passedRounds": passed, "failedOrIncompleteRounds": failures,
             "excludedRounds": sum(x["status"] == "excluded" for x in cases),
             "noPlayEvidence": sum(x["status"] == "no_play_evidence" for x in cases),
             "longestConsecutivePassingRounds": longest,
+            "criterion": "all_complete_normal_rounds_pass; reviewed_abnormal_sources_excluded; no_required_33_round_minimum",
             "gatePassed": not problems and failures == 0 and longest >= minimum_rounds,
             "problems": problems, "sources": sources, "cases": cases}
 

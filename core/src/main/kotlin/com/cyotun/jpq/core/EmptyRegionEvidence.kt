@@ -17,6 +17,19 @@ class EmptyRegionEvidence {
     private val regions=mutableMapOf<Seat,GlyphBox>()
     private var previousRound: String?=null
 
+    /** Nonempty detections need no felt-color inference, but still need the
+     * complete source mask set and the full possible group area unobstructed. */
+    fun directlyObserved(scene: TableScene,seat: Seat,glyphs: List<PlayGlyph>,masks: List<GlyphBox>): Boolean =
+        glyphs.isNotEmpty() && masks.none { intersects(it,possibleRegion(scene,seat)) || intersects(it,glyphRegion(glyphs)) }
+    private fun possibleRegion(scene: TableScene,seat: Seat)=when {
+        scene==TableScene.TEAMMATE && seat!=Seat.SELF -> sideRegion
+        seat==Seat.PREVIOUS || seat==Seat.NEXT -> sideRegion
+        seat==Seat.OPPOSITE -> oppositeRegion
+        else -> selfRegion
+    }
+    private fun glyphRegion(glyphs: List<PlayGlyph>)=GlyphBox(glyphs.minOf { it.box.left }-.005f,glyphs.minOf { it.box.top }-.005f,
+        glyphs.maxOf { it.box.right }+.005f,glyphs.maxOf { it.box.bottom }+.005f)
+
     fun evaluate(pixels: IntArray,width: Int,height: Int,scene: TableScene,handCount: Int,
         groups: Map<Seat,List<PlayGlyph>>,roundId: String?,masks: List<GlyphBox> = emptyList()): Map<Seat,EmptyEvidence> {
         if(scene in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE) ||
@@ -30,17 +43,11 @@ class EmptyRegionEvidence {
         }
         return Seat.entries.associateWith { seat ->
             val glyphs=groups[seat].orEmpty()
-            val possible=when {
-                scene==TableScene.TEAMMATE && seat!=Seat.SELF -> sideRegion
-                seat==Seat.PREVIOUS || seat==Seat.NEXT -> sideRegion
-                seat==Seat.OPPOSITE -> oppositeRegion
-                else -> selfRegion
-            }
+            val possible=possibleRegion(scene,seat)
             val possibleMasked=masks.any { intersects(it,possible) }
             if(glyphs.isNotEmpty()) {
-                val rect=GlyphBox(glyphs.minOf { it.box.left }-.005f,glyphs.minOf { it.box.top }-.005f,
-                    glyphs.maxOf { it.box.right }+.005f,glyphs.maxOf { it.box.bottom }+.005f)
-                val masked=possibleMasked || masks.any { intersects(it,rect) }
+                val rect=glyphRegion(glyphs)
+                val masked=!directlyObserved(scene,seat,glyphs,masks)
                 if(!masked && glyphs.minOf { it.confidence }>=.65f) regions[seat]=rect
                 EmptyEvidence(!masked,if(masked) "overlay_occlusion" else "detected_glyphs")
             } else {
