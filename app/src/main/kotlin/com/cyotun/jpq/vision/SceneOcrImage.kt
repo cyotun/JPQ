@@ -10,7 +10,7 @@ import kotlin.math.ceil
 /** One OCR request: unchanged scene scale, plus isolated copies of actual HUD panels.
  * Every returned text box is mapped to its source pixels before it becomes evidence.
  */
-internal class SceneOcrImage(source: Bitmap) : AutoCloseable {
+internal class SceneOcrImage(source: Bitmap,includeRemainingCounts: Boolean=false) : AutoCloseable {
     private val sourceWidth=source.width
     private val sourceHeight=source.height
     private val scale=minOf(1f,1280f/maxOf(sourceWidth,sourceHeight))
@@ -36,17 +36,34 @@ internal class SceneOcrImage(source: Bitmap) : AutoCloseable {
                 .also { nextY=it.target.bottom+padding*2 }
         }
     }
-    val bitmap=Bitmap.createBitmap(maxOf(sceneWidth,hudRegions.maxOfOrNull { it.target.right+padding } ?: 0),
-        hudRegions.lastOrNull()?.let { it.target.bottom+padding } ?: sceneHeight,Bitmap.Config.ARGB_8888)
+    // Small isolated badge copies preserve Chinese strokes which disappear in
+    // the 1280-wide full scene. Only interruption recovery requests these crops;
+    // they never change normal capture cost or become scene/grade text.
+    val countRegions: List<Region> = if(!includeRemainingCounts || sourceWidth<=sourceHeight) emptyList() else {
+        val areas=listOf(floatArrayOf(.055f,.34f,.18f,.44f),floatArrayOf(.82f,.34f,.945f,.44f),
+            floatArrayOf(.40f,.10f,.62f,.17f))
+        var nextY=(hudRegions.lastOrNull()?.target?.bottom ?: sceneHeight)+padding*2
+        areas.map { area ->
+            val crop=Rect((area[0]*sourceWidth).toInt(),(area[1]*sourceHeight).toInt(),
+                ceil(area[2]*sourceWidth).toInt(),ceil(area[3]*sourceHeight).toInt())
+            val zoom=if(sourceWidth<=2800 && sourceHeight<=1400) 2 else 1
+            Region(crop,Rect(padding,nextY,padding+crop.width()*zoom,nextY+crop.height()*zoom),zoom)
+                .also { nextY=it.target.bottom+padding*2 }
+        }
+    }
+    private val regions=hudRegions+countRegions
+    val bitmap=Bitmap.createBitmap(maxOf(sceneWidth,regions.maxOfOrNull { it.target.right+padding } ?: 0),
+        regions.lastOrNull()?.let { it.target.bottom+padding } ?: sceneHeight,Bitmap.Config.ARGB_8888)
     init {
         val canvas=Canvas(bitmap)
         canvas.drawColor(Color.BLACK)
         val paint=Paint(Paint.FILTER_BITMAP_FLAG)
         canvas.drawBitmap(source,null,Rect(0,0,sceneWidth,sceneHeight),paint)
-        hudRegions.forEach { canvas.drawBitmap(source,it.source,it.target,paint) }
+        regions.forEach { canvas.drawBitmap(source,it.source,it.target,paint) }
     }
     fun isScene(box: Rect?)=box!=null && box.left>=0 && box.top>=0 &&
         box.right<=sceneWidth && box.bottom<=sceneHeight && box.width()>0 && box.height()>0
+    fun isRemainingCount(box: Rect?)=box!=null && box.width()>0 && box.height()>0 && countRegions.any { it.target.contains(box) }
 
     fun toSource(box: Rect?): Rect? {
         if(box==null || box.width()<=0 || box.height()<=0) return null
@@ -56,7 +73,7 @@ internal class SceneOcrImage(source: Bitmap) : AutoCloseable {
                 ceil(box.right*sourceWidth.toFloat()/sceneWidth).toInt(),
                 ceil(box.bottom*sourceHeight.toFloat()/sceneHeight).toInt())
             else -> {
-                val region=hudRegions.singleOrNull { it.target.contains(box) } ?: return null
+                val region=regions.singleOrNull { it.target.contains(box) } ?: return null
                 val crop=region.source; val target=region.target; val hudScale=region.scale
                 Rect(crop.left+(box.left-target.left)/hudScale,crop.top+(box.top-target.top)/hudScale,
                     crop.left+ceil((box.right-target.left).toFloat()/hudScale).toInt(),

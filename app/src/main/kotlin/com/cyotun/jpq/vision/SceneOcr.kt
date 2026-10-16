@@ -16,7 +16,8 @@ data class OcrLine(val text: String,val box: Rect?)
 data class SceneText(val lines: List<OcrLine>,val timeMs: Long,val width: Int,val height: Int,val visibilityEpoch: Long=0L,
                      val gradeElements: List<OcrLine> = emptyList(),
                      val metadataElements: List<OcrLine> = emptyList(),
-                     val remainingCountPixels: RemainingCountPixels? = null)
+                     val remainingCountPixels: RemainingCountPixels? = null,
+                     val remainingCountElements: List<OcrLine> = emptyList())
 /** OCR never blocks card inference. Its owned immutable snapshot survives the next frame. */
 class SceneOcr: AutoCloseable {
     private val recognizer=TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
@@ -34,7 +35,7 @@ class SceneOcr: AutoCloseable {
             // Ordinary play/startup keeps its original allocation path. These
             // optional patches are needed only while reconciling an interruption.
             val countPixels=if(captureRemainingCounts) RemainingCountPixels.capture(bitmap) else null
-            val owned=SceneOcrImage(bitmap)
+            val owned=SceneOcrImage(bitmap,includeRemainingCounts=captureRemainingCounts)
             copy=owned
             recognizer.process(InputImage.fromBitmap(owned.bitmap,0)).addOnCompleteListener { task ->
                 try {
@@ -44,7 +45,7 @@ class SceneOcr: AutoCloseable {
                         // Use the recognizer's actual character boxes for merged
                         // HUD points such as JJ. Never divide a word box into
                         // guessed equal halves, and never split 10 into 1/0.
-                        val hudSymbols=elements.filter { owned.toSource(it.boundingBox)!=null }.flatMap { element ->
+                        val hudSymbols=elements.filter { owned.toSource(it.boundingBox)!=null && !owned.isRemainingCount(it.boundingBox) }.flatMap { element ->
                             tencentGradeSymbolTokens(element.symbols.map { symbol ->
                                 SceneHint(symbol.text,owned.symbolToSource(symbol.boundingBox,element.boundingBox)?.let { b -> GlyphBox(
                                     b.left.toFloat()/sourceWidth,b.top.toFloat()/sourceHeight,
@@ -62,8 +63,8 @@ class SceneOcr: AutoCloseable {
                                 .filter { owned.isScene(it.boundingBox) && it.text.replace(" ","")=="级" }.map { element ->
                                     OcrLine("级",owned.toSource(element.boundingBox))
                                 },
-                            (elements.map { OcrLine(it.text,owned.toSource(it.boundingBox)) }+
-                                result.textBlocks.flatMap { it.lines }.filter { !owned.isScene(it.boundingBox) }
+                            (elements.filter { !owned.isRemainingCount(it.boundingBox) }.map { OcrLine(it.text,owned.toSource(it.boundingBox)) }+
+                                result.textBlocks.flatMap { it.lines }.filter { !owned.isScene(it.boundingBox) && !owned.isRemainingCount(it.boundingBox) }
                                     .map { OcrLine(it.text,owned.toSource(it.boundingBox)) })
                                 .filter { element ->
                                     val compact=tencentGradeHudToken(element.text).uppercase()
@@ -71,7 +72,9 @@ class SceneOcr: AutoCloseable {
                                         Regex("^(?:我方|对方)(?:[2-9AJQK]|10)$").matches(compact))
                                 }.map { element ->
                                     OcrLine(tencentGradeHudToken(element.text),element.box)
-                                }.distinct()+hudSymbols,remainingCountPixels=countPixels)
+                                }.distinct()+hudSymbols,remainingCountPixels=countPixels,
+                            remainingCountElements=result.textBlocks.flatMap { it.lines }.filter { owned.isRemainingCount(it.boundingBox) }
+                                .map { OcrLine(it.text.replace(" ",""),owned.toSource(it.boundingBox)) })
                         synchronized(resultLock) { if(!closed) latest=text }
                     }
                 } catch(error: Exception) { android.util.Log.w("JPQVision","ocr_result_unavailable",error) }

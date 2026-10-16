@@ -11,6 +11,24 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class SceneOcrImageTest {
+    @Test fun recoveryBadgeCopiesHaveIndependentSourceMappingAndBoundedSize() {
+        val source=Bitmap.createBitmap(2608,1200,Bitmap.Config.ARGB_8888)
+        try {
+            SceneOcrImage(source).use { assertTrue(it.countRegions.isEmpty()) }
+            SceneOcrImage(source,includeRemainingCounts=true).use { packed ->
+                assertEquals(3,packed.countRegions.size)
+                assertTrue(packed.bitmap.width*packed.bitmap.height<3_000_000)
+                packed.countRegions.forEach { region ->
+                    assertEquals(region.source,packed.toSource(region.target))
+                    assertTrue(packed.isRemainingCount(region.target))
+                    assertFalse(packed.isScene(region.target))
+                    assertFalse(packed.isRemainingCount(Rect(region.target.left,region.target.top-1,region.target.right,region.target.bottom)))
+                }
+                val first=packed.countRegions.first().target; val next=packed.countRegions[1].target
+                assertNull(packed.toSource(Rect(first.left,first.top,next.right,next.bottom)))
+            }
+        } finally { source.recycle() }
+    }
     @Test fun isolatedCopiesIncludeBothMeasuredHeaderAndBodyAndCannotShareASymbolElement() {
         val source=Bitmap.createBitmap(2608,1200,Bitmap.Config.ARGB_8888)
         try {

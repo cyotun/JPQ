@@ -9,7 +9,7 @@ object TencentRemainingCountSource {
     fun read(bitmap: Bitmap,time: Long,text: SceneText?,masks: List<GlyphBox>): Map<Seat,RemainingHandCount> {
         if(bitmap.width<=bitmap.height || text==null || text.width!=bitmap.width || text.height!=bitmap.height ||
             time-text.timeMs !in 0L..1000L || text.remainingCountPixels==null) return emptyMap()
-        val hints=text.lines.mapNotNull { line ->
+        val hints=(text.remainingCountElements+text.lines).distinct().mapNotNull { line ->
             val rect=line.box ?: return@mapNotNull null
             val box=GlyphBox(rect.left.toFloat()/bitmap.width,rect.top.toFloat()/bitmap.height,
                 rect.right.toFloat()/bitmap.width,rect.bottom.toFloat()/bitmap.height)

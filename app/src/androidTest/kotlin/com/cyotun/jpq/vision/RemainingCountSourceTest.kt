@@ -74,12 +74,14 @@ class RemainingCountSourceTest {
         try {
             val deadline=SystemClock.elapsedRealtime()+15000
             var counts=emptyMap<Seat,RemainingHandCount>()
+            var snapshot: SceneText?=null
             while(SystemClock.elapsedRealtime()<deadline && counts[Seat.PREVIOUS]?.count!=8) {
                 val now=SystemClock.elapsedRealtime(); ocr.request(source,now,captureRemainingCounts=true)
-                counts=TencentRemainingCountSource.read(source,now,ocr.snapshot(source.width,source.height,now),emptyList())
+                snapshot=ocr.snapshot(source.width,source.height,now)
+                counts=TencentRemainingCountSource.read(source,now,snapshot,emptyList())
                 SystemClock.sleep(80)
             }
-            assertEquals(8,counts[Seat.PREVIOUS]?.count)
+            assertEquals("source=${source.width}x${source.height}; badges=${snapshot?.remainingCountElements}; OCR=${snapshot?.lines}",8,counts[Seat.PREVIOUS]?.count)
             assertFalse(Seat.NEXT in counts) // The visible right player has no remaining-card badge.
         } finally { ocr.close(); source.recycle() }
     }
