@@ -199,9 +199,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                         val cards=inputs.map { input ->
                             if(input.glyph.card.rank.isJoker) { physical.add(false); input.glyph.card } else {
                                 val result=reader.classify(input.pixels); observations.add(input to result)
-                                // A gold heart is positive physical wildcard evidence.
-                                // A normal table symbol alone cannot disprove a declared replacement.
-                                physical.add(if(result.goldHeart) true else null)
+                                physical.add(tencentPhysicalWildcardIdentity(input.glyph.card,input.pixels,result,gradeForFrame))
                                 Card(input.glyph.card.rank,result.suit ?: input.glyph.card.suit)
                             }
                         }
@@ -236,7 +234,8 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                     val physicalPool=poolForFrame?.copy(cards=evidence.teammateCards)
                     val identity="${snapshot.roundId}:${rule}:${evidence.initialCards}:${evidence.physicalEventCards}:$physicalPool"
                     if(identity!=counterKey) {
-                        cachedCounterProjection=GradeCounterProjection.create(snapshot,evidence.initialCards,evidence.physicalEventCards,rule,physicalPool)
+                        cachedCounterProjection=GradeCounterProjection.create(snapshot,evidence.initialCards,evidence.physicalEventCards,rule,physicalPool,
+                            TableCardFaces.ORIGINAL)
                         counterKey=identity
                     }
                     // A committed event may arrive before its stable suit annotation.
