@@ -3,6 +3,7 @@ package com.cyotun.jpq.vision
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.cyotun.jpq.AppState
+import com.cyotun.jpq.BuildConfig
 import com.cyotun.jpq.ConfigStore
 import com.cyotun.jpq.DiagnosticArchive
 import com.cyotun.jpq.core.DisplayConfig
@@ -94,6 +95,11 @@ class DeviceEvidenceTest {
     @Test fun exportStoppedCaptureEvidence() {
         val arguments=InstrumentationRegistry.getArguments()
         assumeTrue(arguments.getString("exportEvidence")=="true" || arguments.getString("armCaptureProbe")=="true")
+        val referencePipeline=arguments.getString("enableReferencePipeline")
+        require(referencePipeline==null || referencePipeline in setOf("true","false"))
+        check(!(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && referencePipeline=="true")) {
+            "The candidate build must keep the FULL_CPU detection pipeline"
+        }
         check(!AppState.running) { "Stop capture after the user confirms the game ended" }
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         // Optional only: AndroidX may wait for activity idle inside startActivity
@@ -135,8 +141,7 @@ class DeviceEvidenceTest {
         }
         // Explicit local test selection only. The operator must first review the
         // fixture and continuous replay reports; this exporter is not certification.
-        arguments.getString("enableReferencePipeline")?.let { enabled ->
-            require(enabled in setOf("true","false"))
+        referencePipeline?.let { enabled ->
             val edit=context.getSharedPreferences("jpq-runtime",0).edit()
             if(enabled=="true") edit.putString("referencePipelineFingerprint",android.os.Build.FINGERPRINT)
                 .putString("referencePipelineVersion",ReferenceCardDetector.PIPELINE_VERSION)

@@ -15,7 +15,7 @@ internal class DiagnosticSnapshotGate<T>(val enabled: Boolean, private val sink:
 }
 
 /** Append-only local test evidence. No network, secret values, or other-app identifiers. */
-class SessionTrace(context: Context): AutoCloseable {
+class SessionTrace(context: Context, private val detectionPipeline: String = DetectionPipelinePolicy.FULL_CPU): AutoCloseable {
     val id="${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(8)}"
     private val snapshotEnabled=context.getSharedPreferences("jpq-diagnostics",Context.MODE_PRIVATE).getBoolean("enabled",false)
     private val gate=DiagnosticSnapshotGate(snapshotEnabled, ::write)
@@ -27,6 +27,7 @@ class SessionTrace(context: Context): AutoCloseable {
         writeIfEnabled { JSONObject().put("type","session").put("schemaVersion",1).put("sessionId",id)
             .put("versionCode",BuildConfig.VERSION_CODE).put("versionName",BuildConfig.VERSION_NAME)
             .put("applicationId",context.packageName).put("captureScope",com.cyotun.jpq.AppState.captureScope.name)
+            .put("detectionPipeline",detectionPipeline)
             .put("modelSha256",LocalCardDetector.MODEL_SHA).put("device",Build.MODEL).put("sdk",Build.VERSION.SDK_INT)
             .put("runtimeVersion",LocalCardDetector.RUNTIME_VERSION).put("osBuild",Build.DISPLAY)
             .put("captureProfile",context.getSharedPreferences("jpq-runtime",Context.MODE_PRIVATE).getString("captureProfile","reference"))

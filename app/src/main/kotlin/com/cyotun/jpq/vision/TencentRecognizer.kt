@@ -17,16 +17,19 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     private val diagnosticFolder=java.io.File(context.filesDir,"diagnostic")
     private var lastDiagnostic=0L
     private val detector=VisionRuntime.getDetector(context)
-    private val referenceDetector=context.getSharedPreferences("jpq-runtime",Context.MODE_PRIVATE).let { prefs ->
-        if(prefs.getString("referencePipelineFingerprint","")==android.os.Build.FINGERPRINT &&
-            prefs.getString("referencePipelineVersion","")==ReferenceCardDetector.PIPELINE_VERSION)
-            ReferenceCardDetector(context,detector) else null
+    private val detectionPipeline=context.getSharedPreferences("jpq-runtime",Context.MODE_PRIVATE).let { prefs ->
+        DetectionPipelinePolicy.select(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE,
+            prefs.getString("referencePipelineFingerprint",null),
+            prefs.getString("referencePipelineVersion",null),
+            android.os.Build.FINGERPRINT,ReferenceCardDetector.PIPELINE_VERSION)
     }
+    private val referenceDetector=if(detectionPipeline==DetectionPipelinePolicy.REFERENCE)
+        ReferenceCardDetector(context,detector) else null
     private var referenceEpoch: Long?=null
     private val ownExitTracker=OwnExitPresentationTracker()
     private var referenceRoundId: String?=null
     private val ocr=SceneOcr()
-    private val trace=SessionTrace(context)
+    private val trace=SessionTrace(context,detectionPipeline)
     private val straightFlush=StraightFlushAnalyzer(context,sessionGuard,
         { sessionAlive() && frameAvailable() && !closed },visibilityEpoch,report={},
         remainingPool={ snapshot,epoch -> AppState.remainingPoolFor(snapshot,epoch) },
