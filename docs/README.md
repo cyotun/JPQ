@@ -12,6 +12,7 @@
 | 看批准的视觉方案 | [首页和级牌](design/home-redesign/README.md)、[同花顺金字](design/straight-flush-ranks/README.md)、[遮挡提示](design/grade-occlusion/README.md) |
 | 维护更新服务器 | [接口与部署](../services/updates/README.md)、[更新契约](design/update-contract.md)、[部署记录](deployment/cloudflare-status.md) |
 | 查参考 APK 的研究依据 | [研究索引](research/apk-analysis.md)、[方法](research/method-analysis.md)、[遮挡调查](research/reference-capture-occlusion-review.md) |
+| 跟进独立单应用采集与降耗候选，不覆盖稳定版 | [候选验证与回滚](development/single-app-candidate.md)、[研究依据](research/single-app-capture-and-power-20261019.md) |
 
 ## 文档优先级与历史
 

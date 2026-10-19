@@ -28,8 +28,9 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     private val ocr=SceneOcr()
     private val trace=SessionTrace(context)
     private val straightFlush=StraightFlushAnalyzer(context,sessionGuard,
-        { sessionAlive() && frameAvailable() && !closed },visibilityEpoch,report={ trace.write(it) },
-        remainingPool={ snapshot,epoch -> AppState.remainingPoolFor(snapshot,epoch) })
+        { sessionAlive() && frameAvailable() && !closed },visibilityEpoch,report={},
+        remainingPool={ snapshot,epoch -> AppState.remainingPoolFor(snapshot,epoch) },
+        lazyReport={ trace.writeIfEnabled(it) })
     private val evidenceIo=java.util.concurrent.Executors.newSingleThreadExecutor()
     private val evidenceBusy=java.util.concurrent.atomic.AtomicBoolean(false)
     private val emptyGuard=EmptyRegionGuard()
@@ -48,10 +49,10 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         val changes=events.filter { tracedEvents[it.eventId]!=it }
         tracedEvents=events.associateBy { it.eventId }
         android.util.Log.i("JPQRound","phase=${snapshot.phase} remaining=${snapshot.remaining?.values?.sum()} plays=${listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).map { snapshot.played(it) }}")
-        trace.write(JSONObject().put("type","ledger").put("elapsedMs",SystemClock.elapsedRealtime()).put("roundId",snapshot.roundId)
+        trace.writeIfEnabled { JSONObject().put("type","ledger").put("elapsedMs",SystemClock.elapsedRealtime()).put("roundId",snapshot.roundId)
             .put("phase",snapshot.phase.name).put("reason",snapshot.reason).put("remaining",snapshot.remaining?.let { JSONObject(it.mapKeys { entry -> entry.key.name }) } ?: JSONObject.NULL)
             .put("played",JSONObject(snapshot.plays.mapKeys { it.key.name }.mapValues { it.value.sumOf { p -> p.cards.size } }))
-            .put("changes",JSONArray(changes.map { p -> JSONObject().put("id",p.eventId).put("sequence",p.sequence).put("seat",p.seat.name).put("cards",JSONArray(p.cards.map { it.colorKey() })) })))
+            .put("changes",JSONArray(changes.map { p -> JSONObject().put("id",p.eventId).put("sequence",p.sequence).put("seat",p.seat.name).put("cards",JSONArray(p.cards.map { it.colorKey() })) })) }
         if(frameCurrent()) AppState.message=when(snapshot.phase) {
             RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED -> "正在记牌"
             RoundPhase.RECOVERING -> snapshot.reason ?: "正在重新核对牌面"
@@ -78,12 +79,12 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         if(!frameCurrent()) return
         observer.observe(frame)
         val state=observer.diagnosticStatus()
-        trace.write(JSONObject().put("type","observer").put("elapsedMs",frame.timeMs).put("frame",frameNumber)
+        trace.writeIfEnabled { JSONObject().put("type","observer").put("elapsedMs",frame.timeMs).put("frame",frameNumber)
             .put("armed",state.armed).put("locked",state.locked).put("baselineWindow",state.baselineWindow).put("tribute",state.tribute)
             .put("recovering",state.recovering)
             .put("dealingChoicesObserved",frame.dealingChoicesObserved)
             .put("handVotes",state.handVotes).put("playVotes",JSONObject(state.playVotes.mapKeys { it.key.name }))
-            .put("pendingPlays",state.pendingPlays).put("sequence",state.sequence))
+            .put("pendingPlays",state.pendingPlays).put("sequence",state.sequence) }
       }
     }
     override fun observe(captured: CapturedFrame) {
@@ -92,12 +93,12 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         if(captured.bitmap==null || !captured.completeDisplay) {
             onPipelineStage(if(captured.bitmap==null) "null_bitmap" else "partial_capture")
             val now=captured.capturedElapsedMs
-            trace.write(JSONObject().put("type","frame").put("elapsedMs",now).put("width",captured.width).put("height",captured.height)
+            trace.writeIfEnabled { JSONObject().put("type","frame").put("elapsedMs",now).put("width",captured.width).put("height",captured.height)
                 .put("scene","UNKNOWN").put("reason",when {
                     captured.adjusting -> "adjustment_occlusion"
                     captured.bitmap==null -> "portrait_non_game"
                     else -> "partial_capture_crop"
-                }))
+                }) }
             observe(TableFrame(now,TableScene.UNKNOWN,null,captureGap=true)); return
         }
         val start=captured.capturedElapsedMs; frameNumber++
@@ -197,7 +198,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 dealingChoicesObserved=detectedScene==TableScene.DEALING,remainingHandCounts=remainingHandCounts,
                 openingChoiceSourceTimeMs=openingChoiceSourceTimeMs),partition.hand,emptyEvidence,normalizedMasks)
             fun rounded(value: Float)=kotlin.math.round(value*10000f)/10000f
-            trace.write(JSONObject().put("type","frame").put("frame",frameNumber).put("imageTimestampNs",captured.imageTimestampNs).put("elapsedMs",start)
+            trace.writeIfEnabled { JSONObject().put("type","frame").put("frame",frameNumber).put("imageTimestampNs",captured.imageTimestampNs).put("elapsedMs",start)
                 .put("width",captured.width).put("height",captured.height).put("scene",scene.name).put("backend",referenceDetector?.backend ?: detector.backend)
                 .put("detectedScene",detectedScene.name)
                 .put("dealingChoicesObserved",detectedScene==TableScene.DEALING).put("adjusting",captured.adjusting)
@@ -250,7 +251,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                     JSONObject().put("text",hint.text).put("box",hint.box?.let { box ->
                         JSONArray(listOf(rounded(box.left),rounded(box.top),rounded(box.right),rounded(box.bottom)))
                     } ?: JSONObject.NULL)
-                })))
+                })) }
             if(diagnostics.getBoolean("enabled",false) && SystemClock.elapsedRealtime()-lastDiagnostic>=2000) {
                 android.util.Log.i("JPQVision","scene=$scene hand=${hand.map { it.colorKey() }} passing=$passing groups=${ownership.seats.mapValues { (_,p) -> p.map { it.card.colorKey() } }} ambiguous=${ownership.ambiguous.size}")
             }

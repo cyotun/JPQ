@@ -43,10 +43,10 @@
 对应 core 回放任务可输入单 tape 或 tape 目录：
 
 ```powershell
-./tools/android/build.ps1 -Tasks ':core:replayLoggedFrames','-PloggedTape=captures/phone/<run>/source-replay','-PloggedOutput=captures/phone/<run>/replay-new'
+./tools/android/build.ps1 -Tasks ':core:replayLoggedFrames','-PloggedTape=D:/JPQ/captures/phone/<run>/source-replay','-PloggedOutput=D:/JPQ/captures/phone/<run>/replay-new'
 ```
 
-重跑原固定来源时使用下面的真实本机路径，每次 `OutputDirectory` 必须全新。素材不在新克隆仓库内，缺失时不能声称执行过：
+`loggedTape` 和 `loggedOutput` 必须为绝对路径（上例按实际仓库位置替换），JavaExec 默认工作目录属于 core 子工程。重跑原固定来源时使用下面的真实本机路径，每次 `OutputDirectory` 必须全新。素材不在新克隆仓库内，缺失时不能声称执行过：
 
 ```powershell
 ./tools/android/run-replay-cohort.ps1 `

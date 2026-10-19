@@ -47,7 +47,8 @@ class MainActivity : ComponentActivity() {
         capturePending=false
         val data=result.data
         if(result.resultCode==RESULT_OK && data!=null) {
-            startForegroundService(Intent(this,CaptureService::class.java).putExtra("code",result.resultCode).putExtra("data",data))
+            startForegroundService(Intent(this,CaptureService::class.java).putExtra("code",result.resultCode).putExtra("data",data)
+                .putExtra(ProjectionConsentRequest.SCOPE_EXTRA,ProjectionConsentRequest.scope.name))
             moveTaskToBack(true)
         }
         updateState()
@@ -458,6 +459,9 @@ class MainActivity : ComponentActivity() {
     private fun changed() { if(AppState.running) startService(Intent(this,CaptureService::class.java).setAction("CONFIG")) }
     private fun startCapture() {
         if(AppState.running) { stopCapture(); return }
+        if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && Build.VERSION.SDK_INT<37) {
+            Toast.makeText(this,"本轮单应用候选版需要 Android 17，请继续使用稳定版",Toast.LENGTH_LONG).show(); return
+        }
         if(selectedPlatform()?.profile==null) { chooseGame(); return }
         if(capturePending) return
         if(!Settings.canDrawOverlays(this)) { navigate("permissions"); Toast.makeText(this,"请先开启悬浮窗权限",Toast.LENGTH_LONG).show(); return }
@@ -469,8 +473,13 @@ class MainActivity : ComponentActivity() {
     }
     private fun requestProjection() {
         val manager=getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val request=if(Build.VERSION.SDK_INT>=34) manager.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()) else manager.createScreenCaptureIntent()
-        captureResult.launch(request)
+        try { captureResult.launch(ProjectionConsentRequest.create(manager)) }
+        catch(error: Exception) {
+            capturePending=false; updateState()
+            android.util.Log.w("JPQCapture","consent_unavailable",error)
+            Toast.makeText(this,if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE)
+                "系统暂不支持本轮单应用授权，请继续使用稳定版" else "暂时无法打开屏幕共享授权",Toast.LENGTH_LONG).show()
+        }
     }
     private fun stopCapture() {
         if(stopPending) return

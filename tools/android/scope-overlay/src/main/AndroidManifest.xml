@@ -1,9 +1,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="com.cyotun.jpq.scopeoverlay.BIND_PROBE" />
     <permission android:name="com.cyotun.jpq.scopeoverlay.BIND_PROBE" android:protectionLevel="signature" />
     <queries><package android:name="com.cyotun.jpq.tests" /></queries>
     <application android:label="记牌器实验悬浮层" android:allowBackup="false">
+        <activity android:name=".ScopeOverlayLauncherActivity" android:exported="true"
+            android:label="悬浮层探针（手动启动）" android:theme="@style/ScopeOverlayProbeTheme"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <service android:name=".ScopeOverlayService" android:exported="true"
-            android:permission="com.cyotun.jpq.scopeoverlay.BIND_PROBE" />
+            android:permission="com.cyotun.jpq.scopeoverlay.BIND_PROBE"
+            android:foregroundServiceType="shortService" />
     </application>
 </manifest>

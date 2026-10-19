@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-19",
+  "status": "candidate_non_game_validation_in_progress",
+  "branch": "codex/single-app-capture-power",
+  "stable": {
+    "tag": "v0.2.26",
+    "commit": "ea5568147ecd24b59120a03360fcb4cd4248d01d",
+    "package": "com.cyotun.jpq",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression",
+    "apkSha256": "7033136f84a8f28b16106724c26e3651f9e156b9e5d29098fc6b413b70b8411c",
+    "rollbackVerified": true,
+    "sourceBundleRestoredAndVerified": true,
+    "installedVersionAndUpdateTimeUnchanged": true
+  },
+  "candidate": {
+    "package": "com.cyotun.jpq.candidate",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression-candidate",
+    "apkSha256": "c8e53f568f7ed11643fd3838261d69f0843873fe8aa1e169a8515405b0c91406",
+    "apkBytes": 73066526,
+    "testPackage": "com.cyotun.jpq.candidate.tests",
+    "testApkSha256": "e46996e3ecc0c6fa9d2c541713db1f0af95704a65337c9cc6da8dee37bb1185d",
+    "stableUpdaterDisabled": true,
+    "minimumApi": 37,
+    "scope": "APP_TASK",
+    "publicApiOnly": true
+  },
+  "offline": {
+    "coreTests": 631,
+    "releaseHostTests": 8,
+    "candidateHostTests": 8,
+    "failures": 0,
+    "lintErrors": 0,
+    "latestReplay": {
+      "frames": 3749,
+      "finished": 3,
+      "verifiedFinished": 3,
+      "failures": 0,
+      "unresolved": 0
+    },
+    "oldCohort": {
+      "sources": 33,
+      "frames": 153200,
+      "passedRounds": 40,
+      "excludedRounds": 8,
+      "originalEvidenceGaps": 2,
+      "gatePassed": false,
+      "unchangedFromStable": true
+    },
+    "sourceFingerprintSha256": "d38ea969200a2cf8c224a1233db621677de5a5fc898fd7469a288e3e2f2dd51a",
+    "sourceUnchangedAfterFinalSweep": true
+  },
+  "phone": {
+    "model": "2509FPN0BC",
+    "api": 37,
+    "candidateIsolationContractTests": 3,
+    "contractFailuresAfterFix": 0,
+    "realTencentTaskProjectionVerified": true,
+    "ownCounterOverlayExcluded": true,
+    "ownCounterPhysicalBounds": [
+      399,
+      394,
+      1653,
+      532
+    ],
+    "physicalTimeMs": 1792403114690,
+    "nearestRawInputTimeMs": 1792403114319,
+    "rawInputSampleCount": 3,
+    "rawConversionPixelMismatches": 0,
+    "normalStopReleasesProjection": true,
+    "externalOverlayIsolation": "pending_retest_with_foreground_helper",
+    "systemNotificationIsolation": "pending",
+    "liveMatchAccuracy": "pending",
+    "powerAndTemperatureBenefit": "not_measured",
+    "stablePublished": false
+  },
+  "scope": "Recorded replay and non-game pixel isolation, not a 99.9 percent accuracy or energy certification"
+}

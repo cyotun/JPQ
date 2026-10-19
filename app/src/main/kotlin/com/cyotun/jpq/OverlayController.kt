@@ -208,6 +208,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private fun safeGradePosition(screen: Rect,bar: GradeOcclusionRect,grade: GradeOcclusionRect)=
         GradeOcclusionGeometry.safeTopPosition(screen.width(),screen.height(),bar.width,bar.height,bar.left,grade,dp(4f).roundToInt())
     private fun updateGradeTip() {
+        if(AppState.captureScope==CaptureScope.APP_TASK && !preview) { removeTip(); return }
         if(!added || disposed || preview || view.width<=0 || view.height<=0) { removeTip(); return }
         // Actual current-deal HUD evidence also permits a warning while dealing;
         // waiting for the 27-card baseline is unrelated to physical occlusion.

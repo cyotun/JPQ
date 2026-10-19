@@ -7,24 +7,35 @@ import com.cyotun.jpq.BuildConfig
 import org.json.JSONObject
 import java.io.File
 
+/** Captures the session's diagnostics preference once and delays record creation until enabled. */
+internal class DiagnosticSnapshotGate<T>(val enabled: Boolean, private val sink: (T) -> Unit) {
+    fun write(record: () -> T) {
+        if (enabled) sink(record())
+    }
+}
+
 /** Append-only local test evidence. No network, secret values, or other-app identifiers. */
 class SessionTrace(context: Context): AutoCloseable {
     val id="${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(8)}"
-    private val enabled=context.getSharedPreferences("jpq-diagnostics",Context.MODE_PRIVATE).getBoolean("enabled",false)
+    private val snapshotEnabled=context.getSharedPreferences("jpq-diagnostics",Context.MODE_PRIVATE).getBoolean("enabled",false)
+    private val gate=DiagnosticSnapshotGate(snapshotEnabled, ::write)
+    val enabled get()=gate.enabled
     private val folder=File(context.filesDir,"sessions/$id").apply { if(enabled) mkdirs() }
     private var writer=if(enabled) runCatching { File(folder,"trace.jsonl").bufferedWriter() }.getOrNull() else null
     private var flushed=0L
     init {
-        write(JSONObject().put("type","session").put("schemaVersion",1).put("sessionId",id)
+        writeIfEnabled { JSONObject().put("type","session").put("schemaVersion",1).put("sessionId",id)
             .put("versionCode",BuildConfig.VERSION_CODE).put("versionName",BuildConfig.VERSION_NAME)
+            .put("applicationId",context.packageName).put("captureScope",com.cyotun.jpq.AppState.captureScope.name)
             .put("modelSha256",LocalCardDetector.MODEL_SHA).put("device",Build.MODEL).put("sdk",Build.VERSION.SDK_INT)
             .put("runtimeVersion",LocalCardDetector.RUNTIME_VERSION).put("osBuild",Build.DISPLAY)
             .put("captureProfile",context.getSharedPreferences("jpq-runtime",Context.MODE_PRIVATE).getString("captureProfile","reference"))
             .put("gameVersion",runCatching { @Suppress("DEPRECATION") context.packageManager.getPackageInfo("com.tencent.guandansy",0).versionName }.getOrNull())
             .put("densityDpi",context.resources.displayMetrics.densityDpi)
             .put("displayConfig",JSONObject(com.cyotun.jpq.ConfigStore(context).export()).getJSONObject("display"))
-            .put("wallTimeMs",System.currentTimeMillis()).put("elapsedMs",SystemClock.elapsedRealtime()))
+            .put("wallTimeMs",System.currentTimeMillis()).put("elapsedMs",SystemClock.elapsedRealtime()) }
     }
+    fun writeIfEnabled(record: () -> JSONObject) = gate.write(record)
     @Synchronized fun write(record: JSONObject) {
         if(!enabled) return
         val encoded=record.put("sessionId",id).toString()

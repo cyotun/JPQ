@@ -66,6 +66,7 @@ object AppState {
     @Volatile var capturedHeight = 0
     @Volatile var sourceWidth = 0
     @Volatile var sourceHeight = 0
+    @Volatile var captureScope = CaptureScope.DISPLAY
     @Volatile var message = "等待开始记牌"
     @Volatile var recognitionReady = false
     @Volatile var straightFlushState = StraightFlushState.UNKNOWN

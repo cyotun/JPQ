@@ -2,6 +2,7 @@ import java.security.MessageDigest
 import java.util.Properties
 
 plugins { id("com.android.application"); kotlin("android") }
+val jpqCandidate = providers.gradleProperty("jpqCandidate").orNull == "true"
 android {
     namespace = "com.cyotun.jpq"
     compileSdk = 36
@@ -11,13 +12,13 @@ android {
         targetSdk = 36
         versionCode = 28
         versionName = "0.2.26-regression"
-        testApplicationId = "com.cyotun.jpq.tests"
+        testApplicationId = if (jpqCandidate) "com.cyotun.jpq.candidate.tests" else "com.cyotun.jpq.tests"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     buildFeatures { buildConfig = true }
-    testBuildType = "release"
+    testBuildType = if (jpqCandidate) "candidate" else "release"
     val identityFile=rootProject.file(".signing/release.properties")
     if(identityFile.exists()) {
         val identity=Properties().apply { identityFile.inputStream().use { load(it) } }
@@ -27,7 +28,22 @@ android {
         }
         buildTypes.getByName("release").signingConfig=signingConfigs.getByName("personal")
     }
-    buildTypes { getByName("debug") { applicationIdSuffix = ".dev"; versionNameSuffix = "+debug" } }
+    buildTypes {
+        getByName("release") {
+            buildConfigField("boolean", "SINGLE_APP_CAPTURE_CANDIDATE", "false")
+        }
+        getByName("debug") {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "+debug"
+            buildConfigField("boolean", "SINGLE_APP_CAPTURE_CANDIDATE", "false")
+        }
+        create("candidate") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".candidate"
+            versionNameSuffix = "-candidate"
+            buildConfigField("boolean", "SINGLE_APP_CAPTURE_CANDIDATE", "true")
+        }
+    }
 }
 kotlin { jvmToolchain(17) }
 dependencies {

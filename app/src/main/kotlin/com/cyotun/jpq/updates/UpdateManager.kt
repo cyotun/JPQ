@@ -17,14 +17,15 @@ import java.util.Base64
 import javax.net.ssl.HttpsURLConnection
 
 class UpdateManager(private val context: Context) {
+    private val candidate = BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE
     private val prefs=context.getSharedPreferences("jpq-updates",Context.MODE_PRIVATE)
     private val folder=File(context.filesDir,"updates").apply { mkdirs() }
     private val apk=File(folder,"verified.apk")
     private val partial=File(folder,"download.part")
     private val manifestFile=File(folder,"verified-manifest.json")
     private val publicKey=context.assets.open("update-key.txt").bufferedReader().use { Base64.getDecoder().decode(it.readText().trim()) }
-    fun status()=prefs.getString("status","尚未检查更新")!!
-    private fun status(value: String) { prefs.edit().putString("status",value).apply() }
+    fun status()=if(candidate) CANDIDATE_STATUS else prefs.getString("status","尚未检查更新")!!
+    private fun status(value: String) { if(!candidate) prefs.edit().putString("status",value).apply() }
     private fun wifi(): Boolean {
         val cm=context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val cap=cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
@@ -35,6 +36,7 @@ class UpdateManager(private val context: Context) {
         connectTimeout=15000; readTimeout=20000; instanceFollowRedirects=false; setRequestProperty("Accept-Encoding","identity")
     }
     fun check(manual: Boolean=false): Boolean = synchronized(lock) {
+        if(candidate) { status(CANDIDATE_STATUS); return@synchronized false }
         if(!manual && System.currentTimeMillis()-prefs.getLong("checked",0)<86400000) return@synchronized false
         status("正在检查更新")
         runCatching {
@@ -56,11 +58,13 @@ class UpdateManager(private val context: Context) {
         }.getOrElse { status("暂时无法检查更新，请稍后重试"); false }
     }
     private fun release(): ReleaseManifest {
+        check(!candidate) { CANDIDATE_STATUS }
         require(manifestFile.exists() && manifestFile.length()<=32768)
         val r=ReleaseManifest.parse(manifestFile.readText()); require(r.verify(publicKey)); require(r.packageName==context.packageName && r.versionCode>currentVersion() && r.minSdk<=Build.VERSION.SDK_INT)
         return r
     }
     fun download(manual: Boolean=false,shouldCancel: ()->Boolean = { false }): Boolean = synchronized(lock) {
+        if(candidate) { status(CANDIDATE_STATUS); return@synchronized false }
         if(AppState.running) { status("记牌停止后再下载更新"); return@synchronized false }
         if(!manual && !wifi()) { status("等待 Wi-Fi 下载更新"); return@synchronized false }
         runCatching {
@@ -115,6 +119,7 @@ class UpdateManager(private val context: Context) {
         require(signatures(target)==signatures(own)); true
     }.getOrDefault(false)
     fun install(activity: Activity) {
+        if(candidate) { status(CANDIDATE_STATUS); return }
         if(AppState.running) { status("请先停止记牌，再安装更新"); return }
         runCatching {
             val r=release(); require(apk.exists() && validApk(apk,r))
@@ -135,13 +140,16 @@ class UpdateManager(private val context: Context) {
             .setContentText("$version · 点击查看并安装").setAutoCancel(true).setContentIntent(open).build())
     }
     companion object {
+        private const val CANDIDATE_STATUS="候选包独立验证中；稳定更新不可用"
         private const val BASE="https://jpq.240438457.workers.dev"
         private val lock=Any()
         fun schedule(context: Context) {
+            if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE) return
             val jobs=context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler
             jobs.schedule(JobInfo.Builder(401,ComponentName(context,UpdateJobService::class.java)).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPeriodic(86400000).setPersisted(true).build())
         }
         fun scheduleDownload(context: Context) {
+            if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE) return
             val jobs=context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler
             jobs.schedule(JobInfo.Builder(402,ComponentName(context,UpdateJobService::class.java)).setRequiredNetworkType(JobInfo.NETWORK_TYPE_UNMETERED).setMinimumLatency(1000).build())
         }

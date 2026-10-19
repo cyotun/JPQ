@@ -16,6 +16,9 @@ import android.os.*
 import android.view.WindowManager
 import com.cyotun.jpq.vision.*
 import com.cyotun.jpq.core.LatestFrameDispatcher
+import com.cyotun.jpq.core.CaptureScope
+import com.cyotun.jpq.core.CaptureInputPolicy
+import com.cyotun.jpq.core.CaptureContentGeometry
 
 class CaptureService : Service() {
     private var projection: MediaProjection? = null
@@ -32,6 +35,8 @@ class CaptureService : Service() {
     @Volatile private var lastFrameError=0L
     private var lastStartId=0
     private var referenceCapture=true
+    private var captureScope=CaptureScope.DISPLAY
+    @Volatile private var contentGeometry=CaptureContentGeometry(CaptureScope.DISPLAY)
     private val lifecycle=CaptureLifecycle()
     private val closed get()=lifecycle.closed
     private val session get()=lifecycle.generation
@@ -119,6 +124,15 @@ class CaptureService : Service() {
         lastFrame=0L; lastFrameError=0L
         AppState.recognitionReady=false
         try {
+            val requestedScope=intent.getStringExtra(ProjectionConsentRequest.SCOPE_EXTRA) ?: CaptureScope.DISPLAY.name
+            captureScope=CaptureScope.valueOf(requestedScope)
+            check(CaptureInputPolicy.acceptsScope(captureScope,BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE,Build.VERSION.SDK_INT))
+            check(!BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE || captureScope==CaptureScope.APP_TASK) {
+                "Candidate capture must use explicit app-only consent"
+            }
+            AppState.captureScope=captureScope
+            contentGeometry=CaptureContentGeometry(captureScope)
+            android.util.Log.i("JPQCapture","capture_scope=${captureScope.name} package=$packageName")
             val data=if(Build.VERSION.SDK_INT>=33) intent.getParcelableExtra("data",Intent::class.java) else @Suppress("DEPRECATION") intent.getParcelableExtra<Intent>("data")
             require(intent.getIntExtra("code",Activity.RESULT_CANCELED)==Activity.RESULT_OK && data!=null) { "Screen capture permission was not granted" }
             createForeground()
@@ -237,9 +251,9 @@ class CaptureService : Service() {
         // Match the reference APK: one fixed landscape canvas at physical resolution.
         // Portrait/landscape source transitions are composed by MediaProjection;
         // resizing and letterboxing for inference happen after capture.
-        val scale=if(referenceCapture) 1f else minOf(1f,1280f/maxOf(width,height))
-        val outputWidth=if(referenceCapture) maxOf(width,height) else (width*scale).toInt().coerceAtLeast(1)
-        val outputHeight=if(referenceCapture) minOf(width,height) else (height*scale).toInt().coerceAtLeast(1)
+        val dimensions=CaptureInputPolicy.dimensions(width,height,captureScope,referenceCapture)
+        val outputWidth=dimensions.width
+        val outputHeight=dimensions.height
         AppState.capturedWidth=outputWidth; AppState.capturedHeight=outputHeight
         android.util.Log.i("JPQCapture","source_size=${width}x$height capture_size=${outputWidth}x$outputHeight profile=${if(referenceCapture) "reference" else "adaptive_scaled"}")
         val capture=checkNotNull(captureWorker)
@@ -256,13 +270,16 @@ class CaptureService : Service() {
                     } ?: return@setOnImageAvailableListener
                 try {
                     val now=SystemClock.elapsedRealtime()
-                    if(now-lastFrame>=33 && generation==session && source===reader && !closed && capturedVisible && epoch==visibilityEpoch && AppState.recognitionReady) {
+                    if(now-lastFrame>=33 && generation==session && source===reader && !closed && capturedVisible && epoch==visibilityEpoch &&
+                        contentGeometry.accepts(image.width,image.height) && AppState.recognitionReady) {
                         lastFrame=now
-                        val masks=listOfNotNull(AppState.barMask,AppState.adjustmentMask,AppState.gradeTipMask).map {
+                        val masks=if(!CaptureInputPolicy.usesScreenOcclusions(captureScope)) emptyList() else
+                            listOfNotNull(AppState.barMask,AppState.adjustmentMask,AppState.gradeTipMask).map {
                             CaptureMask(android.graphics.Rect(it.rectangle),it.screenWidth,it.screenHeight)
                         }
                         health?.captureStage("copy_start")
-                        val frame=capture.capture(image,AppState.sourceWidth,AppState.sourceHeight,AppState.adjusting,masks,now).also {
+                        val frame=capture.capture(image,AppState.sourceWidth,AppState.sourceHeight,
+                            CaptureInputPolicy.pausesForOverlayInteraction(captureScope,AppState.adjusting),masks,now).also {
                             it.visibilityEpoch=epoch
                         }
                         health?.captureStage("copy_end")
@@ -283,8 +300,10 @@ class CaptureService : Service() {
     }
     private fun resize(width: Int,height: Int) {
         if(width<=0 || height<=0 || display==null || closed) return
-        if(width==AppState.sourceWidth && height==AppState.sourceHeight) return
-        if(referenceCapture && maxOf(width,height)==AppState.capturedWidth && minOf(width,height)==AppState.capturedHeight) {
+        if(width==AppState.sourceWidth && height==AppState.sourceHeight) {
+            contentGeometry.confirm(width,height); return
+        }
+        if(captureScope==CaptureScope.DISPLAY && referenceCapture && maxOf(width,height)==AppState.capturedWidth && minOf(width,height)==AppState.capturedHeight) {
             AppState.sourceWidth=width; AppState.sourceHeight=height
             android.util.Log.i("JPQCapture","source_orientation=${width}x$height fixed_capture=${AppState.capturedWidth}x${AppState.capturedHeight}")
             overlay?.refresh(); return
@@ -293,10 +312,30 @@ class CaptureService : Service() {
         // after any image already being copied on the capture worker is released.
         var next: ImageReader?=null
         try {
+            if(captureScope==CaptureScope.APP_TASK) {
+                synchronized(sessionGuard) {
+                    capturedVisible=false; visibilityEpoch++
+                    if(AppState.ledger.snapshot().remaining!=null) {
+                        AppState.markCaptureUnobserved()
+                        val currentRecognizer=recognizer
+                        val resizeGeneration=session
+                        val lostAt=SystemClock.elapsedRealtime()
+                        worker?.post {
+                            synchronized(sessionGuard) {
+                                if(resizeGeneration==session && !closed && recognizer===currentRecognizer) {
+                                    currentRecognizer.observationGap(lostAt,"共享游戏画面尺寸变化，恢复后继续记牌")
+                                    AppState.captureGapCheckpointed()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             val old=reader
             next=newReader(width,height,session)
             display!!.resize(AppState.capturedWidth,AppState.capturedHeight,resources.configuration.densityDpi)
             display!!.surface=next.surface; reader=next
+            contentGeometry.confirm(width,height)
             old?.setOnImageAvailableListener(null,null)
             captureWorker?.handler?.post { old?.close() }
             if(requestedVisible && !capturedVisible) restoreVisibility(session,visibilityEpoch)
@@ -362,6 +401,7 @@ class CaptureService : Service() {
         }
         cleanup.release("app_state") {
             AppState.running=false; AppState.recognitionReady=false; AppState.message=message
+            AppState.captureScope=CaptureScope.DISPLAY
             if(AppState.ledger.snapshot().remaining!=null) AppState.ledger.invalidate(message)
             AppState.captureGapCheckpointed()
             AppState.publishStraightFlush(com.cyotun.jpq.core.StraightFlushResult(StraightFlushState.UNKNOWN),false)

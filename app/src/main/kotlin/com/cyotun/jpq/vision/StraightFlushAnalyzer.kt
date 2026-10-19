@@ -17,7 +17,8 @@ import java.util.concurrent.atomic.AtomicLong
 class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
     private val alive: ()->Boolean,private val visibilityEpoch: ()->Long,
     private val report: (JSONObject)->Unit,
-    private val remainingPool: (RoundSnapshot,Long)->RemainingPoolExclusion?={_,_->null}): AutoCloseable {
+    private val remainingPool: (RoundSnapshot,Long)->RemainingPoolExclusion?={_,_->null},
+    private val lazyReport: ((() -> JSONObject)->Unit)?=null): AutoCloseable {
     private data class Input(val glyph: PlayGlyph,val pixels: SuitSymbolPixels)
     private val store=ConfigStore(context)
     private val reader=SuitPixelReader()
@@ -47,6 +48,11 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
     private var cachedCounterProjection: GradeCounterProjection?=null
     @Volatile private var publishedCounterProjection: GradeCounterProjection?=null
     @Volatile private var closed=false
+
+    private fun emitReport(record: () -> JSONObject) {
+        val sink=lazyReport
+        if(sink!=null) sink(record) else report(record())
+    }
 
     fun onLedgerChanged(snapshot: RoundSnapshot) = synchronized(sessionGuard) {
         if(closed || !alive()) return@synchronized
@@ -91,10 +97,10 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
             val fingerprint="${snapshot.roundId}:$hands:${snapshot.phase}"
             if(fingerprint!=lastCapacityTrace) {
                 lastCapacityTrace=fingerprint
-                report(JSONObject().put("type","straight_flush").put("elapsedMs",SystemClock.elapsedRealtime())
+                emitReport { JSONObject().put("type","straight_flush").put("elapsedMs",SystemClock.elapsedRealtime())
                     .put("roundId",snapshot.roundId).put("state",countProof.state.name)
                     .put("reason",countProof.reason).put("calculationScope","COUNT_BOUND")
-                    .put("remainingHands",JSONArray(hands)).put("analysisSource","seat_capacity"))
+                    .put("remainingHands",JSONArray(hands)).put("analysisSource","seat_capacity") }
             }
         } else lastCapacityTrace=null
     }
@@ -136,11 +142,11 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
         val fingerprint="${source.reading.source}:${rule.ranks}:${rule.confirmed}:${source.obscured}:${source.activeHudTeams}"
         if(fingerprint!=lastGradeTrace) {
             lastGradeTrace=fingerprint
-            report(JSONObject().put("type","grade").put("elapsedMs",time).put("roundId",lastRound ?: JSONObject.NULL)
+            emitReport { JSONObject().put("type","grade").put("elapsedMs",time).put("roundId",lastRound ?: JSONObject.NULL)
                 .put("source",source.reading.source).put("confirmed",rule.confirmed)
                 .put("activeHudTeams",JSONArray(source.activeHudTeams.map { it.name }))
                 .put("hudRegion",source.hudRegion?.let { JSONArray(listOf(it.left,it.top,it.right,it.bottom)) } ?: JSONObject.NULL)
-                .put("ranks",JSONArray(rule.ranks.orEmpty().map { it.name })).put("obscured",source.obscured))
+                .put("ranks",JSONArray(rule.ranks.orEmpty().map { it.name })).put("obscured",source.obscured) }
         }
         } catch(error: Exception) {
             // A failed/obscured read is an abstention. Only a qualified
@@ -297,7 +303,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                         AppState.publishCounterState(counter)
                         cornerGrades=ruleTracker.observedRanks
                         val displayed=publishResult(snapshot,result,rule.confirmed,poolForFrame!=null)
-                        report(JSONObject().put("type","straight_flush").put("elapsedMs",time)
+                        emitReport { JSONObject().put("type","straight_flush").put("elapsedMs",time)
                             .put("roundId",snapshot.roundId).put("state",result.state.name)
                             .put("reason",result.reason ?: JSONObject.NULL).put("ruleConfirmed",rule.confirmed)
                             .put("displayState",displayed.result.state.name)
@@ -316,7 +322,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                                 .put("placement",if(input in ownSet) "HAND" else "TABLE")
                                 .put("similarity",obs.confidence).put("margin",obs.margin).put("reason",obs.reason)
                                 .put("goldHeart",obs.goldHeart) }))
-                            .put("roiPixels",copiedPixels).put("extractMs",extractMs).put("analysisMs",analysisMs))
+                            .put("roiPixels",copiedPixels).put("extractMs",extractMs).put("analysisMs",analysisMs) }
                     }
                     // Database I/O stays outside the capture/ledger lock and runs only when
                     // accepted annotations change. It cannot alter the main round state.
