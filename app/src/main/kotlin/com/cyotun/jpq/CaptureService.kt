@@ -32,8 +32,9 @@ class CaptureService : Service() {
     @Volatile private var lastFrameError=0L
     private var lastStartId=0
     private var referenceCapture=true
-    @Volatile private var closed = false
-    @Volatile private var session = 0L
+    private val lifecycle=CaptureLifecycle()
+    private val closed get()=lifecycle.closed
+    private val session get()=lifecycle.generation
     private val sessionGuard=Any()
     @Volatile private var capturedVisible=true
     @Volatile private var requestedVisible=true
@@ -42,7 +43,7 @@ class CaptureService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var callback: MediaProjection.Callback? = null
     private fun projectionCallback(generation: Long) = object : MediaProjection.Callback() {
-        override fun onStop() { if(generation==session && !closed) shutdown("屏幕共享已停止，请重新开始记牌") }
+        override fun onStop() { shutdown("屏幕共享已停止，请重新开始记牌",generation) }
         override fun onCapturedContentResize(width: Int, height: Int) { if(generation==session) resize(width,height) }
         override fun onCapturedContentVisibilityChanged(visible: Boolean) {
             synchronized(sessionGuard) {
@@ -95,35 +96,43 @@ class CaptureService : Service() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId=startId
-        if (intent?.action == "STOP") { shutdown("记牌已停止"); return START_NOT_STICKY }
+        if (intent?.action == "STOP") {
+            shutdown("记牌已停止")
+            // A duplicate STOP may arrive after this session was already retired.
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         if (intent?.action == "CONFIG") {
             val config=ConfigStore(this).load()
             android.util.Log.i("JPQCapture","display_config history=${config.showHistory} reset=${config.showReset} doubleTap=${config.doubleTapHide}")
-            overlay?.refresh(); return START_NOT_STICKY
+            overlay?.refresh()
+            if(projection==null) stopSelf(startId)
+            return START_NOT_STICKY
         }
-        if (projection != null || intent == null) return START_NOT_STICKY
-        closed=false
+        if (projection != null) return START_NOT_STICKY
+        if (intent == null) { stopSelf(startId); return START_NOT_STICKY }
         AppState.captureGapCheckpointed()
         capturedVisible=true; requestedVisible=true; visibilityEpoch=0L
         referenceCapture=getSharedPreferences("jpq-runtime",MODE_PRIVATE).getString("captureProfile","reference")!="adaptive_scaled"
-        val generation=++session
+        val generation=lifecycle.begin()
         android.util.Log.i("JPQCapture","session_start generation=$generation")
         lastFrame=0L; lastFrameError=0L
         AppState.recognitionReady=false
         try {
             val data=if(Build.VERSION.SDK_INT>=33) intent.getParcelableExtra("data",Intent::class.java) else @Suppress("DEPRECATION") intent.getParcelableExtra<Intent>("data")
-            require(data!=null)
+            require(intent.getIntExtra("code",Activity.RESULT_CANCELED)==Activity.RESULT_OK && data!=null) { "Screen capture permission was not granted" }
             createForeground()
             visualContext=if(Build.VERSION.SDK_INT>=30) {
                 val deviceDisplay=(getSystemService(DISPLAY_SERVICE) as DisplayManager).getDisplay(android.view.Display.DEFAULT_DISPLAY)
                 require(deviceDisplay!=null) { "Main display unavailable" }
                 createDisplayContext(deviceDisplay).createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,null)
             } else this
-            worker=VisionRuntime.handler
+            val visionWorker=VisionRuntime.handler
+            worker=visionWorker
             captureWorker=CaptureWorker(applicationContext)
             val health=CapturePipelineHealth(applicationContext,generation).also { pipelineHealth=it }
             startHealthReports(generation,health)
-            dispatcher=LatestFrameDispatcher({ worker!!.post(it) },{ frame ->
+            dispatcher=LatestFrameDispatcher({ visionWorker.post(it) },{ frame ->
                 health.consumeStarted()
                 try {
                     if(generation==session && !closed && capturedVisible && frame.visibilityEpoch==visibilityEpoch && AppState.recognitionReady) {
@@ -137,7 +146,7 @@ class CaptureService : Service() {
                     }
                 } finally { health.consumeEnded() }
             },{ error -> frameFailed(generation,error) })
-            worker!!.post {
+            visionWorker.post {
                 if(generation==session && !closed) try {
                     // Old session observations/close must finish before clearing its ledger.
                     AppState.ledger.waitForNext()
@@ -308,41 +317,67 @@ class CaptureService : Service() {
         return if(Build.VERSION.SDK_INT>=30) wm.maximumWindowMetrics.bounds.let { it.width() to it.height() }
         else android.util.DisplayMetrics().also { wm.defaultDisplay.getRealMetrics(it) }.let { it.widthPixels to it.heightPixels }
     }
-    private fun shutdown(message: String) {
+    private fun shutdown(message: String,expectedGeneration: Long=session) {
         synchronized(sessionGuard) {
-            if(closed) return
-            closed=true; ++session
-            if(AppState.ledger.snapshot().remaining!=null) AppState.ledger.invalidate(message)
+            if(!lifecycle.close(expectedGeneration)) return
         }
         android.util.Log.i("JPQCapture","session_stop reason=$message")
-        healthTick?.let { main.removeCallbacks(it) }; healthTick=null
-        pipelineHealth?.close(); pipelineHealth=null
-        AppState.running=false; AppState.recognitionReady=false; AppState.message=message
-        AppState.captureGapCheckpointed()
-        AppState.publishStraightFlush(com.cyotun.jpq.core.StraightFlushResult(StraightFlushState.UNKNOWN),false)
-        AppState.publishCounterState(com.cyotun.jpq.core.GradeCounterState())
-        AppState.gradeRegion=null; AppState.gradeTipMask=null
-        AppState.resetRemainingPool()
-        com.cyotun.jpq.updates.UpdateManager.scheduleDownload(this)
-        overlay?.close(); overlay=null
-        visualContext=null
-        callback?.let { projection?.unregisterCallback(it) }; callback=null; display?.release(); display=null
-        val previousReader=reader
-        previousReader?.setOnImageAvailableListener(null,null); reader=null
-        dispatcher?.close(); dispatcher=null
+        // Detach all ownership first. Neither a failed release nor an old callback
+        // can retain these resources or reach a replacement session's resources.
+        val previousProjection=projection; projection=null
+        val previousCallback=callback; callback=null
+        val previousDisplay=display; display=null
+        val previousReader=reader; reader=null
         val previousCapture=captureWorker; captureWorker=null
-        previousCapture?.closeAfter {
-            runCatching { previousReader?.close() }.onFailure { android.util.Log.e("JPQCapture","reader_close_failed",it) }
-        }
-        projection?.stop(); projection=null
+        val previousDispatcher=dispatcher; dispatcher=null
+        val previousOverlay=overlay; overlay=null
+        val previousHealth=pipelineHealth; pipelineHealth=null
+        val previousTick=healthTick; healthTick=null
         val previousRecognizer=recognizer
         recognizer=AwaitingValidatedAdapter()
-        worker?.post {
-            runCatching { previousRecognizer.close() }.onFailure { android.util.Log.e("JPQCapture","recognizer_close_failed",it) }
-            VisionRuntime.trimWhenIdle()
+        val previousWorker=worker; worker=null
+        visualContext=null
+        val cleanup=CaptureCleanup { name,error -> android.util.Log.e("JPQCapture","${name}_close_failed",error) }
+        cleanup.release("projection_callback") { previousCallback?.let { previousProjection?.unregisterCallback(it) } }
+        cleanup.release("display") { previousDisplay?.release() }
+        cleanup.release("projection") { previousProjection?.stop() }
+        cleanup.release("foreground") { stopForeground(STOP_FOREGROUND_REMOVE) }
+        cleanup.release("notification") { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(11) }
+        cleanup.release("reader_listener") { previousReader?.setOnImageAvailableListener(null,null) }
+        cleanup.release("dispatcher") { previousDispatcher?.close() }
+        // A capture callback may still be copying an image. Close its reader on
+        // its own worker after that callback, even if another release failed.
+        cleanup.release("capture_worker") {
+            if(previousCapture==null) cleanup.release("reader") { previousReader?.close() }
+            else previousCapture.closeAfter { cleanup.release("reader") { previousReader?.close() } }
         }
-        stopForeground(STOP_FOREGROUND_REMOVE); AppState.notifyChanged()
-        if(lastStartId>0) stopSelf(lastStartId) else stopSelf()
+        cleanup.release("overlay") { previousOverlay?.close() }
+        cleanup.release("health_tick") { previousTick?.let { main.removeCallbacks(it) } }
+        cleanup.release("health") { previousHealth?.close() }
+        cleanup.release("recognizer") {
+            if(previousWorker!=null) previousWorker.post {
+                cleanup.release("recognizer_worker") { previousRecognizer.close() }
+                cleanup.release("vision_trim") { VisionRuntime.trimWhenIdle() }
+            }
+        }
+        cleanup.release("app_state") {
+            AppState.running=false; AppState.recognitionReady=false; AppState.message=message
+            if(AppState.ledger.snapshot().remaining!=null) AppState.ledger.invalidate(message)
+            AppState.captureGapCheckpointed()
+            AppState.publishStraightFlush(com.cyotun.jpq.core.StraightFlushResult(StraightFlushState.UNKNOWN),false)
+            AppState.publishCounterState(com.cyotun.jpq.core.GradeCounterState())
+            AppState.gradeRegion=null; AppState.gradeTipMask=null
+            AppState.resetRemainingPool()
+            AppState.notifyChanged()
+        }
+        cleanup.release("service") { if(lastStartId>0) stopSelf(lastStartId) else stopSelf() }
+        cleanup.release("update_schedule") { com.cyotun.jpq.updates.UpdateManager.scheduleDownload(this) }
+    }
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Home/Back and moveTaskToBack keep foreground capture running. Swiping
+        // this app out of Recents is an explicit close and must stop sharing.
+        shutdown("记牌器已关闭，屏幕共享已停止")
+        super.onTaskRemoved(rootIntent)
     }
     override fun onDestroy() { shutdown("记牌已停止"); super.onDestroy() }
 }

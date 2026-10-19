@@ -53,12 +53,15 @@ class LocalCardDetector(context: Context,forceBackend: String?=null,val profile:
     private val canvas=Canvas(canvasBitmap)
     private val paint=Paint()
     init {
-        val prefs=context.getSharedPreferences("jpq-runtime",Context.MODE_PRIVATE)
         if(forceBackend=="GPU") {
             check(profile==DetectorProfile.FULL) { "Packed GPU requires separate validation" }
             check(power.isInteractive) { "GPU validation requires an interactive display" }
         }
-        val wanted=forceBackend ?: if(profile==DetectorProfile.FULL && power.isInteractive && prefs.getString("gpuFingerprint","")==android.os.Build.FINGERPRINT && prefs.getString("gpuModel","")==MODEL_SHA && prefs.getString("gpuRuntime","")==RUNTIME_VERSION) "GPU" else "CPU"
+        // A native GPU constructor stalled on the supported phone even while
+        // unlocked. It cannot be cancelled on this process's vision thread, so
+        // historical qualification must never select it during app warm-up or
+        // capture. GPU stays an explicit stopped-capture diagnostic operation.
+        val wanted=forceBackend ?: "CPU"
         if(wanted=="GPU") {
             try {
                 compiled=CompiledModel.create(context.assets,"models/${profile.asset}",CompiledModel.Options(Accelerator.GPU))
@@ -66,8 +69,7 @@ class LocalCardDetector(context: Context,forceBackend: String?=null,val profile:
                 require(gpuInputs.size==1 && gpuOutputs.size==1)
             } catch(error: Exception) {
                 releaseGpu()
-                if(forceBackend=="GPU") { close(); throw error }
-                prefs.edit().remove("gpuFingerprint").apply(); android.util.Log.w("JPQCapture","gpu_unavailable_cpu_fallback",error)
+                close(); throw error
             }
         }
         if(compiled==null) {

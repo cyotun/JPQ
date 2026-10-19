@@ -16,6 +16,81 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class DeviceEvidenceTest {
+    @Test fun backupDisplayConfigForUiTestRun() {
+        val arguments=InstrumentationRegistry.getArguments()
+        assumeTrue(arguments.getString("displayConfigAction")=="backup")
+        check(!AppState.running) { "Back up configuration only after capture and the real match stop" }
+        val runId=displayConfigRunId(arguments.getString("displayConfigRunId"))
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val prefs=context.getSharedPreferences("jpq-display",0)
+        val diagnostics=context.getSharedPreferences("jpq-diagnostics",0)
+        val output=displayConfigRunDirectory(context,runId)
+        check(output.mkdirs()) { "Display config backup already exists for run $runId" }
+        val present=prefs.contains("config")
+        val raw=if(present) prefs.getString("config",null) else null
+        check(!present || raw!=null) { "Stored display config is not a string" }
+        val record=org.json.JSONObject()
+            .put("schemaVersion",2).put("runId",runId)
+            .put("createdAtUtc",java.time.Instant.now().toString())
+            .put("targetPackage",context.packageName)
+            .put("configPresent",present)
+            .put("rawConfig",raw ?: org.json.JSONObject.NULL)
+            .put("diagnosticsEnabledPresent",diagnostics.contains("enabled"))
+            .put("diagnosticsEnabled",diagnostics.getBoolean("enabled",false))
+            .put("displayExport",ConfigStore(context).export())
+        writeDurably(File(output,"backup.json"),record.toString(2))
+        android.util.Log.i("JPQEvidence","display_config_backup_ready runId=$runId")
+    }
+
+    @Test fun restoreDisplayConfigAfterUiTestRun() {
+        val arguments=InstrumentationRegistry.getArguments()
+        assumeTrue(arguments.getString("displayConfigAction")=="restore")
+        val runId=displayConfigRunId(arguments.getString("displayConfigRunId"))
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val output=displayConfigRunDirectory(context,runId)
+        val backup=org.json.JSONObject(File(output,"backup.json").readText())
+        val schemaVersion=backup.getInt("schemaVersion")
+        check(schemaVersion in 1..2 && backup.getString("runId")==runId)
+        check(backup.getString("targetPackage")==context.packageName)
+        val prefs=context.getSharedPreferences("jpq-display",0)
+        val diagnostics=context.getSharedPreferences("jpq-diagnostics",0)
+        val store=ConfigStore(context)
+        val attempt="${System.currentTimeMillis()}-${System.nanoTime()}"
+        val before=org.json.JSONObject().put("runId",runId).put("capturedAtUtc",java.time.Instant.now().toString())
+            .put("configPresent",prefs.contains("config"))
+            .put("rawConfig",prefs.getString("config",null) ?: org.json.JSONObject.NULL)
+            .put("diagnosticsEnabledPresent",diagnostics.contains("enabled"))
+            .put("diagnosticsEnabled",diagnostics.getBoolean("enabled",false))
+            .put("displayExport",store.export())
+        writeDurably(File(output,"before-restore-$attempt.json"),before.toString(2))
+        val edit=prefs.edit()
+        if(backup.getBoolean("configPresent")) edit.putString("config",backup.getString("rawConfig"))
+        else edit.remove("config")
+        check(edit.commit()) { "Could not durably restore display config for run $runId" }
+        if(schemaVersion>=2) {
+            val diagnosticsEdit=diagnostics.edit()
+            if(backup.getBoolean("diagnosticsEnabledPresent"))
+                diagnosticsEdit.putBoolean("enabled",backup.getBoolean("diagnosticsEnabled"))
+            else diagnosticsEdit.remove("enabled")
+            check(diagnosticsEdit.commit()) { "Could not durably restore diagnostics setting for run $runId" }
+            check(diagnostics.contains("enabled")==backup.getBoolean("diagnosticsEnabledPresent"))
+            check(diagnostics.getBoolean("enabled",false)==backup.getBoolean("diagnosticsEnabled"))
+        }
+        val restored=prefs.contains("config").let { present ->
+            val raw=if(present) prefs.getString("config",null) else null
+            check(present==backup.getBoolean("configPresent"))
+            check(raw==(if(present) backup.getString("rawConfig") else null))
+            org.json.JSONObject().put("runId",runId).put("restoredAtUtc",java.time.Instant.now().toString())
+                .put("configPresent",present).put("rawConfig",raw ?: org.json.JSONObject.NULL)
+                .put("schemaVersion",schemaVersion)
+                .put("diagnosticsEnabledPresent",diagnostics.contains("enabled"))
+                .put("diagnosticsEnabled",diagnostics.getBoolean("enabled",false))
+                .put("displayExport",store.export())
+        }
+        writeDurably(File(output,"after-restore-$attempt.json"),restored.toString(2))
+        android.util.Log.i("JPQEvidence","display_config_restored runId=$runId")
+    }
+
     @Test fun exportStoppedCaptureEvidence() {
         val arguments=InstrumentationRegistry.getArguments()
         assumeTrue(arguments.getString("exportEvidence")=="true" || arguments.getString("armCaptureProbe")=="true")
@@ -74,5 +149,23 @@ class DeviceEvidenceTest {
         }
         File(output,"display-after.json").writeText(store.export())
         android.util.Log.i("JPQEvidence","completed_evidence_exported; resetTestDisplay=${arguments.getString("resetTestDisplay")}")
+    }
+
+    private fun displayConfigRunId(value: String?): String {
+        require(!value.isNullOrBlank() && value.matches(Regex("[A-Za-z0-9._-]{1,80}")))
+        return value
+    }
+
+    private fun displayConfigRunDirectory(context: android.content.Context,runId: String): File {
+        val external=context.getExternalFilesDir(null) ?: error("External evidence storage is unavailable")
+        return File(external,"phone-preflight/ui-config-$runId")
+    }
+
+    private fun writeDurably(file: File,text: String) {
+        val temporary=File(file.parentFile,".${file.name}.pending")
+        temporary.outputStream().use { stream ->
+            stream.write(text.toByteArray(Charsets.UTF_8)); stream.flush(); stream.fd.sync()
+        }
+        check(temporary.renameTo(file)) { "Could not finalize evidence file ${file.name}" }
     }
 }

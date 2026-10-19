@@ -23,20 +23,28 @@ class CaptureGapLifecycleTest {
         }.take(27))
     }
 
-    @Test fun visibilityCallbackHidesCountsBeforeTheVisionQueueRuns() {
+    @Test fun visibilityCallbackFreezesTheConfirmedBarWhileRawEvidenceWaitsForRecovery() {
         check(!AppState.running)
         val ledger=ledger(); val before=ledger.snapshot()
         try {
+            AppState.ledger.begin(before.roundId!!,ledger.initialHand())
+            AppState.running=true; AppState.recognitionReady=true
+            assertEquals(before.remaining,AppState.displaySnapshot(AppState.ledger.snapshot()).remaining)
             AppState.markCaptureUnobserved()
-            assertNull(AppState.displayRemaining(before))
+            assertEquals(before.remaining,AppState.displayRemaining(before))
             assertEquals(RoundPhase.RECOVERING,AppState.displaySnapshot(before).phase)
-            assertNull(AppState.displaySnapshot(before).remaining)
+            assertEquals(before.remaining,AppState.displaySnapshot(before).remaining)
             // A UI freshness barrier cannot mutate or erase the evidence ledger.
             assertEquals(before,ledger.snapshot())
             ledger.suspendForRecovery("visibility gap")
+            AppState.ledger.suspendForRecovery("visibility gap")
             AppState.captureGapCheckpointed()
-            assertNull(AppState.displaySnapshot(ledger.snapshot()).remaining)
-        } finally { AppState.captureGapCheckpointed() }
+            assertNull(AppState.ledger.snapshot().remaining)
+            assertEquals(before.remaining,AppState.displaySnapshot(ledger.snapshot()).remaining)
+        } finally {
+            AppState.running=false; AppState.recognitionReady=false; AppState.ledger.waitForNext()
+            AppState.captureGapCheckpointed()
+        }
     }
 
     @Test fun invisibleButLivingSessionStillReceivesItsRecoveryCheckpoint() {

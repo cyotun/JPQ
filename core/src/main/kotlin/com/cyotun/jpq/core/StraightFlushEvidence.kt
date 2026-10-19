@@ -46,15 +46,16 @@ class StraightFlushEvidenceTracker {
     private var roundId: String? = null
     private var initial = emptyList<Card>()
     private var currentEvents = emptyList<PlayEvent>()
-    private var initialConflict = false
+    private val initialConflicts = mutableSetOf<String>()
     private val teammateVotes=Votes()
     private var teammateVersion: RemainingPoolExclusion?=null
-    private var teammateConflict=false
+    private val teammateConflicts=mutableSetOf<String>()
     var teammateCards=emptyList<Card>(); private set
     private val annotations = mutableMapOf<String, List<Card>>()
     private val physicalFlags=mutableMapOf<String,List<Boolean?>>()
     private val physicalConflicts=mutableSetOf<String>()
-    private val conflicts = mutableSetOf<String>()
+    private class EventVersion(val colors: List<String>,val suitConflicts: MutableSet<String> = mutableSetOf())
+    private val eventVersions=mutableMapOf<String,EventVersion>()
     private val votes = Seat.entries.associateWith { Votes() }
     var consumed = emptyList<Card>(); private set
     /** Separate, copied annotations; they never replace the main ledger's rank/color records. */
@@ -64,13 +65,14 @@ class StraightFlushEvidenceTracker {
             ?: neutral(event.cards)).toList()
     }
     val physicalEventCards: Map<String,List<PhysicalPlayedCard>> get()=eventCards.mapValues { (id,cards) ->
-        cards.mapIndexed { index,card -> PhysicalPlayedCard(card,physicalFlags[id]?.getOrNull(index)) }
+        val flags=physicalFlags[id].takeIf { annotations[id]==cards }
+        cards.mapIndexed { index,card -> PhysicalPlayedCard(card,flags?.getOrNull(index)) }
     }
 
     fun reset() {
         roundId = null; initial = emptyList(); currentEvents = emptyList()
-        annotations.clear(); physicalFlags.clear(); physicalConflicts.clear(); conflicts.clear(); initialConflict = false
-        teammateVotes.clear(); teammateVersion=null; teammateCards=emptyList(); teammateConflict=false
+        annotations.clear(); physicalFlags.clear(); physicalConflicts.clear(); eventVersions.clear(); initialConflicts.clear()
+        teammateVotes.clear(); teammateVersion=null; teammateCards=emptyList(); teammateConflicts.clear()
         votes.values.forEach { it.clear() }; consumed = emptyList()
     }
     /** Visibility gaps interrupt candidates, not accepted evidence from the same round. */
@@ -111,6 +113,20 @@ class StraightFlushEvidenceTracker {
         return result.toList()
     }
 
+    /** A contradictory rank/color pool loses its suits, not unrelated evidence. */
+    private fun mergePools(old: List<Card>,fresh: List<Card>,revoked: MutableSet<String>): List<Card> {
+        val freshGroups=fresh.groupBy { it.colorKey() }
+        old.groupBy { it.colorKey() }.forEach { (color,previous) ->
+            if(color !in revoked && !compatible(previous,freshGroups.getValue(color)))
+                revoked.add(color)
+        }
+        // Revoked pools remain color-only for this evidence version even if
+        // later frames repeat either claim. Other pools may still gain proof.
+        val colorOnly=neutral(fresh)
+        val qualified=fresh.mapIndexed { index,card -> if(card.colorKey() in revoked) colorOnly[index] else card }
+        return merge(old.filterNot { it.colorKey() in revoked },qualified)
+    }
+
     fun update(time: Long, snapshot: RoundSnapshot, initialColors: List<Card>, own: SuitedGroup?,
         groups: Map<Seat, SuitedGroup>, rule: WildcardRuleEvidence,
         teammate: RemainingPoolExclusion?=null): StraightFlushResult {
@@ -135,7 +151,7 @@ class StraightFlushEvidenceTracker {
         val selfEvents = snapshot.plays[Seat.SELF].orEmpty().sortedWith(compareBy({ it.sequence }, { it.eventId }))
         val selfColors = neutral(selfEvents.flatMap { it.cards })
         val reconstructed = own?.let { it.cards + selfColors }
-        if (!initialConflict && snapshot.phase == RoundPhase.ACTIVE && own != null &&
+        if (snapshot.phase == RoundPhase.ACTIVE && own != null &&
             reconstructed?.size == 27 && colors(reconstructed) == colors(initial)) {
             // Any change in committed SELF provenance starts a fresh vote even if
             // the visible hand happens to have identical points and geometry.
@@ -143,21 +159,18 @@ class StraightFlushEvidenceTracker {
                 "${event.eventId}:${event.cards.size}:${colors(event.cards).joinToString(",")}"
             }
             if (ownVotes.accept(ownKey, own, time)) {
-                if (!compatible(initial, reconstructed)) { initialConflict = true; initial = neutral(initial) }
-                else initial = merge(initial, reconstructed)
+                initial = mergePools(initial,reconstructed,initialConflicts)
             }
         } else ownVotes.clear()
 
         val hand=teammate?.takeIf { it.matches(snapshot) }
         if(hand==null || teammateVersion?.sameHandVersion(hand)!=true) {
             teammateVersion=hand; teammateCards=hand?.cards.orEmpty().toList()
-            teammateConflict=false; teammateVotes.clear()
+            teammateConflicts.clear(); teammateVotes.clear()
         }
-        if(hand!=null && !teammateConflict && own!=null && colors(own.cards)==colors(hand.cards)) {
+        if(hand!=null && own!=null && colors(own.cards)==colors(hand.cards)) {
             if(teammateVotes.accept("teammate:${hand.teammateEvents}",own,time)) {
-                if(!compatible(teammateCards,own.cards)) {
-                    teammateConflict=true; teammateCards=neutral(hand.cards)
-                } else teammateCards=merge(teammateCards,own.cards)
+                teammateCards=mergePools(teammateCards,own.cards,teammateConflicts)
             }
         } else teammateVotes.clear()
 
@@ -165,7 +178,17 @@ class StraightFlushEvidenceTracker {
         currentEvents = others.map { it.copy(cards = it.cards.toList()) }
         val eventIds = others.map { it.eventId }.toSet()
         annotations.keys.retainAll(eventIds); physicalFlags.keys.retainAll(eventIds)
-        physicalConflicts.retainAll(eventIds); conflicts.retainAll(eventIds)
+        physicalConflicts.retainAll(eventIds); eventVersions.keys.retainAll(eventIds)
+        for(event in others) {
+            val version=colors(event.cards)
+            if(eventVersions[event.eventId]?.colors!=version) {
+                // Even an expansion is a new color multiset. No old suit or
+                // marker may occupy a new slot before the whole group votes.
+                eventVersions[event.eventId]=EventVersion(version)
+                annotations.remove(event.eventId); physicalFlags.remove(event.eventId)
+                votes.getValue(event.seat).clear()
+            }
+        }
         for (seat in listOf(Seat.PREVIOUS, Seat.OPPOSITE, Seat.NEXT)) {
             val seatVotes = votes.getValue(seat)
             // Preserve the card/physical-marker pairing when a detector returns
@@ -179,33 +202,31 @@ class StraightFlushEvidenceTracker {
             }
             val event = snapshot.plays[seat].orEmpty().lastOrNull()
             if (group == null || event == null || group.cards.isEmpty() ||
-                colors(group.cards) != colors(event.cards) || event.eventId in conflicts) {
+                colors(group.cards) != colors(event.cards)) {
                 seatVotes.clear(); continue
             }
             if (seatVotes.accept(event.eventId, group, time)) {
                 val old = annotations[event.eventId]
-                // A current presentation can expand, but cannot silently replace known physical suits.
-                if (old != null && !compatible(old, group.cards)) {
-                    conflicts.add(event.eventId); annotations[event.eventId] = neutral(event.cards); physicalFlags.remove(event.eventId)
-                } else {
-                    val merged=if (old == null) group.cards.toList() else merge(old, group.cards)
-                    val previous=physicalFlags[event.eventId]
-                    val fresh=group.cards.indices.map { group.physicalWildcards.getOrNull(it) }
-                    // Keep a proved marker on its same rendered card when that
-                    // card's suit abstains, or another card gains a known suit.
-                    // merge() fills unknown suit slots without reordering them.
-                    // A genuinely changed/reordered card cannot inherit a flag.
-                    val retained=merged.indices.map { i ->
-                        previous?.getOrNull(i).takeIf { old?.getOrNull(i)==merged[i] }
-                    }
-                    if(retained.zip(fresh).any { (a,b) -> a!=null && b!=null && a!=b })
-                        physicalConflicts.add(event.eventId)
-                    physicalFlags[event.eventId]=when {
-                        event.eventId in physicalConflicts -> List(merged.size) { null }
-                        else -> fresh.mapIndexed { i,value -> value ?: retained[i] }
-                    }
-                    annotations[event.eventId] = merged
+                val revoked=eventVersions.getValue(event.eventId).suitConflicts
+                val merged=mergePools(old.orEmpty(),group.cards,revoked)
+                val previous=physicalFlags[event.eventId]
+                val fresh=group.cards.indices.map { i ->
+                    group.physicalWildcards.getOrNull(i).takeUnless { group.cards[i].colorKey() in revoked }
                 }
+                // Keep a proved marker on its same rendered card when that
+                // card's suit abstains, or another card gains a known suit.
+                // merge() fills unknown suit slots without reordering them.
+                // A genuinely changed/reordered card cannot inherit a flag.
+                val retained=merged.indices.map { i ->
+                    previous?.getOrNull(i).takeIf { old?.getOrNull(i)==merged[i] && merged[i].colorKey() !in revoked }
+                }
+                if(retained.zip(fresh).any { (a,b) -> a!=null && b!=null && a!=b })
+                    physicalConflicts.add(event.eventId)
+                physicalFlags[event.eventId]=when {
+                    event.eventId in physicalConflicts -> List(merged.size) { null }
+                    else -> fresh.mapIndexed { i,value -> value ?: retained[i] }
+                }
+                annotations[event.eventId] = merged
             }
         }
         consumed = initial + teammateCards + others.flatMap { event -> annotations[event.eventId]

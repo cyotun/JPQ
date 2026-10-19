@@ -81,7 +81,7 @@ try {
     }
     & (Join-Path $PSScriptRoot 'build.ps1') -Tasks @(':core:cleanTest',':core:test',':core:replayLoggedFrames',
         ('-PloggedTape='+$replayDirectory),('-PloggedOutput='+(Join-Path $output 'reports')),
-        ':app:assembleRelease',':app:assembleReleaseAndroidTest',':app:lintRelease','--continue') *> (Join-Path $output 'build.txt')
+        ':app:testReleaseUnitTest',':app:assembleRelease',':app:assembleReleaseAndroidTest',':app:lintRelease','--continue') *> (Join-Path $output 'build.txt')
     $buildPassed=$true
 } catch { $failure=$_.Exception.Message }
 try {

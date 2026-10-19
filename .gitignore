@@ -19,6 +19,7 @@ keystore.properties
 *.apk
 *.aab
 research-private/
+docs/research/reference-capture-occlusion-dex-check.json
 datasets/raw/
 datasets/private/
 captures/

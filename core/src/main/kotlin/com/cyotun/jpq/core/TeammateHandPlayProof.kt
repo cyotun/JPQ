@@ -9,6 +9,8 @@ class TeammateHandPlayProofTracker {
     private data class Version(val roundId: String, val events: List<String>)
     private data class DeskEvidence(val play: ObservedPlay, val time: Long)
     private data class Hand(val cards: List<Card>, val key: String)
+    private data class PartialHandoff(val hand: Hand,val removed: List<Card>,val glyphs: List<PlayGlyph>,
+        val startedAt: Long,var fullEvidence: DeskEvidence? = null)
 
     private var version: Version? = null
     private var lastTime: Long? = null
@@ -22,6 +24,7 @@ class TeammateHandPlayProofTracker {
     private var shrinkLastSeen: Long? = null
     private var shrinkDeskEvidence: DeskEvidence? = null
     private var deskEvidence: DeskEvidence? = null
+    private var partialHandoff: PartialHandoff? = null
     private var delivered = false
 
     fun reset() {
@@ -77,7 +80,8 @@ class TeammateHandPlayProofTracker {
             snapshot.played(Seat.OPPOSITE) < 27 &&
             frame.scene == TableScene.TEAMMATE &&
             !frame.captureGap &&
-            (frame.incompleteReason == null || frame.ambiguousPresentation) &&
+            (frame.incompleteReason == null || (frame.ambiguousPresentation &&
+                frame.incompleteReason in setOf("归属待核对","出牌归属待核对，正在重新识别"))) &&
             handCards != null &&
             frame.teammateHandConfidence >= MIN_CONFIDENCE
         if (!eligible) {
@@ -122,6 +126,7 @@ class TeammateHandPlayProofTracker {
                 return null
             }
             resetShrink()
+            partialHandoff = null
             seedVotes++
             seedLastSeen = frame.timeMs
             return null
@@ -143,8 +148,33 @@ class TeammateHandPlayProofTracker {
         val seedTime = seedLastSeen
         val seedFirst = seedFirstSeen
         if (seedVotes < REQUIRED_VOTES || seedFirst == null ||
-            seedLastSeen!! - seedFirst < MIN_VOTE_SPAN_MS || seedTime == null ||
-            (shrink == null && frame.timeMs - seedTime !in 0L..MAX_GAP_MS)) {
+            seedLastSeen!! - seedFirst < MIN_VOTE_SPAN_MS || seedTime == null) {
+            resetShrink()
+            partialHandoff = null
+            return null
+        }
+
+        partialHandoff?.let { pending ->
+            if (pending.hand.key != current.key || !sameCards(pending.removed,removed) ||
+                frame.timeMs-pending.startedAt !in 0L..PARTIAL_HANDOFF_MS ||
+                !validHand(baseline.cards,snapshot.remaining!!)) {
+                clearProofState()
+                return null
+            }
+            return observePartialHandoff(pending,frame.timeMs,visiblePlay)
+        }
+        // A directly visible prefix can reserve a fresh hand difference while
+        // its other cards arrive. The reservation cannot supply missing cards.
+        if (!delivered && shrink==null && frame.timeMs-seedTime in 0L..MAX_GAP_MS &&
+            validHand(baseline.cards,snapshot.remaining!!) && visiblePlay!=null &&
+            directlyRead(visiblePlay,PARTIAL_MIN_CONFIDENCE) && visiblePlay.cards.size<removed.size &&
+            multisetDifference(removed,visiblePlay.cards)!=null) {
+            partialHandoff=PartialHandoff(current,removed.toList(),visiblePlay.glyphs.toList(),frame.timeMs)
+            resetShrink()
+            deskEvidence=null
+            return null
+        }
+        if (shrink == null && frame.timeMs - seedTime !in 0L..MAX_GAP_MS) {
             resetShrink()
             return null
         }
@@ -206,6 +236,41 @@ class TeammateHandPlayProofTracker {
         )
     }
 
+    private fun observePartialHandoff(pending: PartialHandoff,timeMs: Long,play: ObservedPlay?): ObservedPlay? {
+        if (play==null || !play.regionObserved || play.cards.isEmpty()) {
+            pending.fullEvidence=null
+            return null
+        }
+        if (play.glyphs.size!=play.cards.size || !sameCards(play.cards,play.glyphs.map { it.card }) ||
+            play.glyphs.any { !validBox(it.box) } || multisetDifference(pending.removed,play.cards)==null) {
+            // An observed conflicting group is not the reserved hand transfer.
+            clearProofState()
+            return null
+        }
+        if (play.cards.size<pending.removed.size) {
+            pending.fullEvidence=null
+            return null
+        }
+        if (!containsGeometry(play.glyphs,pending.glyphs)) {
+            clearProofState()
+            return null
+        }
+        if (!isStrongCompletePlay(play)) {
+            pending.fullEvidence=null
+            return null
+        }
+        val previous=pending.fullEvidence
+        if (previous==null || timeMs-previous.time !in 1L..MAX_GAP_MS ||
+            !sameGeometry(play.glyphs,previous.play.glyphs)) {
+            pending.fullEvidence=DeskEvidence(play,timeMs)
+            return null
+        }
+        if (delivered || timeMs-previous.time<MIN_VOTE_SPAN_MS) return null
+        delivered=true
+        partialHandoff=null
+        return previous.play.copy(cards=previous.play.cards.toList(),glyphs=previous.play.glyphs.toList())
+    }
+
     private fun beginShrink(hand: Hand, timeMs: Long, evidence: DeskEvidence) {
         shrink = hand
         shrinkVotes = 1
@@ -220,6 +285,7 @@ class TeammateHandPlayProofTracker {
         seedFirstSeen = timeMs
         seedLastSeen = timeMs
         resetShrink()
+        partialHandoff = null
         deskEvidence = null
         delivered = false
     }
@@ -238,15 +304,18 @@ class TeammateHandPlayProofTracker {
         seedFirstSeen = null
         seedLastSeen = null
         resetShrink()
+        partialHandoff = null
         deskEvidence = null
         delivered = false
     }
 
-    private fun isStrongCompletePlay(play: ObservedPlay): Boolean =
-        play.regionObserved && play.cards.isNotEmpty() && play.confidence >= MIN_CONFIDENCE &&
+    private fun isStrongCompletePlay(play: ObservedPlay): Boolean = directlyRead(play,MIN_CONFIDENCE)
+
+    private fun directlyRead(play: ObservedPlay,minConfidence: Float): Boolean =
+        play.regionObserved && play.cards.isNotEmpty() && play.confidence >= minConfidence &&
             play.cards.size == play.glyphs.size &&
             sameCards(play.cards, play.glyphs.map { it.card }) &&
-            play.glyphs.all { it.confidence >= MIN_CONFIDENCE && validBox(it.box) }
+            play.glyphs.all { it.confidence >= minConfidence && validBox(it.box) }
 
     private fun validBox(box: GlyphBox): Boolean =
         box.left.isFinite() && box.top.isFinite() && box.right.isFinite() && box.bottom.isFinite() &&
@@ -279,6 +348,11 @@ class TeammateHandPlayProofTracker {
 
     private fun sameGeometry(current: List<PlayGlyph>, tracked: List<PlayGlyph>): Boolean {
         if (current.size != tracked.size || current.isEmpty()) return false
+        return containsGeometry(current,tracked)
+    }
+
+    private fun containsGeometry(current: List<PlayGlyph>,tracked: List<PlayGlyph>): Boolean {
+        if (tracked.isEmpty() || current.size<tracked.size) return false
         val available = current.toMutableList()
         return tracked.all { old ->
             val match = available.indexOfFirst { fresh ->
@@ -298,5 +372,7 @@ class TeammateHandPlayProofTracker {
         const val MIN_CONFIDENCE = .80f
         const val MIN_VOTE_SPAN_MS = 100L
         const val MAX_GAP_MS = 500L
+        const val PARTIAL_MIN_CONFIDENCE = .65f
+        const val PARTIAL_HANDOFF_MS = 4000L
     }
 }

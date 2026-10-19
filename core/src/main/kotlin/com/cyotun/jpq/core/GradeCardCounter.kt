@@ -28,8 +28,9 @@ class GradeCounterProjection private constructor(
             teammate?.takeIf { it.sameHandVersion(current) } ?: current
         }
         if(outside==outside(snapshot) && teammate==validTeammate) return this
-        // New opponent events are evaluated now; never display the old number
-        // while waiting for their suit annotations. Unproved identity remains a bound.
+        // New opponent events enter the raw analysis immediately. Pending suit
+        // identity remains a bound; GradeCounterPresentation separately holds
+        // the last confirmed UI transaction without feeding it into this proof.
         return create(snapshot,initial,events,rule,validTeammate,faces)
     }
     companion object {

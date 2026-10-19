@@ -1,8 +1,9 @@
-"""Append original source mask geometry to private replay copies; never rewrite tapes.
+"""Append original source visibility metadata to private copies; never rewrite tapes.
 
 Only a unique raw frame with the same timestamp and full glyph vector can supply
-metadata. Missing/malformed source metadata stays explicitly unknown. This does
-not add cards, scene labels, grade labels, counts, or finish evidence.
+metadata. Empty-region reasons additionally require the exact original observed
+flags. Missing/malformed source metadata stays explicitly unknown. This does not
+add cards, scene labels, grade labels, quantity readings, or finish evidence.
 """
 import argparse
 import hashlib
@@ -57,10 +58,26 @@ def encode_masks(frame):
     return "|".join(result)
 
 
+def encode_empty_reasons(evidence, observed):
+    seats = ("SELF", "PREVIOUS", "OPPOSITE", "NEXT")
+    flags = observed.split(",")
+    if not isinstance(evidence, dict) or len(flags) != len(seats):
+        return "?"
+    reasons = []
+    for seat, flag in zip(seats, flags):
+        raw = evidence.get(seat)
+        if (flag not in ("true", "false") or not isinstance(raw, dict) or
+                type(raw.get("observed")) is not bool or raw["observed"] != (flag == "true") or
+                not isinstance(raw.get("reason"), str) or not re.fullmatch(r"[a-z_]+", raw["reason"])):
+            return "?"
+        reasons.append(raw["reason"])
+    return ",".join(reasons)
+
+
 def prepare(archive, inputs, output):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
-    result = {"archiveSha256": sha(archive), "scope": "original_masks_only_no_card_or_finish_inference", "sources": []}
+    result = {"archiveSha256": sha(archive), "scope": "original_visibility_only_no_card_or_finish_inference", "sources": []}
     seen=set()
     with zipfile.ZipFile(archive) as zipped:
         for entry in inputs:
@@ -89,23 +106,27 @@ def prepare(archive, inputs, output):
                     time = frame["elapsedMs"]
                     if time in frames:
                         duplicates.add(time)
-                    frames[time] = (frame.get("glyphs"), encode_masks(frame))
-            rows, known, unknown, mismatch = [], 0, 0, 0
+                    frames[time] = (frame.get("glyphs"), encode_masks(frame), frame.get("emptyEvidence"))
+            rows, known, unknown, mismatch, known_reasons = [], 0, 0, 0, 0
             for line in tape.read_text(encoding="utf-8-sig").splitlines():
                 fields = line.split(";")
                 if len(fields) not in (9, 10):
                     raise ValueError("Unexpected original tape schema")
-                time = int(fields[0]); masks = "?"
+                time = int(fields[0]); masks = "?"; reasons = "?"
                 raw = frames.get(time)
                 if raw is not None and time not in duplicates:
                     if same_glyphs(fields[6], raw[0]):
                         masks = raw[1]
+                        reasons = encode_empty_reasons(raw[2], fields[3])
                     else:
                         mismatch += 1
                 known += masks != "?"; unknown += masks == "?"
+                known_reasons += reasons != "?"
                 # Preserve every original field verbatim. A legacy scene enum is
                 # not upgraded to the new semantic doubling-controls proof.
-                rows.append(line + (";false" if len(fields) == 9 else "") + ";" + masks)
+                # Reserved source-time/quantity columns remain unknown; only
+                # literal source empty reasons are appended in column 14.
+                rows.append(line + (";false" if len(fields) == 9 else "") + ";" + masks + ";?;?;" + reasons)
             if len(rows) != entry["frames"]:
                 raise ValueError("Frozen frame count mismatch")
             target = output / (entry["session"] + ".tape")
@@ -113,7 +134,7 @@ def prepare(archive, inputs, output):
             result["sources"].append({"session": entry["session"], "originalTapeSha256": entry["sha256"],
                 "replaySha256": sha(target), "frames": len(rows), "knownMaskFrames": known,
                 "unknownMaskFrames": unknown, "glyphMismatches": mismatch, "malformedRawLines": malformed,
-                "duplicateRawTimes": len(duplicates)})
+                "duplicateRawTimes": len(duplicates), "knownEmptyReasonFrames": known_reasons})
     return result
 
 

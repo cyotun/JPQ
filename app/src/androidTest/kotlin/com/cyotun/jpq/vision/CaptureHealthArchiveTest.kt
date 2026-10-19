@@ -1,6 +1,9 @@
 package com.cyotun.jpq.vision
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.database.DatabaseErrorHandler
+import android.database.sqlite.SQLiteDatabase
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -20,7 +23,22 @@ class CaptureHealthArchiveTest {
     @Test fun localArchiveRetainsPipelineProgressWithoutAConnectedComputer() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("captureHealthProbe")=="true")
         check(!AppState.running)
-        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val base=InstrumentationRegistry.getInstrumentation().targetContext
+        val id="health-archive-${System.nanoTime()}"
+        val directory=File(base.cacheDir,id).apply { check(mkdirs()) }
+        // Exercise the production ZIP writer against only this test's health
+        // record. Exporting all personal historical videos/images is a separate
+        // manual export, not a prerequisite for this archive-entry assertion.
+        val context=object: ContextWrapper(base) {
+            override fun getFilesDir()=File(directory,"files").apply { mkdirs() }
+            override fun getCacheDir()=File(directory,"cache").apply { mkdirs() }
+            override fun getDatabasePath(name: String)=File(directory,name)
+            override fun openOrCreateDatabase(name: String,mode: Int,factory: SQLiteDatabase.CursorFactory?)=
+                SQLiteDatabase.openOrCreateDatabase(getDatabasePath(name),factory)
+            override fun openOrCreateDatabase(name: String,mode: Int,factory: SQLiteDatabase.CursorFactory?,handler: DatabaseErrorHandler?)=
+                SQLiteDatabase.openOrCreateDatabase(getDatabasePath(name).path,factory,handler)
+            override fun getSharedPreferences(name: String,mode: Int)=base.getSharedPreferences("$id-$name",mode)
+        }
         val prefs=context.getSharedPreferences("jpq-diagnostics",Context.MODE_PRIVATE)
         val had=prefs.contains("enabled"); val original=prefs.getBoolean("enabled",false)
         val sessions=File(context.filesDir,"sessions")
@@ -56,6 +74,8 @@ class CaptureHealthArchiveTest {
             archive.delete()
             generated?.deleteRecursively()
             prefs.edit().apply { if(had) putBoolean("enabled",original) else remove("enabled") }.commit()
+            base.deleteSharedPreferences("$id-jpq-diagnostics")
+            directory.deleteRecursively()
         }
     }
 }

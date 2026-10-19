@@ -22,7 +22,12 @@ class DeviceDetectorTest {
         val originals=List(4) { index -> test.assets.open("fixtures/case${index+1}.jpg").use { BitmapFactory.decodeStream(it) } }
         val source=originals+originals.map { Bitmap.createScaledBitmap(it,1280,588,true) }
         try {
-            runtime.edit().remove("gpuFingerprint").remove("gpuRuntime").commit()
+            check(app.getSystemService(android.os.PowerManager::class.java).isInteractive)
+            // Reproduce the old production selection condition. A matching old
+            // qualification must still initialize the default CPU route safely.
+            check(runtime.edit().putString("gpuFingerprint",Build.FINGERPRINT)
+                .putString("gpuModel",LocalCardDetector.MODEL_SHA)
+                .putString("gpuRuntime",LocalCardDetector.RUNTIME_VERSION).commit())
             val reference=mutableListOf<List<CardDetection>>()
             val times=mutableMapOf<String,MutableList<Long>>()
             fun checkCase(index: Int,found: List<CardDetection>) {
@@ -36,7 +41,8 @@ class DeviceDetectorTest {
                     2 -> { assertEquals(listOf(Card(Rank.K,Suit.RED)),result.seats[Seat.SELF]!!.map { it.card }); assertEquals(listOf(Card(Rank.A,Suit.RED)),result.seats[Seat.OPPOSITE]!!.map { it.card }) }
                 }
             }
-            LocalCardDetector(app,"CPU").use { detector ->
+            LocalCardDetector(app).use { detector ->
+                assertEquals("Stale GPU qualification cannot select a native GPU constructor", "CPU", detector.backend)
                 android.util.Log.i("JPQBench","cpu_start")
                 source.forEachIndexed { index,bitmap -> val found=detector.detect(bitmap); checkCase(index,found); reference.add(found) }
                 times["CPU"]=mutableListOf(); repeat(12) { val t=SystemClock.elapsedRealtime(); detector.detect(source[4+it%4]); times["CPU"]!!.add(SystemClock.elapsedRealtime()-t) }
@@ -61,7 +67,7 @@ class DeviceDetectorTest {
             }
             val gpu=times["GPU"]!!.sorted()
             android.util.Log.i("JPQBench","CPU median=${cpu[cpu.size/2]} p95=${cpu.last()} GPU median=${gpu[gpu.size/2]} p95=${gpu.last()}")
-            if(gpu[gpu.size/2]<cpu[cpu.size/2]) app.getSharedPreferences("jpq-runtime",0).edit().putString("gpuFingerprint",Build.FINGERPRINT).putString("gpuModel",LocalCardDetector.MODEL_SHA).putString("gpuRuntime",LocalCardDetector.RUNTIME_VERSION).commit()
+            // Measurements never qualify automatic production GPU selection.
         } finally {
             source.forEach { if(!it.isRecycled) it.recycle() }
             runtime.edit().apply {

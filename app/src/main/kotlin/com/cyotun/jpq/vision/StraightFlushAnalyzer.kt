@@ -28,6 +28,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
     private val ruleTracker=WildcardRuleTracker()
     private val gradeReader=GradeSourceReader()
     private val gradeTracker=RoundGradeTracker()
+    private val presentation=StraightFlushPresentation()
     @Volatile private var cachedGrade=WildcardRuleEvidence(null,false)
     @Volatile private var cornerGrades=emptySet<Rank>()
     private var pendingGrade=false
@@ -49,8 +50,15 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
 
     fun onLedgerChanged(snapshot: RoundSnapshot) = synchronized(sessionGuard) {
         if(closed || !alive()) return@synchronized
+        if(snapshot.phase==RoundPhase.FINISHED && snapshot.roundId==lastRound) {
+            // The observer emits FINISHED before WAITING. Its final card grid
+            // can still be drawn in that interval: keep its accepted side-channel
+            // presentation and retire queued work, then clear at WAITING.
+            generation.incrementAndGet()
+            return@synchronized
+        }
         if(snapshot.phase==RoundPhase.RECOVERING && snapshot.roundId==lastRound) {
-            generation.incrementAndGet(); publishUnknown()
+            generation.incrementAndGet(); publishUnknown(snapshot)
             AppState.publishCounterState(GradeCounterState(snapshot.roundId,
                 cachedGrade.ranks.orEmpty().takeIf { cachedGrade.confirmed }.orEmpty(),reason="round_recovering"))
             return@synchronized
@@ -64,7 +72,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                 pendingGrade=false; cornerGrades=emptySet()
             } else if(!pendingGrade) resetGrade()
             lastRound=snapshot.roundId; generation.incrementAndGet()
-            publishUnknown()
+            publishUnknown(snapshot)
         }
         // Own plays do not consume the outside pool a second time. Reuse the
         // accepted evidence version; new opponent events are re-evaluated now,
@@ -78,7 +86,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
         if(countProof!=null) {
             // Publish immediately with the committed counts, even when the suit
             // worker is busy or the final table presentation is clearing.
-            publishUnknown()
+            publishUnknown(snapshot)
             val hands=straightFlushRemainingHandSizes(snapshot,hand).orEmpty()
             val fingerprint="${snapshot.roundId}:$hands:${snapshot.phase}"
             if(fingerprint!=lastCapacityTrace) {
@@ -141,11 +149,18 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
             android.util.Log.w("JPQVision","grade_metadata_unavailable:${error.javaClass.simpleName}")
         }
     }
-    private fun publishUnknown() {
-        val snapshot=AppState.ledger.snapshot()
-        val fallback=straightFlushHandCapacityExclusion(snapshot,remainingPool(snapshot,visibilityEpoch()))
+    internal fun publishResult(snapshot: RoundSnapshot,result: StraightFlushResult,includesWildcards: Boolean,
+                               teammateExcluded: Boolean=false): StraightFlushDisplay =
+        synchronized(sessionGuard) {
+            val display=presentation.accept(snapshot,result,includesWildcards,teammateExcluded,cachedGrade)
+            AppState.publishStraightFlush(display.result,display.includesWildcards)
+            display
+        }
+    private fun publishUnknown(snapshot: RoundSnapshot=AppState.ledger.snapshot()) {
+        val pool=remainingPool(snapshot,visibilityEpoch())
+        val fallback=straightFlushHandCapacityExclusion(snapshot,pool)
             ?: StraightFlushResult(StraightFlushState.UNKNOWN)
-        AppState.publishStraightFlush(fallback,false)
+        publishResult(snapshot,fallback,false,pool!=null)
     }
     fun offer(bitmap: Bitmap,time: Long,epoch: Long,snapshot: RoundSnapshot,initial: List<Card>,
         hand: List<PlayGlyph>,groups: Map<Seat,List<PlayGlyph>>,masks: List<GlyphBox>,text: SceneText?) {
@@ -281,10 +296,13 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                         publishedCounterProjection=projection
                         AppState.publishCounterState(counter)
                         cornerGrades=ruleTracker.observedRanks
-                        AppState.publishStraightFlush(result,rule.confirmed)
+                        val displayed=publishResult(snapshot,result,rule.confirmed,poolForFrame!=null)
                         report(JSONObject().put("type","straight_flush").put("elapsedMs",time)
                             .put("roundId",snapshot.roundId).put("state",result.state.name)
                             .put("reason",result.reason ?: JSONObject.NULL).put("ruleConfirmed",rule.confirmed)
+                            .put("displayState",displayed.result.state.name)
+                            .put("displayCandidateRanks",JSONArray(displayed.result.candidateRanks.map { it.name }))
+                            .put("displayHeld",displayed.result!=result || displayed.includesWildcards!=rule.confirmed)
                             .put("wildcardRanks",JSONArray(rule.ranks.orEmpty().map { it.name }))
                             .put("calculationScope",if(rule.confirmed) "WITH_WILDCARDS" else "NATURAL_ONLY")
                             .put("remainingHands",JSONArray(straightFlushRemainingHandSizes(snapshot,poolForFrame).orEmpty()))

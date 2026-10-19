@@ -9,8 +9,8 @@ android {
         applicationId = "com.cyotun.jpq"
         minSdk = 28
         targetSdk = 36
-        versionCode = 21
-        versionName = "0.2.19-regression"
+        versionCode = 28
+        versionName = "0.2.26-regression"
         testApplicationId = "com.cyotun.jpq.tests"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
@@ -35,6 +35,7 @@ dependencies {
     implementation("androidx.activity:activity:1.12.3")
     implementation("com.google.ai.edge.litert:litert:2.2.0")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+    testImplementation(kotlin("test-junit"))
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }

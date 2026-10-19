@@ -165,7 +165,7 @@ class SuitRegressionTest {
         sameCards(initial, tracker.consumed)
     }
 
-    @Test fun contradictoryReducedHandNeutralizesTheOriginalClaimsPermanently() {
+    @Test fun contradictoryReducedHandRevokesOnlyItsRankColorPoolPermanently() {
         val initial = deck.take(27)
         val tracker = StraightFlushEvidenceTracker()
         listOf(0L, 250L, 500L).forEach { updateOwn(tracker, it, initial, initial) }
@@ -176,9 +176,15 @@ class SuitRegressionTest {
         }
         val events = listOf(ownEvent("self", listOf(first)))
         listOf(750L, 1000L, 1250L).forEach { updateOwn(tracker, it, initial, conflicting, events) }
-        sameCards(colorOnly(initial), tracker.initialCards)
+        val qualified=initial.map { card ->
+            if(card.rank==Rank.Q && card.suit in setOf(Suit.HEART,Suit.DIAMOND)) card.copy(suit=Suit.RED) else card
+        }
+        sameCards(qualified, tracker.initialCards)
+        sameCards(initial.filter { it.rank!=Rank.Q || it.suit in setOf(Suit.SPADE,Suit.CLUB) },
+            tracker.initialCards.filter { it.rank!=Rank.Q || it.suit in setOf(Suit.SPADE,Suit.CLUB) })
         listOf(1500L, 1750L, 2000L).forEach { updateOwn(tracker, it, initial, current, events) }
-        sameCards(colorOnly(initial), tracker.initialCards)
+        sameCards(qualified, tracker.initialCards)
+        sameCards(colorOnly(initial), colorOnly(tracker.initialCards))
         assertEquals(27, tracker.consumed.size)
     }
 

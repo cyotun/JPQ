@@ -50,6 +50,51 @@ class RoundLedger {
         return snapshot()
     }
 
+    /** Commit a directly proved final own play after the completion cue cleared selfHand. */
+    @Synchronized internal fun commitLateOwnExit(proof: OwnExitPlayProof.Certificate,event: PlayEvent): RoundSnapshot {
+        check(phase==RoundPhase.SELF_FINISHED && reason==null && recoveryPhase==null) {
+            "Late own-exit commit requires a valid self-finished round"
+        }
+        val roundId=id ?: error("No active round")
+        require(proof.roundId==roundId && event.roundId==roundId) { "Wrong round" }
+        require(event.seat==Seat.SELF) { "Late own-exit commit must be SELF" }
+        require(event.eventId.isNotBlank() && event.eventId=="$roundId:${event.sequence}") { "Invalid event identity" }
+        require(event.eventId !in events) { "Event already committed" }
+        require(event.sequence>lastSequence) { "New event boundary required" }
+        require(selfHand.isEmpty()) { "SELF hand was not cleared by completion" }
+        require(proof.originalHand.isNotEmpty() && proof.cards.isNotEmpty())
+        require(proof.ownEvents==events.values.filter { it.seat==Seat.SELF }) { "SELF event version changed" }
+
+        val remaining=initial.toMutableList()
+        for(ownEvent in events.values.filter { it.seat==Seat.SELF }) {
+            require(ownEvent.cards.all { remaining.remove(it) }) { "SELF event history exceeds the initial hand" }
+        }
+        require(sameCards(remaining,proof.originalHand)) { "Proved hand does not match the confirmed history" }
+        require(sameCards(proof.cards,proof.originalHand) && sameCards(event.cards,proof.originalHand)) {
+            "Late event must exactly match the proved final hand"
+        }
+
+        // All proof/version/sequence checks happen before this temporary restore.
+        // Keep a rollback snapshot so even an unexpected commit failure is atomic.
+        val oldHand=selfHand
+        val oldPhase=phase
+        val oldEvents=events.toMap()
+        val oldSequence=lastSequence
+        return try {
+            selfHand=proof.originalHand.toList()
+            commit(event)
+        } catch(failure: Throwable) {
+            selfHand=oldHand
+            phase=oldPhase
+            events.clear(); events.putAll(oldEvents)
+            lastSequence=oldSequence
+            throw failure
+        }
+    }
+
+    private fun sameCards(left: List<Card>,right: List<Card>): Boolean =
+        left.size==right.size && left.groupingBy { it }.eachCount()==right.groupingBy { it }.eachCount()
+
     @Synchronized fun invalidate(message: String): RoundSnapshot {
         phase = RoundPhase.UNAVAILABLE; reason = message; recoveryPhase=null
         return snapshot()

@@ -95,7 +95,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
     private fun snapshot()=if(preview) PreviewData.snapshot else AppState.displaySnapshot()
     private fun counter(snapshot: RoundSnapshot): GradeCounterState = if(preview)
         GradeCounterState(snapshot.roundId,setOf(Rank.EIGHT),GradeCountBounds(2,2),mapOf(Rank.EIGHT to GradeCountBounds(4,4)))
-        else AppState.counterState.takeIf { it.roundId==snapshot.roundId } ?: GradeCounterState()
+        else AppState.displayCounterState.takeIf { it.roundId==snapshot.roundId } ?: GradeCounterState()
     private fun cellWeights(showHeart: Boolean)=
         (if(showHeart) listOf(1f) else emptyList())+config.order.map { if(it==Rank.TEN) 1.55f else 1f }
     private fun countTextSize()=16*config.valueText*(.89647275f/.96344686f)
@@ -386,7 +386,8 @@ class OverlayController(private val context: Context,private val preview: Boolea
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             if(hidden) { button(canvas,0f,"显示"); return }
-            val snap=snapshot()
+            val display=if(preview) null else AppState.displayFrame()
+            val snap=display?.snapshot ?: PreviewData.snapshot
             if(!config.doubleTapHide) button(canvas,0f,"隐藏")
             if(snap.remaining==null) { waiting(canvas,snap); return }
             val start=dp(this@OverlayController.left); val body=RectF(start,0f,start+dp(size.content),dp(barHeight))
@@ -396,7 +397,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
             canvas.save(); val clip=Path().apply { addRoundRect(inside,dp(11f),dp(11f),Path.Direction.CW) }; canvas.clipPath(clip)
             val gridStart=start+dp(1f)
             val grades=counter(snap)
-            val remaining=if(preview) snap.remaining else AppState.displayRemaining(snap)
+            val remaining=if(preview) snap.remaining else display!!.remaining
             val weights=cellWeights(grades.gradeRanks.isNotEmpty())
             val unit=(size.grid-(weights.size-1))/weights.sum()
             val height=22*config.gridHeight
@@ -424,7 +425,7 @@ class OverlayController(private val context: Context,private val preview: Boolea
                 val color=when(if(rank!=null) countTone(rank,count) else if(count==0) CountTone.ZERO else CountTone.WHITE) {
                     CountTone.RED -> Color.rgb(255,49,64); CountTone.ZERO -> Color.rgb(95,95,95); else -> Color.WHITE
                 }
-                text(canvas,value,count?.toString() ?: "?",countTextSize(),color)
+                text(canvas,value,count?.toString() ?: "",countTextSize(),color)
             }
             if(grades.gradeRanks.isNotEmpty()) drawCell("♥",grades.heartCount?.exact,1f,heart=true)
             config.order.forEach { rank ->

@@ -58,4 +58,36 @@ class RemainingPoolLifecycleTest {
         assertFalse(AppState.observeTeammatePool(1000,3,snapshot,hand))
         assertEquals(accepted,AppState.remainingPoolFor(snapshot,4))
     }
+
+    @Test fun realRecoveryAndRepeatedDisplayReadsPreserveTheConfirmedOpponentProjection() = isolated {
+        check(AppState.ledger.snapshot().roundId==null)
+        val id="teammate-recovery-display"
+        try {
+            AppState.ledger.begin(id,deck.take(27))
+            AppState.ledger.commit(PlayEvent(id,"teammate-before",0,Seat.OPPOSITE,deck.drop(27).take(23)))
+            AppState.ledger.selfFinished()
+            AppState.running=true; AppState.recognitionReady=true
+            confirm(AppState.ledger.snapshot(),0)
+            val confirmed=AppState.displayFrame()
+            assertTrue(confirmed.teammateExcluded)
+            assertEquals(54,confirmed.remaining!!.values.sum())
+            AppState.ledger.suspendForRecovery("source gap")
+            repeat(4) {
+                AppState.notifyChanged()
+                val display=AppState.displayFrame()
+                assertEquals(confirmed.remaining,display.remaining)
+                assertEquals(confirmed.remaining,AppState.displayRemaining(display.snapshot))
+            }
+            assertNull(AppState.ledger.snapshot().remaining)
+            // Positive ledger boundary clears every held number, including a
+            // teammate projection. A new deal cannot inherit this old exclusion.
+            AppState.ledger.waitForNext(); AppState.notifyChanged()
+            assertNull(AppState.displayFrame().remaining)
+            AppState.ledger.begin("replacement",deck.take(27)); AppState.notifyChanged()
+            assertEquals(81,AppState.displayFrame().remaining!!.values.sum())
+        } finally {
+            AppState.running=false; AppState.recognitionReady=false
+            AppState.ledger.waitForNext(); AppState.notifyChanged()
+        }
+    }
 }

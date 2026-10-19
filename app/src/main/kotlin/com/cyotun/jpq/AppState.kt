@@ -10,15 +10,20 @@ data class CaptureMask(val rectangle: Rect,val screenWidth: Int,val screenHeight
 
 object AppState {
     @Volatile private var captureGapPending=false
-    /** The UI must stop presenting exact counts before a queued vision gap is processed. */
-    fun markCaptureUnobserved() { captureGapPending=true; notifyChanged() }
+    private val roundPresentationGuard=Any()
+    private val roundPresentation=ConfirmedRoundPresentation()
+    /** Freeze the confirmed display before the queued evidence gap is processed. */
+    fun markCaptureUnobserved() { displayFrame(); captureGapPending=true; notifyChanged() }
     fun captureGapCheckpointed() { captureGapPending=false; notifyChanged() }
-    fun displaySnapshot(snapshot: RoundSnapshot=ledger.snapshot()): RoundSnapshot = when {
-        running && !recognitionReady -> snapshot.copy(phase=RoundPhase.WAITING,remaining=null,reason=null)
-        captureGapPending && snapshot.remaining!=null -> snapshot.copy(phase=RoundPhase.RECOVERING,
-            remaining=null,reason="正在重新核对牌面")
-        else -> snapshot
+    private fun displayState(snapshot: RoundSnapshot): RoundDisplayState = synchronized(roundPresentationGuard) {
+        val pool=remainingPoolFor(snapshot)
+        val projected=remainingOutsidePool(snapshot,pool)
+        roundPresentation.accept(snapshot,projected,captureGapPending,running,!running || recognitionReady,pool!=null)
     }
+    /** One read supplies both history and numbers for the entire overlay draw. */
+    fun displayFrame(): RoundDisplayState = synchronized(roundPresentationGuard) { displayState(ledger.snapshot()) }
+    fun displaySnapshot(snapshot: RoundSnapshot?=null): RoundSnapshot =
+        if(snapshot==null) displayFrame().snapshot else displayState(snapshot).snapshot
     @Volatile var adjusting=false
         private set
     private val overlayOcclusions=linkedSetOf<Any>()
@@ -47,8 +52,12 @@ object AppState {
             // retired suit-analysis read after stop cannot poison a new session.
             if(epoch!=remainingPoolEpoch) null else remainingPoolTracker.projection(snapshot,epoch)
         }
-    fun displayRemaining(snapshot: RoundSnapshot): Map<Rank,Int>? =
-        if(captureGapPending) null else remainingOutsidePool(snapshot,remainingPoolFor(snapshot))
+    fun displayRemaining(snapshot: RoundSnapshot): Map<Rank,Int>? {
+        // Rendered snapshots may carry the display-only RECOVERING phase.
+        // Feeding that phase into the teammate tracker would erase its votes.
+        val state=if(running) displayFrame() else displayState(snapshot)
+        return state.remaining.takeIf { state.snapshot.roundId==snapshot.roundId }
+    }
     fun resetRemainingPool() = synchronized(remainingPoolGuard) { remainingPoolTracker.reset(); remainingPoolEpoch=0L }
     val ledger = RoundLedger()
     @Volatile var running = false
@@ -74,8 +83,18 @@ object AppState {
     }
     @Volatile var counterState=GradeCounterState()
         private set
+    private val counterGuard=Any()
+    private val counterPresentation=GradeCounterPresentation()
+    @Volatile var displayCounterState=GradeCounterState()
+        private set
     fun publishCounterState(value: GradeCounterState) {
-        if(counterState!=value) { counterState=value; notifyChanged() }
+        val changed=synchronized(counterGuard) {
+            val display=counterPresentation.accept(value)
+            val different=counterState!=value || displayCounterState!=display
+            counterState=value; displayCounterState=display
+            different
+        }
+        if(changed) notifyChanged()
     }
     private val main = Handler(Looper.getMainLooper())
     private val listeners = linkedSetOf<() -> Unit>()
@@ -85,6 +104,11 @@ object AppState {
     fun subscribe(listener: () -> Unit) { listeners.add(listener) }
     fun unsubscribe(listener: () -> Unit) { listeners.remove(listener) }
     fun notifyChanged() {
+        // Publish each confirmed ledger/pool transaction even if the overlay is
+        // currently hidden. UI redraw timing cannot decide what was confirmed.
+        if(running) displayFrame() else synchronized(roundPresentationGuard) {
+            roundPresentation.accept(ledger.snapshot(),null,running=false)
+        }
         if(notificationPending.compareAndSet(false,true)) main.post {
             notificationPending.set(false)
             listeners.toList().forEach { it() }

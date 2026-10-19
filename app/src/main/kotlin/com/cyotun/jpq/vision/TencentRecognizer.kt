@@ -33,6 +33,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     private val evidenceIo=java.util.concurrent.Executors.newSingleThreadExecutor()
     private val evidenceBusy=java.util.concurrent.atomic.AtomicBoolean(false)
     private val emptyGuard=EmptyRegionGuard()
+    private val singleCardReader=SingleCardIdentityReader()
     private var frameNumber=0L
     private val repository=RoundRepository(context)
     private var tracedEvents=emptyMap<String,PlayEvent>()
@@ -113,14 +114,16 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             onPipelineStage("detect_end")
             val detections=rawDetections.filter { it.box.centerY()>.13f && it.box.centerX() in .10f.. .88f && it.box.width()<.12f && it.box.height()>.02f }
             captured.probeFolder?.let { saveProbeInput(it,bitmap,captured.imageTimestampNs,rawDetections,detections.size) }
-            ocr.request(bitmap,start,activeVisibilityEpoch,captureRemainingCounts=observer.diagnosticStatus().recovering)
+            val round=AppState.ledger.snapshot()
+            val trackingPhase=AppState.ledger.phaseBeforeRecovery()
+            ocr.request(bitmap,start,activeVisibilityEpoch,captureRemainingCounts=trackingPhase in
+                setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED,RoundPhase.RECOVERING),
+                masks=normalizedMasks)
             val text=ocr.snapshot(captured.width,captured.height,start,activeVisibilityEpoch)
             val tableLines=text?.lines.orEmpty().filter { (it.box?.centerY() ?: 0)>captured.height*.12f }
             val hints=text?.lines.orEmpty().map { line -> SceneHint(line.text,line.box?.let { b -> GlyphBox(b.left.toFloat()/captured.width,b.top.toFloat()/captured.height,b.right.toFloat()/captured.width,b.bottom.toFloat()/captured.height) }) }
             val detectedScene=tencentScene(hints,detections.isNotEmpty(),detections.any { it.box.centerY()>.55f })
             val remainingHandCounts=TencentRemainingCountSource.read(bitmap,start,text,normalizedMasks)
-            val round=AppState.ledger.snapshot()
-            val trackingPhase=AppState.ledger.phaseBeforeRecovery()
             // Own completion is a round state, not a label that must be re-read
             // on every frame. Teammate hand pixels never become our hand again.
             val scene=continueTeammateScene(detectedScene,trackingPhase)
@@ -130,12 +133,18 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             val glyphs=detections.map { p -> PlayGlyph(p.card,p.confidence,GlyphBox(p.box.left,p.box.top,p.box.right,p.box.bottom)) }
             val partition=partitionGuandanHand(glyphs)
             val hand=partition.hand.map { it.card }
-            if(!captured.adjusting && scene!=TableScene.TEAMMATE && partition.hand.all { it.confidence>=.65f })
+            val handObserved=TencentFrameVisibility.handObserved(partition.hand,normalizedMasks)
+            if(!captured.adjusting && handObserved && scene!=TableScene.TEAMMATE && partition.hand.all { it.confidence>=.65f })
                 ownExitTracker.observeOwnHand(start,trackingPhase,AppState.ledger.currentHand(),hand)
             if(scene==TableScene.TEAMMATE && !captured.adjusting)
-                ownExitTracker.teammateTransition(start,trackingPhase,AppState.ledger.currentHand(),partition.table.filter { it.box.cy<.55f })
+                ownExitTracker.teammateTransition(start,trackingPhase,AppState.ledger.currentHand(),partition.table.filter { it.box.cy<.55f },
+                    observedHand=hand.takeIf { handObserved && partition.hand.all { it.confidence>=.65f } })
             val ownExitPresentation=ownExitTracker.prepare(start,scene,round.roundId)
-            diagnosticFrameAllowed=scene==TableScene.LOBBY || (scene!=TableScene.UNKNOWN && hand.isNotEmpty())
+            // A zero-detection/effect frame inside a tracked round is exactly
+            // where recovery needs source pixels. Do not discard that evidence
+            // merely because neither hand nor scene could be recognized.
+            diagnosticFrameAllowed=scene==TableScene.LOBBY || (scene!=TableScene.UNKNOWN && hand.isNotEmpty()) ||
+                (round.roundId!=null && trackingPhase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED))
             val passing=tableLines.filter { it.text.contains("不出") || it.text.contains("不要") }.mapNotNull { l ->
                 val b=l.box ?: return@mapNotNull null
                 when { b.centerY()<captured.height*.3 -> Seat.OPPOSITE; b.centerX()<captured.width*.4 -> Seat.PREVIOUS; b.centerX()>captured.width*.65 -> Seat.NEXT; else -> null }
@@ -144,40 +153,78 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             val finishedSeats=confirmedFinishedSeats(round.copy(phase=trackingPhase))
             val removed=AppState.ledger.currentHand().toMutableList()
             val subset=hand.all { removed.remove(it) }
-            val assignedOwnership=assignPlayGroups(partition.table.filter { it.box.cy<.55f },passing,if(subset && scene!=TableScene.TEAMMATE && !captured.adjusting) removed else emptyList(),scene==TableScene.TEAMMATE,
+            val assignedOwnership=assignPlayGroups(partition.table.filter { it.box.cy<.55f },passing,if(subset && handObserved && scene!=TableScene.TEAMMATE && !captured.adjusting) removed else emptyList(),scene==TableScene.TEAMMATE,
                 if(scene==TableScene.TEAMMATE) ownExitPresentation else emptyList(),finishedSeats,ownExitTracker.blocksCentralFallback())
             val ownership=synchronized(sessionGuard) {
                 if(frameCurrent() && !captured.adjusting) observer.reassociatePresentationFragments(assignedOwnership,start) else assignedOwnership
             }
             val selfGlyphs=ownership.seats.getValue(Seat.SELF)
             val evidenceStart=SystemClock.elapsedRealtime()
-            val emptyEvidence=emptyGuard.evaluate(bitmap,scene,hand.size,ownership.seats,AppState.ledger.snapshot().roundId,normalizedMasks)
-            if(!captured.adjusting && emptyEvidence.getValue(Seat.SELF).observed)
+            val emptyEvidence=emptyGuard.evaluate(bitmap,scene,hand.size,ownership.seats,AppState.ledger.snapshot().roundId,normalizedMasks,
+                partition.hand,start,captured.adjusting || ownership.ambiguous.isNotEmpty())
+            if(!captured.adjusting && handObserved && emptyEvidence.getValue(Seat.SELF).observed)
                 ownExitTracker.observe(start,trackingPhase,AppState.ledger.currentHand(),hand,selfGlyphs)
             ownExitTracker.emptySurface(emptyEvidence.getValue(Seat.SELF).reason=="table_surface_visible" &&
                 emptyEvidence.getValue(Seat.SELF).observed,selfGlyphs.isNotEmpty(),
                 ownership.ambiguous.any { it.box.cy in .285f.. .48f && it.box.cx in .32f.. .70f })
-            val qualifiedTeammateHand=hand.takeIf { scene==TableScene.TEAMMATE && !captured.adjusting &&
-                partition.hand.all { it.confidence>=.65f } && normalizedMasks.none { mask ->
-                    mask.left<.88f && mask.right>.10f && mask.top<.98f && mask.bottom>.55f
-                } }
+            val qualifiedTeammateHand=hand.takeIf { scene==TableScene.TEAMMATE && !captured.adjusting && handObserved &&
+                partition.hand.all { it.confidence>=.65f } }
             val effect=tableLines.any { line ->
                 val b=line.box
                 b!=null && b.centerY()<captured.height*.55f && listOf("炸弹","同花顺","钢板","飞机").any { line.text.contains(it) }
             }
+            val singleIdentityStart=SystemClock.elapsedRealtime()
             val observed=ownership.seats.mapValues { (seat,cards) ->
                 val sorted=cards.sortedBy { it.box.cx }
-                ObservedPlay(sorted.map { it.card },sorted.minOfOrNull { it.confidence } ?: 1f,sorted,
+                val play=ObservedPlay(sorted.map { it.card },sorted.minOfOrNull { it.confidence } ?: 1f,sorted,
                     regionObserved=emptyEvidence.getValue(seat).observed && (sorted.isNotEmpty() || !effect))
+                if(seat==Seat.SELF || captured.adjusting || ownership.ambiguous.isNotEmpty()) play
+                else play.copy(singleCardIdentity=singleCardReader.read(bitmap,play,start,normalizedMasks))
             }
+            val singleIdentityMs=SystemClock.elapsedRealtime()-singleIdentityStart
+            val ambiguous=ownership.ambiguous.isNotEmpty() && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)
+            val openingChoiceSourceTimeMs=if(detectedScene==TableScene.DEALING && !captured.adjusting)
+                TencentFrameVisibility.openingChoiceSourceTimeMs(text,start,captured.width,captured.height,activeVisibilityEpoch,normalizedMasks)
+                else null
+            val observation=TencentFrameVisibility.qualify(TableFrame(start,scene,
+                if(scene==TableScene.TEAMMATE || captured.adjusting) null else hand,observed,selfFinished,
+                incompleteReason=when {
+                    captured.adjusting -> "正在调整悬浮条，等待完整牌面"
+                    ambiguous -> "出牌归属待核对，正在重新识别"
+                    else -> null
+                },ambiguousPresentation=ambiguous,
+                teammateHand=qualifiedTeammateHand,teammateHandConfidence=partition.hand.minOfOrNull { it.confidence } ?: 1f,
+                dealingChoicesObserved=detectedScene==TableScene.DEALING,remainingHandCounts=remainingHandCounts,
+                openingChoiceSourceTimeMs=openingChoiceSourceTimeMs),partition.hand,emptyEvidence,normalizedMasks)
             fun rounded(value: Float)=kotlin.math.round(value*10000f)/10000f
             trace.write(JSONObject().put("type","frame").put("frame",frameNumber).put("imageTimestampNs",captured.imageTimestampNs).put("elapsedMs",start)
                 .put("width",captured.width).put("height",captured.height).put("scene",scene.name).put("backend",referenceDetector?.backend ?: detector.backend)
                 .put("detectedScene",detectedScene.name)
-                .put("dealingChoicesObserved",detectedScene==TableScene.DEALING)
+                .put("dealingChoicesObserved",detectedScene==TableScene.DEALING).put("adjusting",captured.adjusting)
+                .put("openingChoiceSourceTimeMs",openingChoiceSourceTimeMs ?: JSONObject.NULL)
+                .put("sceneSourceAgeMs",text?.let { start-it.timeMs } ?: JSONObject.NULL)
+                .put("sceneSourceHints",JSONArray(hints.map { hint ->
+                    JSONObject().put("text",hint.text).put("box",hint.box?.let { box ->
+                        JSONArray(listOf(rounded(box.left),rounded(box.top),rounded(box.right),rounded(box.bottom)))
+                    } ?: JSONObject.NULL)
+                }))
+                .put("sceneSourceMasks",JSONArray(text?.sourceMasks.orEmpty().map { b ->
+                    JSONArray(listOf(rounded(b.left),rounded(b.top),rounded(b.right),rounded(b.bottom)))
+                }))
+                .put("handObserved",handObserved && !captured.adjusting)
+                .put("observationReason",observation.incompleteReason ?: JSONObject.NULL)
+                .put("localizedOverlaySeats",JSONArray(observation.localizedOverlaySeats.map { it.name }))
+                .put("regionObserved",JSONObject(observation.plays.mapKeys { it.key.name }.mapValues { it.value?.regionObserved==true }))
                 .put("remainingHandCounts",JSONObject(remainingHandCounts.mapKeys { it.key.name }.mapValues { (_,reading) ->
                     JSONObject().put("count",reading.count).put("sourceTimeMs",reading.sourceTimeMs)
                 }))
+                .put("singleCardIdentities",JSONObject(observation.plays.mapNotNull { (seat,play) ->
+                    play?.singleCardIdentity?.let { reading -> seat.name to JSONObject()
+                        .put("card",reading.card.colorKey()).put("suit",reading.card.suit.name)
+                        .put("similarity",reading.confidence).put("margin",reading.margin)
+                        .put("sourceTimeMs",reading.sourceTimeMs) }
+                }.toMap()))
+                .put("singleIdentityMs",singleIdentityMs)
                 .put("sourceWidth",captured.sourceWidth).put("sourceHeight",captured.sourceHeight)
                 .put("convertMs",captured.preparedElapsedMs-start).put("queueMs",converted-captured.preparedElapsedMs)
                 .put("preprocessMs",referenceDetector?.preprocessMs ?: detector.preprocessMs).put("inferenceMs",referenceDetector?.inferenceMs ?: detector.inferenceMs).put("decodeMs",referenceDetector?.decodeMs ?: detector.decodeMs)
@@ -213,29 +260,15 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 // no play owner and must not reach the ambiguity timeout.
                 observe(TableFrame(start,scene,null)); return
             }
-            val overlayOccluded=emptyEvidence.values.any { it.reason=="overlay_occlusion" } &&
-                scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)
-            if(overlayOccluded) {
-                // No partial presentation or empty-region vote may survive a masked table.
-                observe(TableFrame(start,TableScene.UNKNOWN,null,incompleteReason="悬浮条遮住出牌区，请移回顶部，正在重新核对")); return
-            }
-            if(ownership.ambiguous.isNotEmpty() && scene !in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.TRIBUTE)) {
-                observe(TableFrame(start,scene,if(scene==TableScene.TEAMMATE || captured.adjusting) null else hand,
-                    plays=observed,selfFinished=selfFinished,incompleteReason="出牌归属待核对，正在重新识别",ambiguousPresentation=true,
-                    teammateHand=qualifiedTeammateHand,teammateHandConfidence=partition.hand.minOfOrNull { it.confidence } ?: 1f,
-                    dealingChoicesObserved=detectedScene==TableScene.DEALING,remainingHandCounts=remainingHandCounts))
-                return
-            }
-            observe(TableFrame(start,scene,if(scene==TableScene.TEAMMATE || captured.adjusting) null else hand,observed,selfFinished,
-                if(captured.adjusting) "正在调整悬浮条，等待完整牌面" else null,
-                teammateHand=qualifiedTeammateHand,teammateHandConfidence=partition.hand.minOfOrNull { it.confidence } ?: 1f,
-                dealingChoicesObserved=detectedScene==TableScene.DEALING,remainingHandCounts=remainingHandCounts))
+            // Each obscured seat abstains through regionObserved. Other independently
+            // visible regions, the complete hand and remaining-count badges survive.
+            observe(observation)
+            if(ambiguous) return
             synchronized(sessionGuard) {
                 if(!captured.adjusting && frameCurrent()) {
                     val snapshot=AppState.ledger.snapshot()
-                    val handMasked=normalizedMasks.any { mask -> mask.left<.88f && mask.right>.10f && mask.top<.98f && mask.bottom>.55f }
                     val handConfident=partition.hand.isNotEmpty() && partition.hand.all { glyph -> glyph.confidence>=.65f }
-                    val handQualified=scene==TableScene.TEAMMATE && handConfident && !handMasked &&
+                    val handQualified=scene==TableScene.TEAMMATE && handConfident && handObserved &&
                         AppState.ledger.phaseBeforeRecovery()==RoundPhase.SELF_FINISHED && !observer.diagnosticStatus().recovering
                     val qualifiedHand=if(handQualified) partition.hand else null
                     val previousPool=AppState.remainingPoolFor(snapshot,activeVisibilityEpoch)
@@ -256,14 +289,35 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 try {
                     copy=bitmap.copy(Bitmap.Config.ARGB_8888,false)
                     val owned=copy
+                    // Bind the saved pixels to their actual capture input. File
+                    // write time alone cannot identify a fast animation frame.
+                    val metadata=JSONObject().put("sessionId",trace.id).put("frame",frameNumber)
+                        .put("sourceElapsedMs",start).put("imageTimestampNs",captured.imageTimestampNs)
+                        .put("visibilityEpoch",activeVisibilityEpoch)
+                        .put("width",bitmap.width).put("height",bitmap.height)
+                        .put("overlayMasks",JSONArray(normalizedMasks.map { b ->
+                            JSONArray(listOf(b.left,b.top,b.right,b.bottom)) }))
+                        .put("scope","masked_local_capture_input")
                     evidenceIo.execute {
                         try { runCatching {
                             diagnosticFolder.mkdirs()
                             val output=java.io.File(diagnosticFolder,"${System.currentTimeMillis()}.jpg")
-                            output.outputStream().use { owned.compress(Bitmap.CompressFormat.JPEG,75,it) }
+                            output.outputStream().use { check(owned.compress(Bitmap.CompressFormat.JPEG,75,it)) }
+                            val digest=java.security.MessageDigest.getInstance("SHA-256").digest(output.readBytes())
+                                .joinToString("") { "%02x".format(it.toInt() and 255) }
+                            metadata.put("imageFile",output.name).put("imageSha256",digest)
+                            java.io.File(diagnosticFolder,"${output.nameWithoutExtension}.json").writeText(metadata.toString(2))
                             val files=diagnosticFolder.listFiles()?.filter { it.isFile }?.sortedBy { it.lastModified() }.orEmpty()
                             var size=files.sumOf { it.length() }
-                            for(file in files) { if(size<=100L*1024*1024) break; val bytes=file.length(); if(file.delete()) size-=bytes }
+                            for(file in files.filter { it.extension=="jpg" }) {
+                                if(size<=100L*1024*1024) break
+                                val bytes=file.length()
+                                if(file.delete()) {
+                                    size-=bytes
+                                    val sidecar=java.io.File(diagnosticFolder,"${file.nameWithoutExtension}.json")
+                                    val sidecarBytes=sidecar.length(); if(sidecar.delete()) size-=sidecarBytes
+                                }
+                            }
                         } } finally { owned.recycle(); evidenceBusy.set(false) }
                     }
                 } catch(error: Exception) { copy?.recycle(); evidenceBusy.set(false); android.util.Log.w("JPQTrace","diagnostic_frame_unavailable") }

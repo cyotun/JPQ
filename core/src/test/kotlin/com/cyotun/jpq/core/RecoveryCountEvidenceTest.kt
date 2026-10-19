@@ -77,6 +77,76 @@ class RecoveryCountEvidenceTest {
         assertNull(checkpoint.reconcile(frame(7000)))
         assertEquals(emptyMap(),checkpoint.reconcile(frame(7250)))
     }
+    private fun localMask(t: Long,source: Long=t)=frame(t,source).let { f -> f.copy(
+        plays=f.plays+(Seat.NEXT to ObservedPlay(emptyList(),1f,regionObserved=false)),
+        incompleteReason="local overlay",localizedOverlaySeats=setOf(Seat.NEXT)) }
+
+    @Test fun localMaskCanCollectIndependentProofButCannotResumeUntilClear() {
+        val checkpoint=recovery()
+        for(t in 6000L..6600L step 200) assertNull(checkpoint.reconcile(localMask(t)))
+        // Four OCR snapshots were independent. This repeated source contributes
+        // no vote; the newly visible table supplies the final missing boundary.
+        assertEquals(emptyMap(),checkpoint.reconcile(frame(6700,6600)))
+    }
+    @Test fun cachedSourcesUnderLocalMaskNeverBecomeIndependentProof() {
+        val checkpoint=recovery()
+        for(t in 6000L..6600L step 100) assertNull(checkpoint.reconcile(localMask(t,6000)))
+        assertNull(checkpoint.reconcile(frame(6700,6000)))
+    }
+    @Test fun localMaskProofCannotIgnoreChangedQuantitiesOrAVisibleNewPlay() {
+        val newCard=Card(Rank.K,Suit.RED)
+        for(change in listOf<(TableFrame)->TableFrame>(
+            { f -> f.copy(remainingHandCounts=f.remainingHandCounts+(Seat.NEXT to RemainingHandCount(5,f.timeMs))) },
+            { f -> f.copy(remainingHandCounts=f.remainingHandCounts-Seat.NEXT) },
+            { f -> f.copy(hand=emptyList()) },
+            { f -> f.copy(plays=f.plays+(Seat.PREVIOUS to ObservedPlay(listOf(newCard),.99f,
+                listOf(PlayGlyph(newCard,.99f,GlyphBox(.2f,.3f,.22f,.35f)))))) }
+        )) {
+            val checkpoint=recovery()
+            for(t in 6000L..6400L step 200) assertNull(checkpoint.reconcile(change(localMask(t))))
+            assertNull(checkpoint.reconcile(frame(6500,6400)))
+        }
+    }
+    @Test fun untypedFaultOrNewGapDiscardsAccumulatedLocalMaskProof() {
+        for(change in listOf<(TableFrame)->TableFrame>(
+            { it.copy(localizedOverlaySeats=emptySet()) },
+            { it.copy(captureGap=true) }, { it.copy(ambiguousPresentation=true) },
+            { it.copy(scene=TableScene.UNKNOWN) }
+        )) {
+            val checkpoint=recovery()
+            for(t in 6000L..6400L step 200) assertNull(checkpoint.reconcile(localMask(t)))
+            assertNull(checkpoint.reconcile(change(localMask(6450))))
+            assertNull(checkpoint.reconcile(frame(6500,6400)))
+        }
+    }
+    @Test fun localMaskProofExpiresOrRejectsAContradictionOnClearReturn() {
+        for(clear in listOf(frame(7500,6400),frame(6500,6400,expected+(Seat.NEXT to 5)),
+            frame(6500,6400).copy(plays=frame(6500).plays+(Seat.NEXT to ObservedPlay(emptyList(),1f,regionObserved=false))))) {
+            val checkpoint=recovery()
+            for(t in 6000L..6400L step 200) assertNull(checkpoint.reconcile(localMask(t)))
+            assertNull(checkpoint.reconcile(clear))
+        }
+    }
+    @Test fun observerPreservesSourcesAcrossLocalMaskAndResumesOnceWithoutChangingLedger() {
+        val baseline=Rank.entries.filterNot { it.isJoker }.flatMap { listOf(Card(it,Suit.RED),Card(it,Suit.BLACK)) }+Card(Rank.SMALL,Suit.NONE)
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger)
+        val clear=Seat.entries.associateWith { ObservedPlay(emptyList(),1f) }
+        observer.observe(TableFrame(0,TableScene.LOBBY,null))
+        for(t in 60L..240L step 60) observer.observe(TableFrame(t,TableScene.TABLE,baseline,clear))
+        val before=ledger.snapshot()
+        fun masked(t: Long)=TableFrame(t,TableScene.TABLE,baseline,
+            clear+(Seat.NEXT to ObservedPlay(emptyList(),1f,regionObserved=false)),incompleteReason="local overlay",
+            remainingHandCounts=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RemainingHandCount(27,t) },
+            localizedOverlaySeats=setOf(Seat.NEXT))
+        for(t in 300L..1100L step 200) observer.observe(masked(t))
+        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
+        val unmasked=masked(1200).copy(plays=clear,incompleteReason=null,localizedOverlaySeats=emptySet(),
+            remainingHandCounts=masked(1100).remainingHandCounts)
+        observer.observe(unmasked)
+        assertEquals(before,ledger.snapshot()); assertFalse(observer.diagnosticStatus().recovering)
+        observer.observe(unmasked.copy(timeMs=1250))
+        assertEquals(before,ledger.snapshot()); assertFalse(observer.diagnosticStatus().recovering)
+    }
     @Test fun observerResumesItsExistingLedgerAndSubsequentRealCardsAreCountedOnce() {
         val deck=Rank.entries.flatMap { rank ->
             if(rank.isJoker) List(2) { Card(rank,Suit.NONE) }

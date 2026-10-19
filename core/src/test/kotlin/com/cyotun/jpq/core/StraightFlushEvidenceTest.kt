@@ -216,20 +216,23 @@ class StraightFlushEvidenceTest {
         assertEquals(neutral(initial) + cards + cards, tracker.consumed)
     }
 
-    @Test fun expandingPresentationPreservesIdentityCountAndEarlierPhysicalClaims() {
+    @Test fun expandedColorVersionDoesNotInheritEarlierPhysicalClaims() {
         val tracker = StraightFlushEvidenceTracker()
         val old = listOf(Card(Rank.FIVE, Suit.HEART))
         vote(tracker, snapshot = snapshot(listOf(event("a", old))), groups = mapOf(Seat.PREVIOUS to group(old)))
         val expandedColors = old + Card(Rank.SIX, Suit.CLUB)
         val snap = snapshot(listOf(event("a", expandedColors)))
-        // A fresh abstention about the original card must not erase its already proven heart.
+        // Even a strict color expansion must prove its own full presentation.
+        // A former heart cannot be assigned to a new unknown red slot.
         val partial = listOf(Card(Rank.FIVE, Suit.RED), Card(Rank.SIX, Suit.CLUB))
         update(tracker, 750, snap, groups = mapOf(Seat.PREVIOUS to group(partial)))
         assertEquals(neutral(initial) + neutral(expandedColors), tracker.consumed)
         update(tracker, 1000, snap, groups = mapOf(Seat.PREVIOUS to group(partial)))
         update(tracker, 1250, snap, groups = mapOf(Seat.PREVIOUS to group(partial)))
-        assertEquals(neutral(initial) + expandedColors, tracker.consumed)
+        assertEquals(neutral(initial) + partial, tracker.consumed)
         assertEquals(29, tracker.consumed.size)
+        vote(tracker,1500,snap,groups=mapOf(Seat.PREVIOUS to group(expandedColors)))
+        assertEquals(neutral(initial)+expandedColors,tracker.consumed)
     }
 
     @Test fun conflictingStableSuitsNeutralizeAnEventPermanentlyWithinItsRound() {
@@ -244,13 +247,124 @@ class StraightFlushEvidenceTest {
         assertEquals(neutral(initial) + neutral(hearts), tracker.consumed)
     }
 
-    @Test fun expansionCannotSilentlyReplaceAnEarlierHeartWithADiamond() {
+    @Test fun eventSuitConflictKeepsOtherRanksAndTheirPairedMarkersUntilItsColorVersionChanges() {
+        val cards=listOf(Card(Rank.NINE,Suit.DIAMOND),Card(Rank.TEN,Suit.HEART),
+            Card(Rank.J,Suit.SPADE),Card(Rank.Q,Suit.CLUB),Card(Rank.K,Suit.DIAMOND))
+        val excluded=(cards.map { it.rank }+Rank.A).toSet()
+        val baseline=deck.filter { it.rank !in excluded }.take(27)
+        val ledger=RoundLedger().apply {
+            begin("r1",neutral(baseline))
+            commit(PlayEvent("r1","run",1,Seat.NEXT,neutral(cards)))
+        }
+        val tracker=StraightFlushEvidenceTracker()
+        val read=group(cards).copy(physicalWildcards=listOf(false,true,false,false,false))
+        vote(tracker,snapshot=ledger.snapshot(),groups=mapOf(Seat.NEXT to read),baseline=baseline)
+        val grade=WildcardRuleEvidence(setOf(Rank.TEN),true)
+        fun counter()=GradeCardCounter.evaluate(ledger.snapshot(),tracker.initialCards,tracker.physicalEventCards,
+            grade,faces=TableCardFaces.ORIGINAL)
+        val before=counter()
+        assertEquals(1,before.heartCount?.exact); assertEquals(6,before.ordinaryCounts[Rank.TEN]?.exact)
+
+        val changed=read.copy(cards=listOf(Card(Rank.NINE,Suit.HEART))+cards.drop(1),physicalWildcards=emptyList())
+        val reordered=SuitedGroup(changed.cards.reversed(),changed.boxes.reversed())
+        vote(tracker,750,ledger.snapshot(),groups=mapOf(Seat.NEXT to reordered),baseline=baseline)
+        val expected=listOf(Card(Rank.NINE,Suit.RED))+cards.drop(1)
+        assertEquals(expected,tracker.eventCards.getValue("run"))
+        assertEquals(listOf(null,true,false,false,false),tracker.physicalEventCards.getValue("run").map { it.wildcard })
+        assertEquals(before,counter())
+        vote(tracker,1500,ledger.snapshot(),groups=mapOf(Seat.NEXT to read),baseline=baseline)
+        assertEquals(expected,tracker.eventCards.getValue("run"))
+        assertNull(tracker.physicalEventCards.getValue("run").first().wildcard)
+
+        val expanded=cards+Card(Rank.A,Suit.SPADE)
+        ledger.replaceLatestObservedPresentation("run",neutral(expanded))
+        val complete=group(expanded)
+        update(tracker,2250,ledger.snapshot(),groups=mapOf(Seat.NEXT to complete),baseline=baseline)
+        assertEquals(neutral(expanded),tracker.eventCards.getValue("run"))
+        assertTrue(tracker.physicalEventCards.getValue("run").all { it.wildcard==null })
+        update(tracker,2500,ledger.snapshot(),groups=mapOf(Seat.NEXT to complete),baseline=baseline)
+        assertEquals(neutral(expanded),tracker.eventCards.getValue("run"))
+        update(tracker,2750,ledger.snapshot(),groups=mapOf(Seat.NEXT to complete),baseline=baseline)
+        assertEquals(expanded,tracker.eventCards.getValue("run"))
+        // Fresh full-group suit proof may establish the new version; the old
+        // TEN marker cannot be inherited even at the same numerical index.
+        assertTrue(tracker.physicalEventCards.getValue("run").all { it.wildcard==null })
+        assertEquals(before,counter())
+    }
+
+    @Test fun repeatedRedRanksCannotTransferMarkersBetweenDifferentSuits() {
+        val tracker=StraightFlushEvidenceTracker()
+        val cards=listOf(Card(Rank.TEN,Suit.HEART),Card(Rank.TEN,Suit.DIAMOND),Card(Rank.NINE,Suit.DIAMOND))
+        val snap=snapshot(listOf(event("duplicates",cards,Seat.NEXT)))
+        val read=group(cards).copy(physicalWildcards=listOf(true,false,false))
+        vote(tracker,snapshot=snap,groups=mapOf(Seat.NEXT to read))
+        // Caller order must not change the sorted card/marker slots.
+        val reversed=SuitedGroup(read.cards.reversed(),read.boxes.reversed())
+        vote(tracker,750,snap,groups=mapOf(Seat.NEXT to reversed))
+        assertEquals(listOf(true,false,false),tracker.physicalEventCards.getValue("duplicates").map { it.wildcard })
+
+        val swapped=group(listOf(cards[1],cards[0],Card(Rank.NINE,Suit.HEART)))
+        vote(tracker,1500,snap,groups=mapOf(Seat.NEXT to swapped))
+        assertEquals(listOf(cards[1],cards[0],Card(Rank.NINE,Suit.RED)),tracker.eventCards.getValue("duplicates"))
+        assertTrue(tracker.physicalEventCards.getValue("duplicates").all { it.wildcard==null })
+        val freshMarkers=swapped.copy(physicalWildcards=listOf(false,true,true))
+        vote(tracker,2250,snap,groups=mapOf(Seat.NEXT to freshMarkers))
+        assertEquals(listOf(false,true,null),tracker.physicalEventCards.getValue("duplicates").map { it.wildcard })
+        assertEquals(Suit.DIAMOND,tracker.physicalEventCards.getValue("duplicates")[0].rendered.suit)
+        assertEquals(Suit.HEART,tracker.physicalEventCards.getValue("duplicates")[1].rendered.suit)
+    }
+
+    @Test fun changedEventColorsDiscardOldSuitConflictsAndMarkersBeforeNewVotes() {
+        val tracker=StraightFlushEvidenceTracker()
+        val cards=listOf(Card(Rank.NINE,Suit.DIAMOND),Card(Rank.TEN,Suit.HEART))
+        val snap=snapshot(listOf(event("versioned",cards)))
+        val read=group(cards).copy(physicalWildcards=listOf(false,true))
+        vote(tracker,snapshot=snap,groups=mapOf(Seat.PREVIOUS to read))
+        val conflicting=read.copy(cards=listOf(Card(Rank.NINE,Suit.HEART),cards[1]))
+        vote(tracker,750,snap,groups=mapOf(Seat.PREVIOUS to conflicting))
+        assertEquals(Suit.RED,tracker.eventCards.getValue("versioned").first().suit)
+
+        val changed=listOf(cards[0],Card(Rank.TEN,Suit.CLUB))
+        val next=snapshot(listOf(event("versioned",changed)))
+        update(tracker,1500,next,groups=mapOf(Seat.PREVIOUS to group(changed)))
+        assertEquals(neutral(changed),tracker.eventCards.getValue("versioned"))
+        assertTrue(tracker.physicalEventCards.getValue("versioned").all { it.wildcard==null })
+        update(tracker,1750,next,groups=mapOf(Seat.PREVIOUS to group(changed)))
+        assertEquals(neutral(changed),tracker.eventCards.getValue("versioned"))
+        update(tracker,2000,next,groups=mapOf(Seat.PREVIOUS to group(changed)))
+        assertEquals(changed,tracker.eventCards.getValue("versioned"))
+        assertTrue(tracker.physicalEventCards.getValue("versioned").all { it.wildcard==null })
+    }
+
+    @Test fun removingAnEventDiscardsItsColorConflictsAndRequiresNewProofIfItsIdReturns() {
+        val tracker=StraightFlushEvidenceTracker()
+        val cards=listOf(Card(Rank.NINE,Suit.DIAMOND),Card(Rank.TEN,Suit.HEART))
+        val snap=snapshot(listOf(event("removed",cards)))
+        vote(tracker,snapshot=snap,groups=mapOf(Seat.PREVIOUS to group(cards)))
+        vote(tracker,750,snap,groups=mapOf(Seat.PREVIOUS to group(listOf(Card(Rank.NINE,Suit.HEART),cards[1]))))
+        assertEquals(Suit.RED,tracker.eventCards.getValue("removed").first().suit)
+        update(tracker,1500,snapshot())
+        assertTrue(tracker.eventCards.isEmpty()); assertTrue(tracker.physicalEventCards.isEmpty())
+        update(tracker,1750,snap,groups=mapOf(Seat.PREVIOUS to group(cards)))
+        assertEquals(neutral(cards),tracker.eventCards.getValue("removed"))
+        update(tracker,2000,snap,groups=mapOf(Seat.PREVIOUS to group(cards)))
+        assertEquals(neutral(cards),tracker.eventCards.getValue("removed"))
+        update(tracker,2250,snap,groups=mapOf(Seat.PREVIOUS to group(cards)))
+        assertEquals(cards,tracker.eventCards.getValue("removed"))
+    }
+
+    @Test fun expandedColorVersionNeedsThreeFreshFramesBeforeAcceptingItsSuits() {
         val tracker = StraightFlushEvidenceTracker()
         val old = listOf(Card(Rank.FIVE, Suit.HEART))
         vote(tracker, snapshot = snapshot(listOf(event("a", old))), groups = mapOf(Seat.PREVIOUS to group(old)))
         val expanded = listOf(Card(Rank.FIVE, Suit.DIAMOND), Card(Rank.SIX, Suit.CLUB))
-        vote(tracker, 750, snapshot(listOf(event("a", expanded))), groups = mapOf(Seat.PREVIOUS to group(expanded)))
+        val snap=snapshot(listOf(event("a",expanded)))
+        update(tracker,750,snap,groups=mapOf(Seat.PREVIOUS to group(expanded)))
         assertEquals(neutral(initial) + neutral(expanded), tracker.consumed)
+        update(tracker,1000,snap,groups=mapOf(Seat.PREVIOUS to group(expanded)))
+        assertEquals(neutral(initial) + neutral(expanded), tracker.consumed)
+        update(tracker,1250,snap,groups=mapOf(Seat.PREVIOUS to group(expanded)))
+        assertEquals(neutral(initial)+expanded,tracker.consumed)
     }
 
     @Test fun stablePartialAnnotationsCanMergeWithoutLosingDifferentEarlierExactCards() {
@@ -264,14 +378,84 @@ class StraightFlushEvidenceTest {
         assertEquals(neutral(initial) + cards, tracker.consumed)
     }
 
-    @Test fun conflictingInitialSuitEvidenceDropsSuitClaimsButNotIts27RankColorCards() {
+    @Test fun conflictingInitialSuitEvidenceRevokesOnlyItsRankColorPoolForTheRound() {
         val tracker = StraightFlushEvidenceTracker()
         vote(tracker, own = group(initial))
         val altered = initial.toMutableList().apply { this[6] = Card(Rank.A, Suit.DIAMOND) }
         vote(tracker, 750, own = group(altered))
-        assertEquals(neutral(initial), tracker.consumed)
+        val expected=initial.map { if(it.colorKey()=="A:RED") Card(it.rank,Suit.RED) else it }
+        assertEquals(expected, tracker.consumed)
+        assertEquals(27,tracker.initialCards.size)
+        assertEquals(neutral(initial),neutral(tracker.initialCards))
         vote(tracker, 1500, own = group(initial))
-        assertEquals(neutral(initial), tracker.consumed)
+        assertEquals(expected, tracker.consumed)
+        vote(tracker, 2250, own = group(altered))
+        assertEquals(expected, tracker.consumed)
+    }
+
+    @Test fun redNineConflictAfterOwnPlayKeepsProvedGradeTenCountsAndResetsWithTheRound() {
+        // Live round13018801-1: SELF's new event rebuilt the initial hand,
+        // then a stable red-nine suit flip revoked unrelated grade-ten proof.
+        val tens=listOf(Card(Rank.TEN,Suit.HEART),Card(Rank.TEN,Suit.DIAMOND),
+            Card(Rank.TEN,Suit.SPADE),Card(Rank.TEN,Suit.CLUB))
+        val nines=listOf(Card(Rank.NINE,Suit.DIAMOND),Card(Rank.NINE,Suit.DIAMOND),Card(Rank.NINE,Suit.CLUB))
+        val baseline=tens+nines+deck.filter { !it.rank.isJoker && it.rank !in setOf(Rank.TEN,Rank.NINE) }.take(20)
+        val ledger=RoundLedger().apply { begin("r1",neutral(baseline)) }
+        val tracker=StraightFlushEvidenceTracker()
+        vote(tracker,snapshot=ledger.snapshot(),own=group(baseline),baseline=baseline)
+        val grade=WildcardRuleEvidence(setOf(Rank.TEN),true)
+        fun counter()=GradeCardCounter.evaluate(ledger.snapshot(),tracker.initialCards,tracker.physicalEventCards,
+            grade,faces=TableCardFaces.ORIGINAL)
+        val before=counter()
+        assertEquals(1,before.heartCount?.exact)
+        assertEquals(3,before.ordinaryCounts[Rank.TEN]?.exact)
+
+        val played=listOf(tens[1],tens[3])
+        ledger.commit(PlayEvent("r1","own-23",23,Seat.SELF,neutral(played)))
+        val remaining=baseline.toMutableList().apply { played.forEach { remove(it) } }
+        val changed=remaining.toMutableList().apply {
+            this[indexOf(Card(Rank.NINE,Suit.DIAMOND))]=Card(Rank.NINE,Suit.HEART)
+        }
+        vote(tracker,750,ledger.snapshot(),own=group(changed),baseline=baseline)
+        assertEquals(List(2) { Card(Rank.NINE,Suit.RED) },tracker.initialCards.filter { it.colorKey()=="NINE:RED" })
+        assertEquals(listOf(Card(Rank.NINE,Suit.CLUB)),tracker.initialCards.filter { it.colorKey()=="NINE:BLACK" })
+        assertEquals(tens.groupingBy { it }.eachCount(),tracker.initialCards.filter { it.rank==Rank.TEN }.groupingBy { it }.eachCount())
+        assertEquals(27,tracker.initialCards.size)
+        assertEquals(baseline.map { it.colorKey() }.sorted(),tracker.initialCards.map { it.colorKey() }.sorted())
+        assertEquals(neutral(baseline),ledger.initialHand())
+        assertEquals(before,counter())
+
+        // Correct-looking later frames cannot silently choose either side of
+        // the contradiction again within this round.
+        vote(tracker,1500,ledger.snapshot(),own=group(remaining),baseline=baseline)
+        assertTrue(tracker.initialCards.filter { it.colorKey()=="NINE:RED" }.all { it.suit==Suit.RED })
+        assertEquals(before,counter())
+
+        ledger.waitForNext(); ledger.begin("r2",neutral(baseline))
+        vote(tracker,2250,ledger.snapshot(),own=group(baseline),baseline=baseline)
+        assertEquals(baseline,tracker.initialCards)
+        assertEquals(1,counter().heartCount?.exact)
+        assertEquals(3,counter().ordinaryCounts[Rank.TEN]?.exact)
+    }
+
+    @Test fun revokedInitialPoolStillAllowsOtherPoolsToGainProofAndDetectTheirOwnConflicts() {
+        val tracker=StraightFlushEvidenceTracker()
+        val partial=initial.map { if(it.colorKey()=="K:RED") Card(it.rank,Suit.RED) else it }
+        vote(tracker,own=group(partial))
+        val changed=initial.toMutableList().apply { this[6]=Card(Rank.A,Suit.DIAMOND) }
+        vote(tracker,750,own=group(changed))
+        val onlyRedAceRevoked=initial.map { if(it.colorKey()=="A:RED") Card(it.rank,Suit.RED) else it }
+        assertEquals(onlyRedAceRevoked,tracker.initialCards)
+
+        val secondConflict=initial.toMutableList().apply {
+            this[indexOf(Card(Rank.K,Suit.HEART))]=Card(Rank.K,Suit.DIAMOND)
+        }
+        vote(tracker,1500,own=group(secondConflict))
+        val bothRevoked=initial.map { if(it.colorKey() in setOf("A:RED","K:RED")) Card(it.rank,Suit.RED) else it }
+        assertEquals(bothRevoked,tracker.initialCards)
+        tracker.reset()
+        vote(tracker,2250,own=group(initial))
+        assertEquals(initial,tracker.initialCards)
     }
 
     @Test fun mismatchedInitialBaselineCannotBeReplacedWithinTheRound() {
@@ -346,6 +530,59 @@ class StraightFlushEvidenceTest {
         update(tracker, 500, snap, groups = mapOf(Seat.PREVIOUS to original))
         assertEquals(neutral(initial) + cards, tracker.consumed)
     }
+    @Test fun teammateRedNineConflictKeepsGradeTenProofUntilTheHandVersionChanges() {
+        val baseline=deck.filter { it.rank !in setOf(Rank.TEN,Rank.NINE) }.take(27)
+        val seed=listOf(Card(Rank.TEN,Suit.HEART),Card(Rank.NINE,Suit.DIAMOND),Card(Rank.NINE,Suit.CLUB))
+        val available=deck.toMutableList().apply { (baseline+seed).forEach { remove(it) } }
+        val hand=seed+available.filter { it.rank !in setOf(Rank.TEN,Rank.NINE) }.take(24)
+        val ledger=RoundLedger().apply { begin("r1",neutral(baseline)); selfFinished() }
+        val grade=WildcardRuleEvidence(setOf(Rank.TEN),true)
+        val first=RemainingPoolExclusion("r1",1,emptyList(),neutral(hand))
+        val tracker=StraightFlushEvidenceTracker()
+        fun observe(time: Long,cards: List<Card>,version: RemainingPoolExclusion?) =
+            tracker.update(time,ledger.snapshot(),neutral(baseline),group(cards),emptyMap(),grade,version)
+        fun voteHand(start: Long,cards: List<Card>,version: RemainingPoolExclusion) {
+            listOf(start,start+250,start+500).forEach { observe(it,cards,version) }
+        }
+        fun counter(version: RemainingPoolExclusion)=GradeCardCounter.evaluate(ledger.snapshot(),tracker.initialCards,
+            tracker.physicalEventCards,grade,version.copy(cards=tracker.teammateCards),TableCardFaces.ORIGINAL)
+        voteHand(0,hand,first)
+        val before=counter(first)
+        assertEquals(1,before.heartCount?.exact); assertEquals(6,before.ordinaryCounts[Rank.TEN]?.exact)
+
+        val changed=hand.toMutableList().apply { this[1]=Card(Rank.NINE,Suit.HEART) }
+        voteHand(750,changed,first)
+        assertEquals(listOf(Card(Rank.NINE,Suit.RED)),tracker.teammateCards.filter { it.colorKey()=="NINE:RED" })
+        assertEquals(listOf(Card(Rank.NINE,Suit.CLUB)),tracker.teammateCards.filter { it.colorKey()=="NINE:BLACK" })
+        assertEquals(before,counter(first))
+        assertEquals(neutral(baseline),tracker.initialCards)
+        voteHand(1500,hand,first)
+        assertEquals(Suit.RED,tracker.teammateCards.single { it.colorKey()=="NINE:RED" }.suit)
+        assertEquals(before,counter(first))
+
+        val played=hand.last()
+        ledger.commit(PlayEvent("r1","teammate-new-hand",1,Seat.OPPOSITE,neutral(listOf(played))))
+        val remaining=hand.dropLast(1)
+        val next=first.copy(teammateEvents=ledger.snapshot().plays[Seat.OPPOSITE].orEmpty(),cards=neutral(remaining))
+        observe(2250,remaining,next)
+        assertEquals(neutral(remaining),tracker.teammateCards)
+        observe(2500,remaining,next)
+        assertEquals(neutral(remaining),tracker.teammateCards)
+        observe(2750,remaining,next)
+        assertEquals(remaining,tracker.teammateCards)
+        assertEquals(1,counter(next).heartCount?.exact); assertEquals(6,counter(next).ordinaryCounts[Rank.TEN]?.exact)
+
+        voteHand(3000,remaining.toMutableList().apply { this[1]=Card(Rank.NINE,Suit.HEART) },next)
+        assertEquals(Suit.RED,tracker.teammateCards.single { it.colorKey()=="NINE:RED" }.suit)
+        observe(3750,remaining,null)
+        assertTrue(tracker.teammateCards.isEmpty())
+        voteHand(4000,remaining,next)
+        assertEquals(remaining,tracker.teammateCards)
+        tracker.reset()
+        voteHand(4750,remaining,next)
+        assertEquals(remaining,tracker.teammateCards)
+    }
+
     @Test fun teammateHandSuitProofHasItsOwnVersionAndNeverRewritesOwnInitial() {
         val ledger=RoundLedger(); ledger.begin("r1",initial)
         ledger.commit(event("teammate-before",deck.drop(27).take(23),Seat.OPPOSITE))

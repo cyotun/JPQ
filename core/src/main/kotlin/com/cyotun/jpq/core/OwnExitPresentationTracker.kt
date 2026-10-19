@@ -10,6 +10,8 @@ class OwnExitPresentationTracker {
     private var roundId: String?=null
     private var lastOwnHand=emptyList<Card>()
     private var lastOwnHandSeen=-1L
+    private var lastScene: TableScene?=null
+    private var teammateTransitionAt=-1L
     private data class PendingExit(val cards: List<Card>,var glyphs: List<PlayGlyph>,val since: Long)
     private var pending: PendingExit?=null
     private var expiredReservation=false
@@ -21,6 +23,9 @@ class OwnExitPresentationTracker {
         }
         if(pending?.let { time-it.since>pendingLifetimeMs }==true) { pending=null; expiredReservation=true }
         roundId=currentRoundId
+        if(scene==TableScene.TEAMMATE && lastScene==TableScene.TABLE) teammateTransitionAt=time
+        else if(scene!=TableScene.TEAMMATE) teammateTransitionAt=-1L
+        lastScene=scene
         // A partial exit is an ownership anchor, never a complete play count.
         return if(scene==TableScene.TEAMMATE) glyphs.ifEmpty { pending?.glyphs.orEmpty() } else emptyList()
     }
@@ -56,15 +61,27 @@ class OwnExitPresentationTracker {
     }
     /**
      * OCR can expose the teammate label on the first own-completion frame. At
-     * that instant the ordinary SELF assignment is already disabled. Seed only
-     * from a freshly seen complete own hand and a matching final group in the
-     * ordinary self row. A briefly partial group may recover missing visible
-     * glyphs after completion, but only through its already established geometry.
+     * that instant the ordinary SELF assignment is already disabled. On that
+     * first transition, a directly observed departure and complete matching final
+     * group can establish the exit before ownership is assigned. A partial group
+     * still needs a fresh own-hand seed and its existing geometric association.
+     * observedHand must be the current qualified hand-region reading; null abstains.
      */
-    fun teammateTransition(time: Long,phase: RoundPhase,currentHand: List<Card>,table: List<PlayGlyph>) {
+    fun teammateTransition(time: Long,phase: RoundPhase,currentHand: List<Card>,table: List<PlayGlyph>,observedHand: List<Card>?=null) {
         if(phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED) || glyphs.isNotEmpty()) return
         val candidate=assignPlayGroups(table,emptySet(),emptyList()).seats.getValue(Seat.SELF)
         if(candidate.isEmpty() || candidate.minOf { it.confidence }<.65f) return
+        val rest=currentHand.toMutableList()
+        val handDeparted=observedHand!=null && (observedHand.isEmpty() || !observedHand.all { rest.remove(it) })
+        if(phase==RoundPhase.ACTIVE && time==teammateTransitionAt && handDeparted &&
+            pending==null && !expiredReservation && currentHand.isNotEmpty() &&
+            lastOwnHandSeen>=0 && time-lastOwnHandSeen in 0L..1500L &&
+            same(lastOwnHand,currentHand) && same(candidate.map { it.card },currentHand)) {
+            // The full final hand and its departure are directly visible within
+            // the existing complete-presentation window; no missing card is supplied.
+            glyphs=candidate.toList(); seenAt=time; emptyVotes=0
+            return
+        }
         if(phase==RoundPhase.ACTIVE) seedPending(time,currentHand,candidate)
         refreshPending(time,candidate)
     }
@@ -74,7 +91,7 @@ class OwnExitPresentationTracker {
         }
         if(observedCleanEmpty) { if(++emptyVotes>=2) reset() } else emptyVotes=0
     }
-    fun reset() { glyphs=emptyList(); pending=null; expiredReservation=false; emptyVotes=0; seenAt=-1; lastOwnHand=emptyList(); lastOwnHandSeen=-1 }
+    fun reset() { glyphs=emptyList(); pending=null; expiredReservation=false; emptyVotes=0; seenAt=-1; lastOwnHand=emptyList(); lastOwnHandSeen=-1; lastScene=null; teammateTransitionAt=-1 }
     private fun same(a: List<Card>,b: List<Card>)=a.groupingBy { it.colorKey() }.eachCount()==b.groupingBy { it.colorKey() }.eachCount()
     private fun seedPending(time: Long,currentHand: List<Card>,candidate: List<PlayGlyph>) {
         if(pending!=null || lastOwnHandSeen<0 || time-lastOwnHandSeen !in 0L..500L ||

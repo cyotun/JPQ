@@ -1,12 +1,23 @@
 package com.cyotun.jpq.core
 
 enum class TableScene { TABLE, DEALING, LOBBY, TRIBUTE, TEAMMATE, RESULT, UNKNOWN }
-data class ObservedPlay(val cards: List<Card>,val confidence: Float,val glyphs: List<PlayGlyph> = emptyList(),val regionObserved: Boolean = true)
+data class ObservedPlay(val cards: List<Card>,val confidence: Float,val glyphs: List<PlayGlyph> = emptyList(),val regionObserved: Boolean = true,
+                        val singleCardIdentity: SingleCardIdentity? = null)
 data class TableFrame(val timeMs: Long,val scene: TableScene,val hand: List<Card>?,val plays: Map<Seat,ObservedPlay?> = emptyMap(),val selfFinished: Boolean = false,
                       val incompleteReason: String? = null,val ambiguousPresentation: Boolean = false,val captureGap: Boolean = false,
                       val teammateHand: List<Card>? = null,val teammateHandConfidence: Float = 0f,
                       val dealingChoicesObserved: Boolean = false,
-                      val remainingHandCounts: Map<Seat,RemainingHandCount> = emptyMap())
+                      val remainingHandCounts: Map<Seat,RemainingHandCount> = emptyMap(),
+                      // Timestamp of independently validated central choice controls, never the OCR callback time.
+                      val openingChoiceSourceTimeMs: Long? = null,
+                      // Qualified by the source adapter only when the overlay is
+                      // the sole incompleteness and the own hand is unobstructed.
+                      val localizedOverlaySeats: Set<Seat> = emptySet())
+
+internal fun TableFrame.onlyLocalizedOverlay(): Boolean = incompleteReason!=null &&
+    localizedOverlaySeats.isNotEmpty() && !captureGap && !ambiguousPresentation &&
+    scene in setOf(TableScene.TABLE,TableScene.TEAMMATE) &&
+    localizedOverlaySeats.all { plays[it]?.regionObserved==false }
 data class ObserverStatus(val armed: Boolean,val locked: Boolean,val baselineWindow: Boolean,val tribute: Boolean,
     val handVotes: Int,val playVotes: Map<Seat,Int>,val pendingPlays: Int,val sequence: Long,val recovering: Boolean = false)
 
@@ -34,7 +45,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         var key=""; var count=0; var first=0L
         private var lastVoteTime=-1L
         private var strongCount=0; private var strongFirst=0L; private var accepted=false
-        fun accept(value: String,time: Long,fastProof: Boolean=false): Boolean {
+        fun accept(value: String,time: Long,fastProof: Boolean=false,fastMinimumSpanMs: Long=100L): Boolean {
             if(time==lastVoteTime) return accepted
             val previousTime=lastVoteTime
             lastVoteTime=time
@@ -42,7 +53,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 key=value; count=1; first=time; strongCount=0
             } else count++
             if(fastProof) { if(strongCount==0) strongFirst=time; strongCount++ } else strongCount=0
-            accepted=(count>=required && time-first>=100) || (strongCount>=3 && time-strongFirst>=100)
+            accepted=(count>=required && time-first>=100) || (strongCount>=3 && time-strongFirst>=fastMinimumSpanMs)
             return accepted
         }
         fun clear() { key=""; count=0; lastVoteTime=-1; strongCount=0; accepted=false }
@@ -78,7 +89,14 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     private var jokerTableReturnedAt: Long?=null
     private val jokerTeammateVote=Vote(3)
     private val teammateHandProof=TeammateHandPlayProofTracker()
+    private val terminalOwnHandProof=TerminalOwnHandProof()
+    private val ownExitPlayProof=OwnExitPlayProof()
+    private val localizedPendingRecovery=LocalizedPendingPlayRecovery()
+    private val quantityProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { QuantityAnchoredPlayProof() }
+    private val repeatedPlayProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RepeatedPlayCountProof() }
+    private val repeatedSingleProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RepeatedSingleCardProof() }
     private val observedEmptyAt=mutableMapOf<Seat,Long>()
+    private val countPlayBoundaryAt=mutableMapOf<Seat,Long>()
     fun diagnosticStatus()=ObserverStatus(armed,locked,baselineWindow,tribute,handVote.count,playVotes.mapValues { it.value.count },pending.size,sequence,recovery!=null)
     private fun key(cards: List<Card>)=cards.map { "${it.rank.name}:${it.suit.name}" }.sorted().joinToString(",")
     private fun emit() { runCatching { changed(ledger.snapshot()) } }
@@ -86,8 +104,14 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         handVote.clear(); tributeVote.clear(); newDealVote.clear(); playVotes.values.forEach { it.clear() }; emptyVotes.values.forEach { it.clear() }; pending.clear()
         visible.keys.forEach { visible[it]=""; presentations[it]=null; previousGlyphs[it]=emptyList(); empty[it]=0 }; unknownSince=null
         recovery=null; recoveryStartedAt=-1L; recoveryReason=""; ambiguitySince=null
-        shortJokerAnimation=false; jokerTableReturnedAt=null; jokerTeammateVote.clear(); observedEmptyAt.clear()
+        shortJokerAnimation=false; jokerTableReturnedAt=null; jokerTeammateVote.clear(); observedEmptyAt.clear(); countPlayBoundaryAt.clear()
         teammateHandProof.reset()
+        terminalOwnHandProof.reset()
+        ownExitPlayProof.reset()
+        localizedPendingRecovery.reset()
+        quantityProofs.values.forEach { it.clear() }
+        repeatedPlayProofs.values.forEach { it.clear() }
+        repeatedSingleProofs.values.forEach { it.clear() }
     }
     fun interrupted(reason: String) { locked=true; ledger.invalidate(reason); clearCandidates(); emit() }
     /** A fragmented confirmed display stays that event; no missing glyph is invented. */
@@ -116,6 +140,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     }
     /** A capture/ownership gap is not a ledger conflict and must remain recoverable. */
     fun incomplete(reason: String,timeMs: Long=lastTime,immediate: Boolean=false) {
+        ownExitPlayProof.reset()
+        quantityProofs.values.forEach { it.clear() }
+        repeatedPlayProofs.values.forEach { it.clear() }
+        repeatedSingleProofs.values.forEach { it.clear() }
         val snapshot=ledger.snapshot()
         if(recovery!=null) { recovery!!.observationInterrupted(timeMs); publishRecoveryIfDue(timeMs,immediate); return }
         if(snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) return
@@ -197,6 +225,59 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         if(lastTime>=0 && frame.timeMs-lastTime>2500 && snap.remaining!=null)
             incomplete("画面连续性中断，正在重新核对",lastTime,immediate=true)
         lastTime=frame.timeMs
+        if(frame.captureGap || frame.ambiguousPresentation || frame.incompleteReason!=null ||
+            frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE)) quantityProofs.values.forEach { it.clear() }
+        val localizedPlay=localizedPendingRecovery.observe(frame,ledger.snapshot(),ledger.currentHand(),ledger.phaseBeforeRecovery())
+        if(localizedPlay!=null && recovery!=null) {
+            // A complete new group was already seen twice before another seat's
+            // short mask. That old seat and every other anchor have now directly
+            // reconnected. Append only this still-visible group atomically; an
+            // arbitrary later group cannot replace a stale empty checkpoint.
+            val id=ledger.snapshot().roundId ?: return
+            val nextSequence=sequence+1
+            val event=PlayEvent(id,"$id:$nextSequence",nextSequence,localizedPlay.seat,localizedPlay.play.cards)
+            if(!runCatching { ledger.resumeAfterRecovery(emptyMap(),listOf(event)) }.isSuccess) {
+                recovery!!.observationInterrupted(frame.timeMs)
+                publishRecoveryIfDue(frame.timeMs,immediate=true); return
+            }
+            sequence=nextSequence
+            val seat=localizedPlay.seat
+            val play=localizedPlay.play
+            presentations[seat]=Presentation(play.cards.toList(),play.glyphs.toList(),frame.timeMs,event.eventId)
+            visible[seat]=key(play.cards); previousGlyphs[seat]=play.glyphs.toList()
+            playVotes.getValue(seat).clear(); emptyVotes.getValue(seat).clear()
+            recovery=null; recoveryStartedAt=-1L; recoveryReason=""
+            shortJokerAnimation=false; jokerTableReturnedAt=null; emit()
+            if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
+        }
+        // Observe before the scene/hand-off branches clear currentHand. A full
+        // last own display may precede the teammate label while its lower hand
+        // has already replaced ours. Recovery is reconciled independently.
+        val ownExit=if(recovery==null) ownExitPlayProof.observeWithCertificate(frame,ledger.snapshot(),ledger.currentHand())
+            else { ownExitPlayProof.reset(); null }
+        if(ownExit!=null) {
+            val current=ledger.snapshot()
+            if(current.phase==RoundPhase.SELF_FINISHED) {
+                val id=current.roundId
+                if(id!=null) {
+                    val nextSequence=sequence+1
+                    val event=PlayEvent(id,"$id:$nextSequence",nextSequence,Seat.SELF,ownExit.cards)
+                    if(runCatching { ledger.commitLateOwnExit(ownExit,event) }.isSuccess) {
+                        sequence=nextSequence; emit()
+                    }
+                }
+            } else if(!commit(Seat.SELF,ownExit.cards)) return
+        }
+        val terminalOwn=terminalOwnHandProof.observe(frame,ledger.snapshot(),ledger.currentHand(),ledger.phaseBeforeRecovery())
+        if(terminalOwn!=null && recovery!=null) {
+            // Every unfinished outside region stayed directly empty across this
+            // short own animation. The final whole own hand is visible twice;
+            // a completion label or a result screen alone never reaches here.
+            if(!runCatching { ledger.resumeAfterRecovery(emptyMap()) }.isSuccess) return
+            if(!commit(Seat.SELF,terminalOwn.cards)) return
+            recovery=null; recoveryStartedAt=-1L; recoveryReason=""
+            if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
+        }
         if(frame.scene in setOf(TableScene.LOBBY,TableScene.RESULT)) {
             // A result cannot certify a checkpoint still awaiting reconciliation.
             publishRecoveryIfDue(frame.timeMs,immediate=true)
@@ -291,7 +372,12 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             }
             incomplete(frame.incompleteReason ?: "出牌归属待核对，正在重新识别",ambiguitySince!!)
         } else ambiguitySince=null
-        frame.incompleteReason?.let { incomplete(it,frame.timeMs) }
+        frame.incompleteReason?.let {
+            // A continuing local mask cannot erase new, independently visible
+            // quantity sources on every frame. Global/unknown faults still do.
+            if(recovery!=null && frame.onlyLocalizedOverlay()) publishRecoveryIfDue(frame.timeMs)
+            else incomplete(it,frame.timeMs)
+        }
         recovery?.let { checkpoint ->
             val expansions=checkpoint.reconcile(frame) ?: run { publishRecoveryIfDue(frame.timeMs); return }
             val recovered=checkpoint.recoveredTeammatePlay
@@ -379,7 +465,13 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     private fun collectOthers(frame: TableFrame,commitNow: Boolean) {
         val confirmed=if(commitNow) ledger.snapshot() else null
         for(seat in listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT)) {
+            val repeatedProof=repeatedPlayProofs.getValue(seat)
+            val singleProof=repeatedSingleProofs.getValue(seat)
+            val quantityProof=quantityProofs.getValue(seat)
             if(confirmed?.played(seat)==27) {
+                repeatedProof.clear()
+                singleProof.clear()
+                quantityProof.clear()
                 // A finished player's last presentation can temporarily move away during
                 // an effect and return over real table pixels. It cannot be another play.
                 playVotes[seat]!!.clear(); emptyVotes[seat]!!.clear(); visible[seat]=""
@@ -387,7 +479,22 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 continue
             }
             val p=frame.plays[seat]
+            val shortPlay=if(confirmed!=null) quantityProof.observe(frame,confirmed,seat,
+                countPlayBoundaryAt[seat].takeIf { presentations[seat]==null }) else { quantityProof.clear(); null }
+            if(shortPlay!=null) {
+                if(!commit(seat,shortPlay.cards)) return
+                val event=ledger.snapshot().plays.getValue(seat).last()
+                presentations[seat]=Presentation(shortPlay.cards.toList(),shortPlay.glyphs.toList(),frame.timeMs,event.eventId)
+                visible[seat]=key(shortPlay.cards); previousGlyphs[seat]=shortPlay.glyphs.toList()
+                playVotes.getValue(seat).clear(); emptyVotes.getValue(seat).clear()
+                repeatedProof.clear(); singleProof.clear()
+                if(p?.cards?.isEmpty()==true) observedEmptyAt[seat]=frame.timeMs
+                if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
+                continue
+            }
             if(p==null || !p.regionObserved || p.confidence<.65f) {
+                repeatedProof.clear()
+                singleProof.unobserved(frame.timeMs)
                 // A low score with a visible region may recover its known geometry.
                 // A blind region cannot establish that an expansion is the old play.
                 presentations[seat]?.let { current ->
@@ -403,14 +510,20 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 current.unobservedSince=null
             }
             if(p.cards.filter { it.rank.isJoker }.groupingBy { it.rank }.eachCount().values.any { it>2 }) {
+                repeatedProof.clear()
+                singleProof.clear()
                 // Wildcards cannot replace jokers. An impossible animated class
                 // reading is an abstention, never a capacity-breaking ledger event.
                 playVotes[seat]!!.clear(); previousGlyphs[seat]=emptyList(); continue
             }
             if(p.cards.isEmpty()) {
+                repeatedProof.clear()
+                singleProof.clear()
                 observedEmptyAt[seat]=frame.timeMs
                 playVotes[seat]!!.clear(); empty[seat]=empty[seat]!!+1
-                if(emptyVotes[seat]!!.accept("empty",frame.timeMs)) { visible[seat]=""; presentations[seat]=null }
+                if(emptyVotes[seat]!!.accept("empty",frame.timeMs)) {
+                    visible[seat]=""; presentations[seat]=null; countPlayBoundaryAt[seat]=frame.timeMs
+                }
                 previousGlyphs[seat]=emptyList()
                 continue
             }
@@ -418,6 +531,28 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             val k=key(p.cards)
             val presentation=presentations[seat]
             val geometric=hasGeometry(p)
+            val duplicateSource=if(confirmed!=null && presentation?.eventId!=null && k==visible[seat] &&
+                geometric && containsTracked(p.glyphs,presentation.glyphs) && !frame.captureGap &&
+                !frame.ambiguousPresentation && frame.incompleteReason==null) frame.remainingHandCounts[seat] else null
+            val countBoundary=repeatedProof.observe(frame.timeMs,confirmed?.roundId,seat,presentation?.eventId,
+                    confirmed?.let { 27-it.played(seat) } ?: 0,p,duplicateSource)
+            val physicalBoundary=if(!countBoundary && confirmed!=null && presentation?.eventId!=null &&
+                k==visible[seat] && !frame.captureGap && !frame.ambiguousPresentation && frame.incompleteReason==null)
+                singleProof.observe(frame.timeMs,confirmed.roundId,presentation.eventId,27-confirmed.played(seat),p,
+                    frame.remainingHandCounts[seat])
+                else { singleProof.clear(); false }
+            if(countBoundary || physicalBoundary) {
+                // The cards are directly observed; the independent hand-count
+                // decrement proves that this is a second play at the same row.
+                if(!commit(seat,p.cards)) return
+                val event=ledger.snapshot().plays.getValue(seat).last()
+                presentations[seat]=Presentation(p.cards.toList(),p.glyphs.toList(),frame.timeMs,event.eventId)
+                visible[seat]=k; previousGlyphs[seat]=p.glyphs.toList()
+                singleProof.clear()
+                playVotes.getValue(seat).clear()
+                if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
+                continue
+            }
             val trackedPresentation=geometric && presentation!=null && presentation.glyphs.isNotEmpty() &&
                 frame.timeMs-presentation.lastSeen<=1500 && containsTracked(p.glyphs,presentation.glyphs)
             if(trackedPresentation) presentation!!.lastSeen=frame.timeMs
@@ -464,7 +599,17 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             // through three stable full readings; a new play still needs four.
             val trackedExpansion=presentation?.eventId!=null && p.confidence>=.70f && trackedPresentation &&
                 p.cards.size>presentation.cards.size && isSubset(presentation.cards,p.cards)
-            if(playVotes[seat]!!.accept(k,frame.timeMs,fastProof=fourJokerProof || trackedExpansion)) {
+            // A directly seen complete final hand has an independent size from
+            // the accepted seat ledger. Three stable high-confidence frames
+            // spanning at least 500ms may precede the result reveal; ordinary
+            // presentations retain their four-frame confirmation.
+            val finalHandProof=confirmed?.phase==RoundPhase.ACTIVE && frame.scene==TableScene.TABLE &&
+                !frame.hand.isNullOrEmpty() && key(frame.hand)==key(ledger.currentHand()) &&
+                !frame.captureGap && !frame.ambiguousPresentation && frame.incompleteReason==null &&
+                p.confidence>=.85f && hasGeometry(p) && p.cards.size==27-confirmed.played(seat)
+            val fastSpan=if(finalHandProof && !fourJokerProof && !trackedExpansion) 500L else 100L
+            if(playVotes[seat]!!.accept(k,frame.timeMs,fastProof=fourJokerProof || trackedExpansion || finalHandProof,
+                fastMinimumSpanMs=fastSpan)) {
                 // A same-box BIG/SMALL flip during an arrival effect is a new
                 // identity candidate, not automatically another play. A real
                 // lasting switch still commits; a proved empty clears the anchor.

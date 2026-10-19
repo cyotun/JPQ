@@ -72,6 +72,7 @@ class OwnExitPresentationTrackerTest {
         tracker.prepare(1000,TableScene.TABLE,"round")
         tracker.observe(1000,RoundPhase.ACTIVE,own.map { it.card },own.map { it.card },emptyList())
         tracker.prepare(1600,TableScene.TEAMMATE,"round")
+        // A matching group and a scene label alone do not prove the hand departed.
         tracker.teammateTransition(1600,RoundPhase.ACTIVE,own.map { it.card },own)
         assertTrue(tracker.prepare(1600,TableScene.TEAMMATE,"round").isEmpty())
     }
@@ -103,5 +104,132 @@ class OwnExitPresentationTrackerTest {
         tracker.prepare(1200,TableScene.TEAMMATE,"new-round")
         tracker.teammateTransition(1200,RoundPhase.ACTIVE,own.map { it.card },own)
         assertTrue(tracker.prepare(1200,TableScene.TEAMMATE,"new-round").isEmpty())
+    }
+
+    @Test fun completeFiveAcesAfterTheTeammateTransitionCannotBecomeTheOnlyOpponentsPlay() {
+        val full=listOf(Suit.BLACK,Suit.BLACK,Suit.BLACK,Suit.RED,Suit.RED).mapIndexed { i,suit ->
+            PlayGlyph(Card(Rank.A,suit),.89f,GlyphBox(.427f+i*.0245f,.3245f,.444f+i*.0245f,.3707f))
+        }
+        val cards=full.map { it.card }
+        val tracker=OwnExitPresentationTracker()
+        tracker.prepare(1000,TableScene.TABLE,"round")
+        tracker.observeOwnHand(1000,RoundPhase.ACTIVE,cards,cards)
+        // Real 8131..8135 order: blank, a late partial A, wrong colours, then
+        // every final A directly visible only after the teammate label arrives.
+        tracker.prepare(1283,TableScene.TABLE,"round")
+        tracker.observe(1283,RoundPhase.ACTIVE,cards,emptyList(),emptyList())
+        tracker.prepare(1532,TableScene.TABLE,"round")
+        tracker.observe(1532,RoundPhase.ACTIVE,cards,emptyList(),listOf(full.first().copy(card=Card(Rank.A,Suit.RED))))
+        assertFalse(tracker.blocksCentralFallback()) // The 500ms partial gate stays closed.
+        val allRed=full.map { it.copy(card=Card(Rank.A,Suit.RED)) }
+        tracker.prepare(1782,TableScene.TABLE,"round")
+        tracker.observe(1782,RoundPhase.ACTIVE,cards,emptyList(),allRed)
+        assertTrue(tracker.prepare(2015,TableScene.TEAMMATE,"round").isEmpty())
+        tracker.teammateTransition(2015,RoundPhase.ACTIVE,cards,full,listOf(Card(Rank.K,Suit.BLACK)))
+        for(time in listOf(2015L,2282L,2548L,2816L)) {
+            val proof=tracker.prepare(time,TableScene.TEAMMATE,"round")
+            assertEquals(full,proof)
+            val owned=assignPlayGroups(full,setOf(Seat.OPPOSITE,Seat.NEXT),emptyList(),true,
+                proof,ownExitUnresolved=tracker.blocksCentralFallback())
+            assertEquals(full,owned.seats.getValue(Seat.SELF))
+            assertTrue(owned.seats.getValue(Seat.PREVIOUS).isEmpty())
+            assertTrue(owned.ambiguous.isEmpty())
+            tracker.teammateTransition(time,RoundPhase.SELF_FINISHED,emptyList(),full)
+            tracker.observe(time,RoundPhase.SELF_FINISHED,emptyList(),emptyList(),owned.seats.getValue(Seat.SELF))
+        }
+    }
+
+    @Test fun lateTransitionStillRequiresEveryCorrectCardInTheSelfRow() {
+        for(candidate in listOf(own.dropLast(1),own.map { it.copy(card=Card(Rank.EIGHT,Suit.RED)) },
+            own.map { it.copy(card=Card(Rank.A,it.card.suit)) },own.map { it.copy(confidence=.64f) },
+            own.map { it.copy(box=it.box.copy(top=.16f,bottom=.21f)) })) {
+            val tracker=OwnExitPresentationTracker()
+            tracker.prepare(1000,TableScene.TABLE,"round")
+            tracker.observeOwnHand(1000,RoundPhase.ACTIVE,own.map { it.card },own.map { it.card })
+            tracker.prepare(2015,TableScene.TEAMMATE,"round")
+            tracker.teammateTransition(2015,RoundPhase.ACTIVE,own.map { it.card },candidate,listOf(Card(Rank.K,Suit.BLACK)))
+            assertTrue(tracker.prepare(2015,TableScene.TEAMMATE,"round").isEmpty())
+            assertFalse(tracker.blocksCentralFallback())
+        }
+    }
+
+    @Test fun completeTransitionCannotBorrowAnOlderOwnHandVersionOrAnUnseenHand() {
+        for(observeOldHand in listOf(false,true)) {
+            val tracker=OwnExitPresentationTracker()
+            tracker.prepare(1000,TableScene.TABLE,"round")
+            if(observeOldHand) tracker.observeOwnHand(1000,RoundPhase.ACTIVE,own.map { it.card },own.map { it.card })
+            val current=if(observeOldHand) own.dropLast(1) else own
+            tracker.prepare(2015,TableScene.TEAMMATE,"round")
+            tracker.teammateTransition(2015,RoundPhase.ACTIVE,current.map { it.card },current,listOf(Card(Rank.K,Suit.BLACK)))
+            assertTrue(tracker.prepare(2015,TableScene.TEAMMATE,"round").isEmpty())
+        }
+        val outOfOrder=OwnExitPresentationTracker()
+        outOfOrder.prepare(1000,TableScene.TABLE,"round")
+        outOfOrder.observeOwnHand(1000,RoundPhase.ACTIVE,own.map { it.card },own.map { it.card })
+        outOfOrder.prepare(900,TableScene.TEAMMATE,"round")
+        outOfOrder.teammateTransition(900,RoundPhase.ACTIVE,own.map { it.card },own,emptyList())
+        assertTrue(outOfOrder.prepare(900,TableScene.TEAMMATE,"round").isEmpty())
+        val nextRound=OwnExitPresentationTracker()
+        nextRound.prepare(1000,TableScene.TABLE,"old-round")
+        nextRound.observeOwnHand(1000,RoundPhase.ACTIVE,own.map { it.card },own.map { it.card })
+        nextRound.prepare(1200,TableScene.TABLE,"new-round")
+        nextRound.prepare(1300,TableScene.TEAMMATE,"new-round")
+        nextRound.teammateTransition(1300,RoundPhase.ACTIVE,own.map { it.card },own,emptyList())
+        assertTrue(nextRound.prepare(1300,TableScene.TEAMMATE,"new-round").isEmpty())
+    }
+
+    @Test fun finishedEmptyHandWithoutAnExitAnchorCannotClaimAnotherCentralGroup() {
+        val tracker=OwnExitPresentationTracker()
+        tracker.prepare(1000,TableScene.TABLE,"round")
+        tracker.observeOwnHand(1000,RoundPhase.ACTIVE,own.map { it.card },own.map { it.card })
+        tracker.prepare(2015,TableScene.TEAMMATE,"round")
+        tracker.teammateTransition(2015,RoundPhase.SELF_FINISHED,emptyList(),own,listOf(Card(Rank.K,Suit.BLACK)))
+        assertTrue(tracker.prepare(2015,TableScene.TEAMMATE,"round").isEmpty())
+    }
+
+    @Test fun completeTransitionCannotBypassPendingGeometryOrItsExpiry() {
+        val tracker=OwnExitPresentationTracker()
+        val cards=own.map { it.card }
+        tracker.prepare(1000,TableScene.TABLE,"round")
+        tracker.observeOwnHand(1000,RoundPhase.ACTIVE,cards,cards)
+        tracker.observe(1100,RoundPhase.ACTIVE,cards,emptyList(),own.dropLast(1))
+        val moved=own.map { it.copy(box=it.box.copy(left=it.box.left+.07f,right=it.box.right+.07f)) }
+        tracker.prepare(1300,TableScene.TEAMMATE,"round")
+        tracker.teammateTransition(1300,RoundPhase.ACTIVE,cards,moved,emptyList())
+        assertEquals(own.dropLast(1),tracker.prepare(1300,TableScene.TEAMMATE,"round"))
+        assertTrue(tracker.prepare(5200,TableScene.TEAMMATE,"round").isEmpty())
+        tracker.teammateTransition(5200,RoundPhase.ACTIVE,cards,own,emptyList())
+        assertTrue(tracker.prepare(5200,TableScene.TEAMMATE,"round").isEmpty())
+        assertTrue(tracker.blocksCentralFallback())
+    }
+
+    @Test fun completeTransitionNeedsAnExplicitDepartureAndCannotReuseALaterTeammateFrame() {
+        val cards=own.map { it.card }
+        for(observed in listOf(null,cards,cards.dropLast(1))) {
+            val tracker=OwnExitPresentationTracker()
+            tracker.prepare(1000,TableScene.TABLE,"round")
+            tracker.observeOwnHand(1000,RoundPhase.ACTIVE,cards,cards)
+            tracker.prepare(2015,TableScene.TEAMMATE,"round")
+            tracker.teammateTransition(2015,RoundPhase.ACTIVE,cards,own,observed)
+            assertTrue(tracker.prepare(2015,TableScene.TEAMMATE,"round").isEmpty())
+        }
+        val later=OwnExitPresentationTracker()
+        later.prepare(1000,TableScene.TABLE,"round")
+        later.observeOwnHand(1000,RoundPhase.ACTIVE,cards,cards)
+        later.prepare(1800,TableScene.TEAMMATE,"round")
+        later.teammateTransition(1800,RoundPhase.ACTIVE,cards,emptyList(),emptyList())
+        later.prepare(2015,TableScene.TEAMMATE,"round")
+        later.teammateTransition(2015,RoundPhase.ACTIVE,cards,own,emptyList())
+        assertTrue(later.prepare(2015,TableScene.TEAMMATE,"round").isEmpty())
+    }
+
+    @Test fun completeDepartureStillCannotClaimAnUnboundedlyStaleOwnHand() {
+        val tracker=OwnExitPresentationTracker()
+        val cards=own.map { it.card }
+        tracker.prepare(1000,TableScene.TABLE,"round")
+        tracker.observeOwnHand(1000,RoundPhase.ACTIVE,cards,cards)
+        tracker.prepare(2501,TableScene.TEAMMATE,"round")
+        tracker.teammateTransition(2501,RoundPhase.ACTIVE,cards,own,emptyList())
+        assertTrue(tracker.prepare(2501,TableScene.TEAMMATE,"round").isEmpty())
     }
 }

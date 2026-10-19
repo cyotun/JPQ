@@ -37,8 +37,8 @@ internal class SceneOcrImage(source: Bitmap,includeRemainingCounts: Boolean=fals
         }
     }
     // Small isolated badge copies preserve Chinese strokes which disappear in
-    // the 1280-wide full scene. Only interruption recovery requests these crops;
-    // they never change normal capture cost or become scene/grade text.
+    // the 1280-wide full scene. Tracked rounds use these independent quantities
+    // for repeated-play boundaries and recovery, never as scene/grade text.
     val countRegions: List<Region> = if(!includeRemainingCounts || sourceWidth<=sourceHeight) emptyList() else {
         val areas=listOf(floatArrayOf(.055f,.34f,.18f,.44f),floatArrayOf(.82f,.34f,.945f,.44f),
             floatArrayOf(.40f,.10f,.62f,.17f))

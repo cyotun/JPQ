@@ -46,7 +46,7 @@ class GradeHintLifecycleTest {
         assertNull(AppState.gradeRegion)
     }
 
-    @Test fun sameDealIncludingTeammateObservationRetainsItsMeasuredHudUntilFinished() = withAnalyzer { analyzer ->
+    @Test fun sameDealIncludingFinalCommitRetainsItsMeasuredHudUntilWaiting() = withAnalyzer { analyzer ->
         val ledger=ledger()
         analyzer.onLedgerChanged(ledger.snapshot())
         val observed=GlyphBox(.125f,.004f,.175f,.104f)
@@ -56,6 +56,41 @@ class GradeHintLifecycleTest {
         analyzer.onLedgerChanged(ledger.selfFinished())
         assertEquals(observed,AppState.gradeRegion)
         analyzer.onLedgerChanged(ledger.finish())
+        assertEquals(observed,AppState.gradeRegion)
+        analyzer.onLedgerChanged(ledger.waitForNext())
         assertNull(AppState.gradeRegion)
+    }
+
+    @Test fun finalTeammateCommitCannotRepaintAnExcludedStraightFlushGold() = withAnalyzer { analyzer ->
+        val ledger=ledger()
+        analyzer.onLedgerChanged(ledger.snapshot())
+        analyzer.onLedgerChanged(ledger.selfFinished())
+        analyzer.publishResult(ledger.snapshot(),StraightFlushResult(StraightFlushState.IMPOSSIBLE,
+            candidateRanks=emptySet()),true)
+        analyzer.onLedgerChanged(ledger.finish())
+        assertEquals(StraightFlushState.IMPOSSIBLE,AppState.straightFlushState)
+        assertTrue(AppState.straightFlushIncludesWildcards)
+        assertTrue(AppState.straightFlushCandidateRanks.isEmpty())
+        analyzer.onLedgerChanged(ledger.waitForNext())
+        assertEquals(StraightFlushState.UNKNOWN,AppState.straightFlushState)
+        assertEquals(Rank.entries.filterNot { it.isJoker }.toSet(),AppState.straightFlushCandidateRanks)
+    }
+
+    @Test fun pendingTeammateSuitReadKeepsBothTheIconAndAllRankHeadersUnchanged() = withAnalyzer { analyzer ->
+        val ledger=ledger()
+        analyzer.onLedgerChanged(ledger.snapshot())
+        analyzer.onLedgerChanged(ledger.selfFinished())
+        analyzer.publishResult(ledger.snapshot(),StraightFlushResult(StraightFlushState.IMPOSSIBLE),true,true)
+        val raw=StraightFlushResult(StraightFlushState.UNKNOWN,reason="suit_uncertain")
+        analyzer.publishResult(ledger.snapshot(),raw,true)
+        assertEquals(StraightFlushState.UNKNOWN,raw.state)
+        assertEquals(StraightFlushState.IMPOSSIBLE,AppState.straightFlushState)
+        assertTrue(AppState.straightFlushCandidateRanks.isEmpty())
+        val ranks=setOf(Rank.TEN,Rank.J,Rank.Q,Rank.K,Rank.A)
+        analyzer.publishResult(ledger.snapshot(),StraightFlushResult(StraightFlushState.POSSIBLE,candidateRanks=ranks),true)
+        assertEquals(StraightFlushState.IMPOSSIBLE,AppState.straightFlushState)
+        analyzer.publishResult(ledger.snapshot(),StraightFlushResult(StraightFlushState.POSSIBLE,candidateRanks=ranks),true,true)
+        assertEquals(StraightFlushState.POSSIBLE,AppState.straightFlushState)
+        assertEquals(ranks,AppState.straightFlushCandidateRanks)
     }
 }

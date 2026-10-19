@@ -9,10 +9,11 @@ class EmptyRegionGuard {
     private val evidence=EmptyRegionEvidence()
 
     fun evaluate(bitmap: Bitmap,scene: TableScene,handCount: Int,groups: Map<Seat,List<PlayGlyph>>,
-        roundId: String?,masks: List<GlyphBox> = emptyList()): Map<Seat,EmptyEvidence> {
+        roundId: String?,masks: List<GlyphBox> = emptyList(),handGlyphs: List<PlayGlyph> = emptyList(),
+        timeMs: Long? = null,ambiguous: Boolean = false): Map<Seat,EmptyEvidence> {
         val width=bitmap.width; val height=bitmap.height
         if(pixels.size!=width*height) pixels=IntArray(width*height)
         bitmap.getPixels(pixels,0,width,0,0,width,height)
-        return evidence.evaluate(pixels,width,height,scene,handCount,groups,roundId,masks)
+        return evidence.evaluate(pixels,width,height,scene,handCount,groups,roundId,masks,handGlyphs,timeMs,ambiguous)
     }
 }

@@ -22,6 +22,12 @@ internal class RoundRecovery(
     private var firstCountSource=-1L
     private var lastCountSource=-1L
     private var countSourceCutoff=startedAt
+    private var openingSourceCutoff=startedAt
+    private val clearOpeningFrames=java.util.ArrayDeque<Long>()
+    private var lastOpeningFrame=-1L
+    private var openingVotes=0
+    private var firstOpeningSource=-1L
+    private var lastOpeningSource=-1L
     var recoveredTeammatePlay: ObservedPlay? = null
         private set
     private var teammateHandKey=""
@@ -34,10 +40,14 @@ internal class RoundRecovery(
         countSourceCutoff=maxOf(countSourceCutoff,timeMs)
         countVotes=0; firstCountSource=-1; lastCountSource=-1
         resetTeammateProof()
+        resetOpeningProof(timeMs)
     }
 
     /** Null also means the old checkpoint cannot prove that no play was missed. */
     fun reconcile(frame: TableFrame): Map<String,List<Card>>? {
+        // Visible pre-play choice controls can prove an opening after a longer
+        // mask interruption. They cannot repair a round which already has plays.
+        if(openingChoicesProven(frame)) return emptyMap()
         // Fresh independent remaining-card badges can establish that no outside
         // player lost a card, even after the physical-presentation window expired.
         // A cached OCR result is one observation, regardless of frame rate.
@@ -89,8 +99,13 @@ internal class RoundRecovery(
     }
     private fun unchangedCountsProven(frame: TableFrame): Boolean {
         val sceneValid=frame.scene in setOf(TableScene.TABLE,TableScene.TEAMMATE) &&
-            !frame.captureGap && !frame.ambiguousPresentation && frame.incompleteReason==null
-        if(!sceneValid) observationInterrupted(frame.timeMs)
+            !frame.captureGap && !frame.ambiguousPresentation &&
+            (frame.incompleteReason==null || frame.onlyLocalizedOverlay())
+        if(!sceneValid) {
+            countSourceCutoff=maxOf(countSourceCutoff,frame.timeMs)
+            countVotes=0; firstCountSource=-1; lastCountSource=-1
+            resetTeammateProof()
+        }
         val ownValid=if(selfFinished) frame.scene==TableScene.TEAMMATE || frame.selfFinished
             else frame.hand?.let { key(it)==key(ownHand) }==true
         val readings=expectedHandCounts.keys.mapNotNull { seat -> frame.remainingHandCounts[seat]?.let { seat to it } }.toMap()
@@ -101,20 +116,64 @@ internal class RoundRecovery(
         val source=readings.values.map { it.sourceTimeMs }.distinct().singleOrNull()
         val tableConsistent=anchors.all { (seat,anchor) ->
             val play=frame.plays[seat]
-            play!=null && play.regionObserved && play.confidence>=.65f &&
+            // Every seat still needs its own independent unchanged quantity.
+            // An obscured presentation cannot commit or expand a play; its
+            // quantity can prove that no new card was lost behind the mask.
+            (frame.onlyLocalizedOverlay() && seat in frame.localizedOverlaySeats) ||
+            (play!=null && play.regionObserved && play.confidence>=.65f &&
                 (play.cards.isEmpty() || (anchor.cards.isNotEmpty() && play.glyphs.size==play.cards.size &&
                     key(play.cards)==key(play.glyphs.map { it.card }) &&
-                    containsTracked(anchor.glyphs,play.glyphs)))
+                    containsTracked(anchor.glyphs,play.glyphs))))
         }
         if(!sceneValid || !ownValid || !countsValid || source==null || !tableConsistent) {
             countVotes=0; firstCountSource=-1; lastCountSource=-1; return false
         }
-        if(source==lastCountSource) return false
+        fun ready()=countVotes>=3 && source-firstCountSource>=300L && frame.incompleteReason==null
+        // A cached source never adds a vote. It may deliver an already proved
+        // result when the local mask clears, provided the source is still fresh
+        // and every current visible presentation passed the checks above.
+        if(source==lastCountSource) return ready()
         if(lastCountSource<0 || source-lastCountSource !in 1L..1500L) {
             countVotes=1; firstCountSource=source
         } else countVotes++
         lastCountSource=source
-        return countVotes>=3 && source-firstCountSource>=300L
+        return ready()
+    }
+    private fun resetOpeningProof(timeMs: Long) {
+        openingSourceCutoff=maxOf(openingSourceCutoff,timeMs)
+        clearOpeningFrames.clear(); lastOpeningFrame=-1L
+        openingVotes=0; firstOpeningSource=-1L; lastOpeningSource=-1L
+    }
+    private fun openingChoicesProven(frame: TableFrame): Boolean {
+        val outside=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT)
+        val clear=opening && !selfFinished && ownHand.size==27 &&
+            expectedHandCounts.keys==outside.toSet() && expectedHandCounts.values.all { it==27 } &&
+            anchors.values.all { it.cards.isEmpty() && it.eventId==null } &&
+            frame.scene in setOf(TableScene.TABLE,TableScene.DEALING) && !frame.selfFinished &&
+            !frame.captureGap && !frame.ambiguousPresentation && frame.incompleteReason==null &&
+            frame.hand?.let { key(it)==key(ownHand) }==true &&
+            frame.plays[Seat.SELF]?.cards.orEmpty().isEmpty() &&
+            outside.all { seat -> frame.plays[seat]?.let { it.regionObserved && it.confidence>=.65f && it.cards.isEmpty() }==true }
+        if(!clear) { resetOpeningProof(frame.timeMs); return false }
+        if(lastOpeningFrame>=0 && frame.timeMs-lastOpeningFrame !in 1L..500L)
+            resetOpeningProof(lastOpeningFrame)
+        lastOpeningFrame=frame.timeMs
+        clearOpeningFrames.addLast(frame.timeMs)
+        while(clearOpeningFrames.isNotEmpty() && frame.timeMs-clearOpeningFrames.first>1000L) clearOpeningFrames.removeFirst()
+        val source=frame.openingChoiceSourceTimeMs ?: return false
+        // The asynchronous OCR source must itself have had a complete, clear
+        // opening, and every intervening card frame must still prove that state.
+        if(!frame.dealingChoicesObserved || frame.scene!=TableScene.DEALING || source<=openingSourceCutoff ||
+            frame.timeMs-source !in 0L..1000L || !clearOpeningFrames.contains(source)) return false
+        if(source==lastOpeningSource) return false
+        if(lastOpeningSource>=0 && source<lastOpeningSource) {
+            openingVotes=0; firstOpeningSource=-1L; return false
+        }
+        if(lastOpeningSource<0 || source-lastOpeningSource>1500L || openingVotes==0) {
+            openingVotes=1; firstOpeningSource=source
+        } else openingVotes++
+        lastOpeningSource=source
+        return openingVotes>=2 && source-firstOpeningSource>=300L
     }
     /** A complete known teammate hand accounts for every new card; other seats
      * still need independent unchanged quantities, never an inferred pass. */

@@ -26,7 +26,7 @@ class VisibilitySourceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             archive,entry,line=self.fixture(folder,[self.frame()])
             result=visibility.prepare(archive,[entry],Path(folder)/"copies")
-            self.assertEqual(line+";false;\n",(Path(folder)/"copies/source.tape").read_text())
+            self.assertEqual(line+";false;;?;?;?\n",(Path(folder)/"copies/source.tape").read_text())
             self.assertEqual(1,result["sources"][0]["knownMaskFrames"])
             self.assertEqual(entry["sha256"],result["sources"][0]["originalTapeSha256"])
 
@@ -37,7 +37,7 @@ class VisibilitySourceTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as folder:
                 archive,entry,line=self.fixture(folder,frames)
                 result=visibility.prepare(archive,[entry],Path(folder)/"copies")
-                self.assertEqual(line+";false;?\n",(Path(folder)/"copies/source.tape").read_text())
+                self.assertEqual(line+";false;?;?;?;?\n",(Path(folder)/"copies/source.tape").read_text())
                 self.assertEqual(0,result["sources"][0]["knownMaskFrames"])
 
     def test_changed_source_hash_is_rejected_before_annotating_any_tape(self):
@@ -48,6 +48,27 @@ class VisibilitySourceTest(unittest.TestCase):
     def test_logged_mask_edges_are_expanded_for_rounding_not_removed(self):
         encoded=visibility.encode_masks(self.frame(overlayMasks=[[.1,.2,.3,.4]]))
         self.assertEqual("0.09990,0.19990,0.30010,0.40010",encoded)
+
+    def test_only_literal_reasons_with_matching_observed_flags_are_preserved(self):
+        reasons={s:{"observed":s!="NEXT","reason":"foreground_or_animation" if s=="NEXT" else "table_surface_visible"}
+                 for s in ("SELF","PREVIOUS","OPPOSITE","NEXT")}
+        with tempfile.TemporaryDirectory() as folder:
+            archive,entry,line=self.fixture(folder,[self.frame(emptyEvidence=reasons)])
+            result=visibility.prepare(archive,[entry],Path(folder)/"copies")
+            self.assertEqual(line+";false;;?;?;table_surface_visible,table_surface_visible,table_surface_visible,foreground_or_animation\n",
+                (Path(folder)/"copies/source.tape").read_text())
+            self.assertEqual(1,result["sources"][0]["knownEmptyReasonFrames"])
+        for bad in [None,{},dict(reasons,NEXT={"observed":True,"reason":"foreground_or_animation"}),
+                    dict(reasons,NEXT={"observed":False,"reason":"injected;field"})]:
+            self.assertEqual("?",visibility.encode_empty_reasons(bad,"true,true,true,false"))
+
+    def test_unmatched_source_cannot_supply_even_plausible_empty_reasons(self):
+        reasons={s:{"observed":s!="NEXT","reason":"foreground_or_animation"} for s in ("SELF","PREVIOUS","OPPOSITE","NEXT")}
+        with tempfile.TemporaryDirectory() as folder:
+            archive,entry,line=self.fixture(folder,[self.frame(elapsedMs=101,emptyEvidence=reasons)])
+            result=visibility.prepare(archive,[entry],Path(folder)/"copies")
+            self.assertEqual(0,result["sources"][0]["knownEmptyReasonFrames"])
+            self.assertEqual(line+";false;?;?;?;?\n",(Path(folder)/"copies/source.tape").read_text())
 
     def test_invalid_or_duplicate_source_names_cannot_select_other_output_paths(self):
         for name in ["../escape","other/source","different"]:

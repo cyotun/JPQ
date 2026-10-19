@@ -46,6 +46,18 @@ class EmptyRegionEvidenceTest {
         assertFalse(result.observed); assertEquals("overlay_occlusion",result.reason)
     }
 
+    @Test fun samplingMarginAboveAPrintedCardIsNotAnOcclusion() {
+        val evidence=EmptyRegionEvidence()
+        // Recorded card/bar geometry: a real 2px gap at 1200px height.
+        // The old .005 sampling expansion falsely suspended the entire round.
+        val high=PlayGlyph(Card(Rank.A,Suit.RED),.99f,GlyphBox(.4955f,.1150f,.5124f,.1608f))
+        val result=evidence.evaluate(felt,width,height,TableScene.TABLE,27,group(Seat.OPPOSITE,high),"one",
+            listOf(GlyphBox(.1794f,0f,.5472f,.1133f))).getValue(Seat.OPPOSITE)
+        assertTrue(result.observed); assertEquals("detected_glyphs",result.reason)
+        assertFalse(evidence.directlyObserved(TableScene.TABLE,Seat.OPPOSITE,listOf(high),
+            listOf(GlyphBox(.1794f,0f,.5472f,.116f))))
+    }
+
     @Test fun maskBeyondTheDetectedGlyphStillMakesAPartialGroupUnobserved() {
         val evidence=EmptyRegionEvidence()
         val tailMask=listOf(GlyphBox(.30f,.30f,.35f,.36f))

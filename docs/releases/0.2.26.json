@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "tag": "v0.2.26",
+  "decisionDate": "2026-10-19",
+  "status": "user-accepted-stable-source-baseline",
+  "stableSourceBaseline": true,
+  "legacyEvidenceBlocksAcceptance": false,
+  "historicalAuditResultsPreserved": true,
+  "fullAccuracyGuaranteeClaimed": false,
+  "packageName": "com.cyotun.jpq",
+  "testedVersionName": "0.2.26-regression",
+  "testedVersionCode": 28,
+  "binaryUnchangedForStableDesignation": true,
+  "apk": {
+    "localFileName": "记牌器-0.2.26-regression-v49.apk",
+    "bytes": 73050126,
+    "sha256": "7033136f84a8f28b16106724c26e3651f9e156b9e5d29098fc6b413b70b8411c",
+    "signerCertificateSha256": "ebe83c802f083bdb1adafc6163744dfa2cbd30f5677c04ab5ff29356c5cff71f"
+  },
+  "localFullSourceFingerprint": {
+    "files": 534,
+    "sha256": "e843b64db28fe3774ec26e649c5528b28636e6ed07c788f72baf948e39907ea0",
+    "scope": "Exact local bytes of tested source, tools and private assets; not a portable clean-clone tree hash"
+  },
+  "validation": {
+    "coreTestsPassed": 624,
+    "appHostTestsPassed": 5,
+    "phoneNonMatchTestsPassed": 108,
+    "realCaptureCycles": 3,
+    "lintErrors": 0,
+    "latestLiveRounds": 3,
+    "latestLiveFrames": 3749,
+    "latestLiveEvents": 107,
+    "latestLiveUnresolvedRounds": 0,
+    "latestLiveReplayFailures": 0,
+    "scope": "Recorded model/scene/ledger replay plus targeted image checks, not independent human truth for every card"
+  },
+  "legacyFixedCohort": {
+    "sources": 33,
+    "frames": 153200,
+    "completedSegments": 40,
+    "reviewedExcludedSegments": 8,
+    "evidenceGapSegments": 2,
+    "originalGatePassed": false
+  },
+  "nonBlockingHistoricalLimitations": [
+    "One prior last-four-sixes SELF history lacks sufficient direct evidence; outside remaining pool unaffected",
+    "Two legacy source continuity evidence gaps"
+  ],
+  "distribution": {
+    "github": "source-documents-and-tag",
+    "apkUploadedToGitHub": false,
+    "cloudflareStableApkPublished": false,
+    "diagnosticUploads": false
+  },
+  "nextMinimumVersionCode": 29
+}
