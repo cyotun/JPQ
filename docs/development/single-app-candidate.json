@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-19",
-  "status": "candidate_non_game_validation_in_progress",
+  "status": "candidate_awaiting_live_validation",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -12,7 +12,8 @@
     "apkSha256": "7033136f84a8f28b16106724c26e3651f9e156b9e5d29098fc6b413b70b8411c",
     "rollbackVerified": true,
     "sourceBundleRestoredAndVerified": true,
-    "installedVersionAndUpdateTimeUnchanged": true
+    "installedVersionAndUpdateTimeUnchanged": true,
+    "installedApkSha256Verified": true
   },
   "candidate": {
     "package": "com.cyotun.jpq.candidate",
@@ -21,7 +22,7 @@
     "apkSha256": "c8e53f568f7ed11643fd3838261d69f0843873fe8aa1e169a8515405b0c91406",
     "apkBytes": 73066526,
     "testPackage": "com.cyotun.jpq.candidate.tests",
-    "testApkSha256": "e46996e3ecc0c6fa9d2c541713db1f0af95704a65337c9cc6da8dee37bb1185d",
+    "testApkSha256": "7704f9952893e13b02016dfb8803d0c1458f6caa965c39c5b034f6474f3d6798",
     "stableUpdaterDisabled": true,
     "minimumApi": 37,
     "scope": "APP_TASK",
@@ -49,7 +50,7 @@
       "gatePassed": false,
       "unchangedFromStable": true
     },
-    "sourceFingerprintSha256": "d38ea969200a2cf8c224a1233db621677de5a5fc898fd7469a288e3e2f2dd51a",
+    "sourceFingerprintSha256": "cb058b973dd3e70009c3ed81587361397baf7d9d399813bef748090a9473bd8d",
     "sourceUnchangedAfterFinalSweep": true
   },
   "phone": {
@@ -70,11 +71,29 @@
     "rawInputSampleCount": 3,
     "rawConversionPixelMismatches": 0,
     "normalStopReleasesProjection": true,
-    "externalOverlayIsolation": "pending_retest_with_foreground_helper",
-    "systemNotificationIsolation": "pending",
+    "externalOverlayIsolation": "verified_counter_and_independent_uid_overlay_on_real_game_task",
+    "systemNotificationIsolation": "inconclusive_system_volume_panel_not_confirmed_visible",
     "liveMatchAccuracy": "pending",
     "powerAndTemperatureBenefit": "not_measured",
-    "stablePublished": false
+    "stablePublished": false,
+    "externalOverlayEvidence": {
+      "physicalTimeMs": 1792413220969,
+      "nearestRawTimeMs": 1792413220536,
+      "physicalMagentaRatio": 1.0,
+      "capturedMagentaRatio": 0.0,
+      "sampleCount": 3,
+      "rgbConversionMismatches": 0,
+      "externalUid": 10651,
+      "captureUid": 10648,
+      "helperUninstalled": true
+    },
+    "diagnosticsOffSmoke": {
+      "elapsedMs": 30009,
+      "observedFrames": 276,
+      "rawProbeIds": [],
+      "fullTraceRecords": 0,
+      "projectionReleased": true
+    }
   },
   "scope": "Recorded replay and non-game pixel isolation, not a 99.9 percent accuracy or energy certification"
 }

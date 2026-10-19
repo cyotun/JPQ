@@ -29,12 +29,16 @@ class CandidateCaptureSamplingTest {
         val context=instrument.targetContext
         check(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && context.packageName=="com.cyotun.jpq.candidate")
         check(!AppState.running) { "Start this lab only with capture stopped and no match in progress" }
+        val diagnosticsArgument=InstrumentationRegistry.getArguments().getString("candidateDiagnostics") ?: "true"
+        require(diagnosticsArgument in setOf("true","false"))
+        val diagnosticsEnabled=diagnosticsArgument=="true"
         val prefs=context.getSharedPreferences("jpq-diagnostics",0)
-        check(prefs.edit().putBoolean("enabled",true).putInt("captureProbeRemaining",0).commit())
+        check(prefs.edit().putBoolean("enabled",diagnosticsEnabled).putInt("captureProbeRemaining",0).commit())
         val probes=File(context.filesDir,"capture-probes")
         val existing=probes.listFiles().orEmpty().map { it.name }.toSet()
         val record=JSONObject().put("targetPackage",context.packageName)
             .put("scope","non_game_real_lobby_pixel_isolation_only")
+            .put("diagnosticsEnabled",diagnosticsEnabled)
         fun await(label: String,timeout: Long,condition: ()->Boolean) {
             val deadline=SystemClock.elapsedRealtime()+timeout
             while(SystemClock.elapsedRealtime()<deadline) {
@@ -62,9 +66,11 @@ class CandidateCaptureSamplingTest {
             record.put("sampleStartedElapsedMs",started).put("sampleStartedWallMs",System.currentTimeMillis())
                 .put("counterScreenWidth",mask.screenWidth).put("counterScreenHeight",mask.screenHeight)
                 .put("counterBounds",JSONArray(listOf(mask.rectangle.left,mask.rectangle.top,mask.rectangle.right,mask.rectangle.bottom)))
-            check(prefs.edit().putInt("captureProbeRemaining",3).commit())
-            await("three fresh raw task samples",15000) {
-                probes.listFiles().orEmpty().count { it.name !in existing && File(it,"probe.json").isFile }==3
+            if(diagnosticsEnabled) {
+                check(prefs.edit().putInt("captureProbeRemaining",3).commit())
+                await("three fresh raw task samples",15000) {
+                    probes.listFiles().orEmpty().count { it.name !in existing && File(it,"probe.json").isFile }==3
+                }
             }
             record.put("probeIds",JSONArray(probes.listFiles().orEmpty().filter { it.name !in existing }.map { it.name }.sorted()))
             // Keep both real overlays on screen long enough for the host's independent physical comparison.
