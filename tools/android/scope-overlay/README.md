@@ -10,6 +10,14 @@ adb shell am start -n com.cyotun.jpq.scopeoverlay/.ScopeOverlayLauncherActivity 
 
 The activity binds its own service, shows the overlay, then moves itself to the back after the service reports the overlay visible. Stop it earlier by closing the helper task. Opening the launcher without `overlayProbe=true` exits immediately.
 
+For a synchronized system-notification visibility check, add `--ez notifyProbe true`:
+
+```powershell
+adb shell am start -n com.cyotun.jpq.scopeoverlay/.ScopeOverlayLauncherActivity --ez overlayProbe true --ez notifyProbe true
+```
+
+This opt-in posts one separate-channel `IMPORTANCE_HIGH` notification, intended to appear as a heads-up banner for at most 10 seconds while the magenta overlay runs. It does not request `POST_NOTIFICATIONS` or change notification settings. On Android 13 and later it posts only if notification permission is already granted; notifications disabled by the user or a blocked channel are also logged as skipped. The launcher logs `notification_probe_event=posted`, `skipped`, and `cancelled` under `ScopeProbeLauncher`. The notification is removed at 10 seconds or as soon as the probe stops. For a simultaneous-visible result, independently verify the physical display shows the candidate counter bar, this helper's magenta window, and the notification banner together; the notification is not part of the selected app-task capture pixels. Channel importance can be lowered by the user, in which case the event log reports the effective importance and a heads-up banner is not guaranteed.
+
 To diagnose a standalone run, read the helper's concise lifecycle logs:
 
 ```powershell

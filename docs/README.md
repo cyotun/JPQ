@@ -8,7 +8,8 @@
 | 修改首页、设置或悬浮窗 | [当前规格](design/current-spec.md) |
 | 理解识别、账本、复核和同花顺算法 | [架构说明](development/architecture.md) |
 | 构建、复测、排障、发布或回退 | [维护指南](development/maintenance.md)、[Android 准备](../app/README.md) |
-| 先在电脑重跑原图/整局，再安排手机验收 | [电脑优先测试](development/desktop-first-testing.md) |
+| 在电脑验证浮窗/通知下层采集方法，再准备手机 Beta | [Android 模拟器采集实测](development/emulator-capture-20261020.md) |
+| 对识别/账本做图片或整局回归（不验证系统采集隔离） | [电脑识别工具](development/desktop-first-testing.md) |
 | 追溯本版问题与证据 | [0.2.26 记录](development/repair-0.2.26.md)；同目录 0.2.20–0.2.25 为此前修复 |
 | 看批准的视觉方案 | [首页和级牌](design/home-redesign/README.md)、[同花顺金字](design/straight-flush-ranks/README.md)、[遮挡提示](design/grade-occlusion/README.md) |
 | 维护更新服务器 | [接口与部署](../services/updates/README.md)、[更新契约](design/update-contract.md)、[部署记录](deployment/cloudflare-status.md) |

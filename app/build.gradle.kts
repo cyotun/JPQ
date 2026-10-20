@@ -3,6 +3,10 @@ import java.util.Properties
 
 plugins { id("com.android.application"); kotlin("android") }
 val jpqCandidate = providers.gradleProperty("jpqCandidate").orNull == "true"
+// Emulator lab only: avoid ARM native translation when exercising the real capture stack.
+// Neither the normal candidate nor the stable release changes ABI or native libraries.
+val jpqEmulatorAbi = providers.gradleProperty("jpqEmulatorAbi").orNull == "true"
+check(!jpqEmulatorAbi || jpqCandidate) { "The emulator ABI is restricted to the candidate lab build" }
 android {
     namespace = "com.cyotun.jpq"
     compileSdk = 36
@@ -42,6 +46,9 @@ android {
             applicationIdSuffix = ".candidate"
             versionNameSuffix = "-candidate"
             buildConfigField("boolean", "SINGLE_APP_CAPTURE_CANDIDATE", "true")
+            if (jpqEmulatorAbi) {
+                ndk { abiFilters.clear(); abiFilters += "x86_64" }
+            }
         }
     }
 }

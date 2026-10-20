@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "date": "2026-10-19",
-  "status": "candidate_c2_offline_verified_phone_pending",
+  "date": "2026-10-20",
+  "status": "emulator_capture_method_verified_arm_phone_beta_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -29,7 +29,9 @@
     "publicApiOnly": true,
     "buildId": "c2",
     "installed": false,
-    "detectionPipeline": "FULL_CPU"
+    "detectionPipeline": "FULL_CPU",
+    "phoneBetaArtifact": "artifacts/记牌器-0.2.26-beta-单应用采集.apk",
+    "phoneBetaIsExistingC2ArmBinaryAlias": true
   },
   "offline": {
     "coreTests": 631,
@@ -114,5 +116,44 @@
     "fullArchiveRetrieved": false,
     "hostLogSha256": "81cf2db5f34b3df24e49706c4725c19c588d10e0f544022ab55574647ef5a6db",
     "stableUnchanged": true
+  },
+  "emulator": {
+    "api": 37,
+    "imageRevision": 6,
+    "emulatorVersion": "37.2.12",
+    "nativeAbi": "x86_64",
+    "realCandidateCaptureService": true,
+    "realCandidateOverlay": true,
+    "separateUidOverlay": true,
+    "systemNotificationPanel": "verified_visible_physical_panel_and_clean_task_capture",
+    "headsUpBanner": "not_confirmed_visible_not_claimed_passed",
+    "systemSession": "RECORD_CONTENT_TASK",
+    "taskTargetIdentityVerified": true,
+    "displayPositiveControlFrames": 16,
+    "taskOverlayExcludedFrames": 17,
+    "candidateStages": 3,
+    "solidFixturePixelsComparedPerStage": 701134,
+    "solidPixelMismatches": 0,
+    "rawConversionMismatches": 0,
+    "liveFixtureCounters": [
+      9624,
+      9659,
+      9701
+    ],
+    "newFrameMonotonicTimestampsVerified": true,
+    "negativeEvidenceCasesRejected": 5,
+    "instrumentationTests": 1,
+    "instrumentationFailures": 0,
+    "candidateHostTests": 10,
+    "releaseHostTests": 10,
+    "captureReleased": true,
+    "emulatorClosed": true,
+    "physicalPhoneTouched": false,
+    "liveGameAccuracyClaimed": false,
+    "powerBenefitMeasured": false,
+    "runId": "874d2de8-0805-4385-99aa-5f131306b6e3",
+    "evidenceDirectory": "captures/emulator/capture-api37-20261020/candidate-20261020T134426Z",
+    "documentation": "docs/development/emulator-capture-20261020.md",
+    "proofImage": "docs/research/emulator-capture-proof-20261020.png"
   }
 }
