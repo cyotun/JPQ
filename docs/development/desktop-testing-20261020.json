@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-20",
+  "status": "desktop_framework_verified_one_full_round",
+  "applicationSourceCommit": "d4d01b8f6d14b5edf72ec67bed09c7cbbc19e8bf",
+  "productionFilesModified": false,
+  "phoneAccessed": false,
+  "modelSha256": "87493b13b285027b7ee0f727bc9ca5b9a2aec8c7e0e730e43a79417121f3a90c",
+  "runtimeVersion": "2.2.0",
+  "toolTests": 17,
+  "toolTestFailures": 0,
+  "staticFixtures": {
+    "samples": 8,
+    "freshModelInference": true,
+    "phoneCardColorMultisetsMatch": true,
+    "sharedCoreHandsMatch": true,
+    "sharedCoreSeatGroupsMatch": true,
+    "batchDriverPassed": true,
+    "batchCodeUnchanged": true
+  },
+  "completeVideoReplay": {
+    "freshModelInference": true,
+    "frames": 2805,
+    "reviewedWindowSeconds": [463, 650],
+    "sceneAndFinishLabels": "explicit_reviewed_inputs",
+    "outsidePlaysExpected": 27,
+    "outsidePlaysActual": 27,
+    "ownPlaysExpected": 4,
+    "ownPlaysMatch": true,
+    "initialHandMatches": true,
+    "remainingExpected": 8,
+    "remainingActual": 8,
+    "shortAmbiguousFrames": 57,
+    "coreFailures": 0,
+    "manualComparisonPassed": true,
+    "inferenceReportSha256": "26c7f1fdd2daad906481c59d950abae8b70ad4a7895fe6bbd904cc89ea2e00b8",
+    "coreOutputSha256": "9fd8eaf04cc1991e8de8c59c2acc3f03efe6fcf85b7e91cf2a8eef218fdfdbc2",
+    "manualExpectedSha256": "1af94f36b8be505aaa9b7858b63ba4d60d625e071416136038f9f271199ad127"
+  },
+  "pending": [
+    "fresh_inference_first_video_3177_frames",
+    "C1_failed_round_full_diagnostic_retrieval_and_reproduction",
+    "Android_capture_and_OCR_validation",
+    "system_notification_isolation",
+    "controlled_power_and_temperature_comparison"
+  ],
+  "scope": "Fresh desktop FULL model, reviewed semantics, shared-core replay, independent card labels; not full Android emulation",
+  "resizeParity": "desktop_bilinear_unverified_against_phone_pixels",
+  "phoneAcceptancePassed": false,
+  "allHistoricalRoundsPassed": false,
+  "stablePublicationChanged": false
+}
