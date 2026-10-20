@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "date": "2026-10-20",
-  "status": "emulator_capture_method_verified_arm_phone_beta_pending",
+  "date": "2026-10-21",
+  "status": "c2_arm_phone_non_match_checks_passed_live_match_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -28,7 +28,7 @@
     "scope": "APP_TASK",
     "publicApiOnly": true,
     "buildId": "c2",
-    "installed": false,
+    "installed": true,
     "detectionPipeline": "FULL_CPU",
     "phoneBetaArtifact": "artifacts/记牌器-0.2.26-beta-单应用采集.apk",
     "phoneBetaIsExistingC2ArmBinaryAlias": true
@@ -101,7 +101,7 @@
       "projectionReleased": true
     },
     "evidenceApkSha256": "c8e53f568f7ed11643fd3838261d69f0843873fe8aa1e169a8515405b0c91406",
-    "currentCandidatePhoneValidation": "pending_c2_not_installed"
+    "currentCandidatePhoneValidation": "c2_installed_non_match_checks_passed_live_match_pending"
   },
   "scope": "Recorded replay and non-game pixel isolation, not a 99.9 percent accuracy or energy certification",
   "c1LiveFailure": {
@@ -116,6 +116,35 @@
     "fullArchiveRetrieved": false,
     "hostLogSha256": "81cf2db5f34b3df24e49706c4725c19c588d10e0f544022ab55574647ef5a6db",
     "stableUnchanged": true
+  },
+  "phoneC2": {
+    "date": "2026-10-21",
+    "instrumentedChecksPassed": 25,
+    "failuresInFinalChecks": 0,
+    "synchronousSamplingRunsPassed": 4,
+    "rawSamplesPerRun": 3,
+    "processedFramesInThirtySeconds": [187, 182, 291, 265],
+    "systemSession": "RECORD_CONTENT_TASK",
+    "targetIdentityVerified": true,
+    "fixtureStaticPixelsComparedPerFrame": 1962445,
+    "fixtureMappedColourMismatches": 0,
+    "rawConversionPixelMismatches": 0,
+    "appTaskMaskPixelMismatches": 0,
+    "ownAndIndependentOverlayIsolation": "verified_on_fixture_and_actual_game_lobby",
+    "systemNotificationPanel": "verified_visible_on_fixture_clean_live_task_input",
+    "headsUpBanner": "not_claimed_verified",
+    "draggedCounterBounds": [717, 530, 1971, 668],
+    "homeStopButtonReleasesProjection": true,
+    "candidateRecentTaskRemovalReleasesProjection": true,
+    "temporaryDisplayConfigRestored": true,
+    "keepAwakeSettingRestored": true,
+    "helperRemovedAndNormalTestPackageRestored": true,
+    "stableInstalledVersionAndUpdateTimeUnchanged": true,
+    "rollbackReverified": true,
+    "liveMatchPassed": false,
+    "powerBenefitMeasured": false,
+    "documentation": "docs/development/phone-beta-capture-20261021.md",
+    "privateEvidenceRoot": "captures/phone/beta-app-task-20261021"
   },
   "emulator": {
     "api": 37,
