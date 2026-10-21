@@ -23,6 +23,8 @@ interface FrameRecognizer : AutoCloseable {
     fun observe(captured: CapturedFrame)
     /** Delivered on the vision owner thread; captures already queued in the old epoch are retired. */
     fun observationGap(timeMs: Long,reason: String) = Unit
+    /** Bounded startup-only lifecycle evidence; implementations must not mutate the ledger. */
+    fun startupCaptureSurface(stage: String,generation: Long,recoveryId: Int,epoch: Long,imageTimestampNs: Long?=null) = Unit
     override fun close()
 }
 

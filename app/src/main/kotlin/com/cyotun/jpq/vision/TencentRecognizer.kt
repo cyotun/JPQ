@@ -12,8 +12,11 @@ import org.json.JSONArray
 class TencentRecognizer(private val context: Context,private val sessionAlive: ()->Boolean = { true },
                         private val visibilityEpoch: ()->Long = { 0L },private val sessionGuard: Any=Any(),
                         private val onPipelineStage: (String)->Unit = {},
-                        private val frameAvailable: ()->Boolean = { true }): FrameRecognizer {
+                        private val frameAvailable: ()->Boolean = { true },
+                        private val onStartupInputRecovery: ()->Unit = {}): FrameRecognizer {
     private val diagnostics=context.getSharedPreferences("jpq-diagnostics",Context.MODE_PRIVATE)
+    private val sessionCaptureScope=AppState.captureScope
+    private val startupInputRecovery=TaskStartupRecoveryPolicy()
     private val diagnosticFolder=java.io.File(context.filesDir,"diagnostic")
     private var lastDiagnostic=0L
     private val detector=VisionRuntime.getDetector(context)
@@ -69,6 +72,13 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     private var diagnosticFrameAllowed=false
     private var activeVisibilityEpoch=0L
     private fun frameCurrent()=sessionAlive() && frameAvailable() && activeVisibilityEpoch==visibilityEpoch()
+    override fun startupCaptureSurface(stage: String,generation: Long,recoveryId: Int,epoch: Long,imageTimestampNs: Long?) {
+        if(!BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE || sessionCaptureScope!=CaptureScope.APP_TASK) return
+        trace.writeIfEnabled { JSONObject().put("type","task_startup_surface").put("stage",stage)
+            .put("elapsedMs",SystemClock.elapsedRealtime()).put("generation",generation)
+            .put("recoveryId",recoveryId).put("visibilityEpoch",epoch)
+            .put("imageTimestampNs",imageTimestampNs ?: JSONObject.NULL).put("captureScope",sessionCaptureScope.name) }
+    }
     override fun observationGap(timeMs: Long,reason: String) = synchronized(sessionGuard) {
         if(!closed && sessionAlive()) {
             // The gap announces an epoch change; the previous frame's epoch is
@@ -91,9 +101,14 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
       }
     }
     override fun observe(captured: CapturedFrame) {
+        if(captured.visibilityEpoch!=activeVisibilityEpoch && BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE &&
+            sessionCaptureScope==CaptureScope.APP_TASK)
+            startupInputRecovery.observe(captured.capturedElapsedMs,eligible=false,suspicious=false)
         activeVisibilityEpoch=captured.visibilityEpoch
         if(closed || !frameCurrent()) return
         if(captured.bitmap==null || !captured.completeDisplay) {
+            if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && sessionCaptureScope==CaptureScope.APP_TASK)
+                startupInputRecovery.observe(captured.capturedElapsedMs,eligible=false,suspicious=false)
             onPipelineStage(if(captured.bitmap==null) "null_bitmap" else "partial_capture")
             val now=captured.capturedElapsedMs
             trace.writeIfEnabled { JSONObject().put("type","frame").put("elapsedMs",now).put("width",captured.width).put("height",captured.height)
@@ -108,6 +123,10 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         diagnosticFrameAllowed=false
         val bitmap=captured.bitmap
         val normalizedMasks=captured.masks
+        var diagnosticScene=TableScene.UNKNOWN
+        var diagnosticIntervalMs=2000L
+        var diagnosticRawCount=0
+        var diagnosticHandCount=0
         try {
             val converted=SystemClock.elapsedRealtime()
             referenceDetector?.let { prepared ->
@@ -115,6 +134,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             }
             onPipelineStage("detect_start")
             val rawDetections=referenceDetector?.detect(bitmap,start) ?: detector.detect(bitmap)
+            diagnosticRawCount=rawDetections.size
             onPipelineStage("detect_end")
             val detections=rawDetections.filter { it.box.centerY()>.13f && it.box.centerX() in .10f.. .88f && it.box.width()<.12f && it.box.height()>.02f }
             captured.probeFolder?.let { saveProbeInput(it,bitmap,captured.imageTimestampNs,rawDetections,detections.size) }
@@ -131,12 +151,29 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             // Own completion is a round state, not a label that must be re-read
             // on every frame. Teammate hand pixels never become our hand again.
             val scene=continueTeammateScene(detectedScene,trackingPhase)
+            diagnosticScene=scene
             if(!captured.adjusting && frameCurrent())
                 straightFlush.observeGrade(bitmap,start,activeVisibilityEpoch,scene,text,normalizedMasks)
             ownExitTracker.prepare(start,scene,round.roundId)
             val glyphs=detections.map { p -> PlayGlyph(p.card,p.confidence,GlyphBox(p.box.left,p.box.top,p.box.right,p.box.bottom)) }
             val partition=partitionGuandanHand(glyphs)
             val hand=partition.hand.map { it.card }
+            val startupRecoveryEligible=BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE &&
+                sessionCaptureScope==CaptureScope.APP_TASK && round.phase==RoundPhase.WAITING &&
+                round.roundId==null && scene==TableScene.UNKNOWN && hand.isEmpty() && frameCurrent()
+            if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && sessionCaptureScope==CaptureScope.APP_TASK &&
+                !startupInputRecovery.exhausted) {
+                val blackFraction=if(startupRecoveryEligible) startupBlackFraction(bitmap) else 0f
+                if(startupInputRecovery.observe(start,startupRecoveryEligible,
+                        TaskStartupRecoveryPolicy.isSuspiciousBlackFraction(blackFraction))) {
+                    trace.writeIfEnabled { JSONObject().put("type","task_startup_input_recovery")
+                        .put("elapsedMs",start).put("frame",frameNumber).put("imageTimestampNs",captured.imageTimestampNs)
+                        .put("blackFraction",blackFraction).put("captureScope",sessionCaptureScope.name)
+                        .put("phase",round.phase.name).put("handCount",hand.size)
+                        .put("reason",startupInputRecovery.lastRequestReason?.name) }
+                    onStartupInputRecovery()
+                }
+            }
             val handObserved=TencentFrameVisibility.handObserved(partition.hand,normalizedMasks)
             if(!captured.adjusting && handObserved && scene!=TableScene.TEAMMATE && partition.hand.all { it.confidence>=.65f })
                 ownExitTracker.observeOwnHand(start,trackingPhase,AppState.ledger.currentHand(),hand)
@@ -147,8 +184,13 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             // A zero-detection/effect frame inside a tracked round is exactly
             // where recovery needs source pixels. Do not discard that evidence
             // merely because neither hand nor scene could be recognized.
-            diagnosticFrameAllowed=scene==TableScene.LOBBY || (scene!=TableScene.UNKNOWN && hand.isNotEmpty()) ||
-                (round.roundId!=null && trackingPhase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED))
+            val diagnosticPlan=FrameDiagnosticPolicy.decide(
+                scene==TableScene.LOBBY || (scene!=TableScene.UNKNOWN && hand.isNotEmpty()) ||
+                    (round.roundId!=null && trackingPhase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)),
+                BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE,sessionCaptureScope,scene)
+            diagnosticFrameAllowed=diagnosticPlan.eligible
+            diagnosticIntervalMs=diagnosticPlan.minimumIntervalMs
+            diagnosticHandCount=hand.size
             val passing=tableLines.filter { it.text.contains("不出") || it.text.contains("不要") }.mapNotNull { l ->
                 val b=l.box ?: return@mapNotNull null
                 when { b.centerY()<captured.height*.3 -> Seat.OPPOSITE; b.centerX()<captured.width*.4 -> Seat.PREVIOUS; b.centerX()>captured.width*.65 -> Seat.NEXT; else -> null }
@@ -202,6 +244,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 openingChoiceSourceTimeMs=openingChoiceSourceTimeMs),partition.hand,emptyEvidence,normalizedMasks)
             fun rounded(value: Float)=kotlin.math.round(value*10000f)/10000f
             trace.writeIfEnabled { JSONObject().put("type","frame").put("frame",frameNumber).put("imageTimestampNs",captured.imageTimestampNs).put("elapsedMs",start)
+                .put("visibilityEpoch",activeVisibilityEpoch)
                 .put("width",captured.width).put("height",captured.height).put("scene",scene.name).put("backend",referenceDetector?.backend ?: detector.backend)
                 .put("detectedScene",detectedScene.name)
                 .put("dealingChoicesObserved",detectedScene==TableScene.DEALING).put("adjusting",captured.adjusting)
@@ -287,7 +330,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 partition.hand,ownership.seats,normalizedMasks,text)
         } finally {
             val now=SystemClock.elapsedRealtime()
-            if(diagnosticFrameAllowed && diagnostics.getBoolean("enabled",false) && now-lastDiagnostic>=2000 && evidenceBusy.compareAndSet(false,true)) {
+            if(diagnosticFrameAllowed && diagnostics.getBoolean("enabled",false) && now-lastDiagnostic>=diagnosticIntervalMs && evidenceBusy.compareAndSet(false,true)) {
                 lastDiagnostic=now
                 var copy: Bitmap?=null
                 try {
@@ -299,6 +342,9 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                         .put("sourceElapsedMs",start).put("imageTimestampNs",captured.imageTimestampNs)
                         .put("visibilityEpoch",activeVisibilityEpoch)
                         .put("width",bitmap.width).put("height",bitmap.height)
+                        .put("captureScope",sessionCaptureScope.name).put("scene",diagnosticScene.name)
+                        .put("rawDetectionCount",diagnosticRawCount).put("handCount",diagnosticHandCount)
+                        .put("minimumIntervalMs",diagnosticIntervalMs)
                         .put("overlayMasks",JSONArray(normalizedMasks.map { b ->
                             JSONArray(listOf(b.left,b.top,b.right,b.bottom)) }))
                         .put("scope","masked_local_capture_input")
@@ -327,6 +373,16 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 } catch(error: Exception) { copy?.recycle(); evidenceBusy.set(false); android.util.Log.w("JPQTrace","diagnostic_frame_unavailable") }
             }
         }
+    }
+    /** Sparse sampling only before a round binds, never in the active recognition loop. */
+    private fun startupBlackFraction(bitmap: Bitmap): Float {
+        var black=0
+        for(y in 0 until 16) for(x in 0 until 32) {
+            val pixel=bitmap.getPixel(((x+.5f)*bitmap.width/32).toInt().coerceAtMost(bitmap.width-1),
+                ((y+.5f)*bitmap.height/16).toInt().coerceAtMost(bitmap.height-1))
+            if((pixel shr 16 and 255)<=8 && (pixel shr 8 and 255)<=8 && (pixel and 255)<=8) black++
+        }
+        return black/512f
     }
     private fun saveProbeInput(folder: java.io.File,bitmap: Bitmap,imageTimestampNs: Long,
                                detections: List<CardDetection>,filteredCount: Int) {

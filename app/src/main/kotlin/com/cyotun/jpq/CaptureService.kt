@@ -47,6 +47,9 @@ class CaptureService : Service() {
     @Volatile private var recognizer: FrameRecognizer = AwaitingValidatedAdapter()
     private val main = Handler(Looper.getMainLooper())
     private var callback: MediaProjection.Callback? = null
+    private var taskSurfaceRefresh: Runnable?=null
+    private var taskSurfaceRecoveryId=0
+    @Volatile private var taskSurfaceAwaitingFrame=0
     private fun projectionCallback(generation: Long) = object : MediaProjection.Callback() {
         override fun onStop() { shutdown("屏幕共享已停止，请重新开始记牌",generation) }
         override fun onCapturedContentResize(width: Int, height: Int) { if(generation==session) resize(width,height) }
@@ -114,10 +117,22 @@ class CaptureService : Service() {
             if(projection==null) stopSelf(startId)
             return START_NOT_STICKY
         }
+        if(intent?.action=="LAB_REFRESH_TASK_SURFACE") {
+            // Explicit emulator experiment only. Never reset a real match or the
+            // stable display capture in response to this diagnostic action.
+            if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && captureScope==CaptureScope.APP_TASK &&
+                AppState.ledger.snapshot().roundId==null &&
+                listOf(Build.FINGERPRINT,Build.MODEL,Build.PRODUCT).any {
+                    it.contains("emulator",true) || it.contains("sdk_gphone",true) || it.contains("generic",true)
+                }) refreshTaskSurface()
+            if(projection==null) stopSelf(startId)
+            return START_NOT_STICKY
+        }
         if (projection != null) return START_NOT_STICKY
         if (intent == null) { stopSelf(startId); return START_NOT_STICKY }
         AppState.captureGapCheckpointed()
         capturedVisible=true; requestedVisible=true; visibilityEpoch=0L
+        taskSurfaceRecoveryId=0; taskSurfaceAwaitingFrame=0
         referenceCapture=getSharedPreferences("jpq-runtime",MODE_PRIVATE).getString("captureProfile","reference")!="adaptive_scaled"
         val generation=lifecycle.begin()
         android.util.Log.i("JPQCapture","session_start generation=$generation")
@@ -166,7 +181,13 @@ class CaptureService : Service() {
                     AppState.ledger.waitForNext()
                     health.visionStage("recognizer_init_start")
                     val prepared=TencentRecognizer(this,{ generation==session && !closed },
-                        { visibilityEpoch },sessionGuard,health::visionStage,{ capturedVisible })
+                        { visibilityEpoch },sessionGuard,health::visionStage,{ capturedVisible },{
+                            main.post {
+                                if(generation==session && !closed && BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE &&
+                                    captureScope==CaptureScope.APP_TASK && AppState.ledger.snapshot().roundId==null)
+                                    refreshTaskSurface()
+                            }
+                        })
                     health.visionStage("recognizer_init_end")
                     // Publish on main, serialized with shutdown. A stopped initialization
                     // must never overwrite the next session or escape its close chain.
@@ -273,6 +294,11 @@ class CaptureService : Service() {
                     if(now-lastFrame>=33 && generation==session && source===reader && !closed && capturedVisible && epoch==visibilityEpoch &&
                         contentGeometry.accepts(image.width,image.height) && AppState.recognitionReady) {
                         lastFrame=now
+                        val recoveryId=taskSurfaceAwaitingFrame
+                        if(recoveryId!=0) {
+                            taskSurfaceAwaitingFrame=0
+                            recognizer.startupCaptureSurface("first_frame",generation,recoveryId,epoch,image.timestamp)
+                        }
                         val masks=if(!CaptureInputPolicy.usesScreenOcclusions(captureScope)) emptyList() else
                             listOfNotNull(AppState.barMask,AppState.adjustmentMask,AppState.gradeTipMask).map {
                             CaptureMask(android.graphics.Rect(it.rectangle),it.screenWidth,it.screenHeight)
@@ -346,6 +372,51 @@ class CaptureService : Service() {
             shutdown("画面尺寸变化，需重新开始记牌")
         }
     }
+    /** Reattach a consumer to the existing projection; no token reuse or second display. */
+    private fun refreshTaskSurface() {
+        if(!BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE || captureScope!=CaptureScope.APP_TASK) return
+        val currentDisplay=display ?: return
+        val old=reader ?: return
+        val capture=captureWorker ?: return
+        if(closed || taskSurfaceRefresh!=null) return
+        val generation=session
+        synchronized(sessionGuard) {
+            val round=AppState.ledger.snapshot()
+            if(closed || round.roundId!=null || round.phase!=com.cyotun.jpq.core.RoundPhase.WAITING) return
+            capturedVisible=false; visibilityEpoch++
+        }
+        val recoveryId=++taskSurfaceRecoveryId
+        taskSurfaceAwaitingFrame=0
+        try {
+            currentDisplay.surface=null
+            recognizer.startupCaptureSurface("detached",generation,recoveryId,visibilityEpoch)
+            android.util.Log.i("JPQCapture","task_surface_detached generation=$generation")
+            val restore=Runnable {
+                taskSurfaceRefresh=null
+                if(generation!=session || closed || display!==currentDisplay || reader!==old) return@Runnable
+                try {
+                    old.setOnImageAvailableListener(null,null)
+                    capture.handler.post { old.close() }
+                    val next=newReader(AppState.sourceWidth,AppState.sourceHeight,generation)
+                    reader=next
+                    currentDisplay.surface=next.surface
+                    taskSurfaceAwaitingFrame=recoveryId
+                    recognizer.startupCaptureSurface("reattached",generation,recoveryId,visibilityEpoch)
+                    if(requestedVisible) restoreVisibility(generation,visibilityEpoch)
+                    android.util.Log.i("JPQCapture","task_surface_reattached generation=$generation")
+                } catch(error: Exception) {
+                    android.util.Log.e("JPQCapture","task_surface_refresh_failed",error)
+                    shutdown("采集检查未能恢复，请重新开始记牌",generation)
+                }
+            }
+            taskSurfaceRefresh=restore
+            // Give the system a separate composition traversal with no consumer.
+            main.postDelayed(restore,350)
+        } catch(error: Exception) {
+            android.util.Log.e("JPQCapture","task_surface_detach_failed",error)
+            shutdown("采集检查未能恢复，请重新开始记牌",generation)
+        }
+    }
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if(Build.VERSION.SDK_INT<34) screenSize().let { resize(it.first,it.second) }
@@ -361,6 +432,8 @@ class CaptureService : Service() {
             if(!lifecycle.close(expectedGeneration)) return
         }
         android.util.Log.i("JPQCapture","session_stop reason=$message")
+        taskSurfaceRefresh?.let { main.removeCallbacks(it) }; taskSurfaceRefresh=null
+        taskSurfaceAwaitingFrame=0
         // Detach all ownership first. Neither a failed release nor an old callback
         // can retain these resources or reach a replacement session's resources.
         val previousProjection=projection; projection=null

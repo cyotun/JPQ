@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-21",
-  "status": "c2_arm_phone_non_match_checks_passed_live_match_pending",
+  "status": "c2_live_failed_c3_offline_passed_phone_preflight_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -56,8 +56,10 @@
       "unchangedFromStable": true
     },
     "sourceFingerprintSha256": "96a2830371b0905461a2bf7e7088a073322b107241edd99a596feb3a96f7b743",
-    "sourceUnchangedAfterFinalSweep": true,
-    "evidenceRun": "replay-v57-candidate-full-only"
+    "sourceUnchangedAfterFinalSweep": false,
+    "evidenceRun": "replay-v57-candidate-full-only",
+    "priorReplayScope": "v57 historical ledger regression; not validation of current capture composition or current uncommitted diagnostic changes",
+    "scope": "Historical C2 build/replay checks. Current C3 checks are under c3Investigation; no historical replay acceptance is claimed for new capture recovery."
   },
   "phone": {
     "model": "2509FPN0BC",
@@ -79,7 +81,7 @@
     "normalStopReleasesProjection": true,
     "externalOverlayIsolation": "verified_counter_and_independent_uid_overlay_on_real_game_task",
     "systemNotificationIsolation": "inconclusive_system_volume_panel_not_confirmed_visible",
-    "liveMatchAccuracy": "failed_c1_no_recorded_plays_c2_pending",
+    "liveMatchAccuracy": "failed_c1_and_c2_zero_recorded_plays",
     "powerAndTemperatureBenefit": "not_measured",
     "stablePublished": false,
     "externalOverlayEvidence": {
@@ -101,7 +103,7 @@
       "projectionReleased": true
     },
     "evidenceApkSha256": "c8e53f568f7ed11643fd3838261d69f0843873fe8aa1e169a8515405b0c91406",
-    "currentCandidatePhoneValidation": "c2_installed_non_match_checks_passed_live_match_pending"
+    "currentCandidatePhoneValidation": "c2_non_match_checks_passed_live_match_failed"
   },
   "scope": "Recorded replay and non-game pixel isolation, not a 99.9 percent accuracy or energy certification",
   "c1LiveFailure": {
@@ -123,7 +125,12 @@
     "failuresInFinalChecks": 0,
     "synchronousSamplingRunsPassed": 4,
     "rawSamplesPerRun": 3,
-    "processedFramesInThirtySeconds": [187, 182, 291, 265],
+    "processedFramesInThirtySeconds": [
+      187,
+      182,
+      291,
+      265
+    ],
     "systemSession": "RECORD_CONTENT_TASK",
     "targetIdentityVerified": true,
     "fixtureStaticPixelsComparedPerFrame": 1962445,
@@ -133,7 +140,12 @@
     "ownAndIndependentOverlayIsolation": "verified_on_fixture_and_actual_game_lobby",
     "systemNotificationPanel": "verified_visible_on_fixture_clean_live_task_input",
     "headsUpBanner": "not_claimed_verified",
-    "draggedCounterBounds": [717, 530, 1971, 668],
+    "draggedCounterBounds": [
+      717,
+      530,
+      1971,
+      668
+    ],
     "homeStopButtonReleasesProjection": true,
     "candidateRecentTaskRemovalReleasesProjection": true,
     "temporaryDisplayConfigRestored": true,
@@ -144,7 +156,8 @@
     "liveMatchPassed": false,
     "powerBenefitMeasured": false,
     "documentation": "docs/development/phone-beta-capture-20261021.md",
-    "privateEvidenceRoot": "captures/phone/beta-app-task-20261021"
+    "privateEvidenceRoot": "captures/phone/beta-app-task-20261021",
+    "liveMatchStatus": "failed_no_ledger_events"
   },
   "emulator": {
     "api": 37,
@@ -184,5 +197,146 @@
     "evidenceDirectory": "captures/emulator/capture-api37-20261020/candidate-20261020T134426Z",
     "documentation": "docs/development/emulator-capture-20261020.md",
     "proofImage": "docs/research/emulator-capture-proof-20261020.png"
+  },
+  "c2LiveFailure": {
+    "session": "1792518193025-50342ffc",
+    "fullArchiveRetrieved": true,
+    "fullTraceFrames": 105930,
+    "landscapeFullCpuFrames": 105916,
+    "unknownFrames": 105728,
+    "tableFrames": 202,
+    "ledgerEvents": 0,
+    "observerArmed": false,
+    "captureDimensions": [
+      2608,
+      1200
+    ],
+    "collectorDurationSeconds": 3600,
+    "collectorFrames": 18591,
+    "collectorIsCompleteSession": false,
+    "normalStopProjectionNull": true,
+    "geometryDiscrepancyObserved": true,
+    "rootCauseProven": false,
+    "timestampBoundFailedFrameAvailable": false,
+    "documentation": "docs/development/candidate-c2-failure-20261021.md"
+  },
+  "c3Investigation": {
+    "coreTests": 645,
+    "candidateHostTests": 10,
+    "releaseHostTests": 10,
+    "helperUnitTests": 23,
+    "unitFailures": 0,
+    "candidateLintErrors": 0,
+    "candidateLintWarnings": 56,
+    "releaseLintErrors": 0,
+    "releaseLintWarnings": 57,
+    "failedStartupDiagnosticPolicyAdded": true,
+    "emulatorTaskCompositionFaultReproduced": true,
+    "phoneRootCauseProven": false,
+    "manualSameSessionSurfaceRecovery": "passed_once_on_reproduced_emulator_fault",
+    "manualRecoveryGoldenFrames": 34,
+    "automaticStartupRecoveryIntegrated": true,
+    "startupRecoveryScope": "candidate APP_TASK complete landscape WAITING and unbound round only",
+    "mostlyBlackPersistenceMs": 3000,
+    "unrecognisedStartupPersistenceMs": 8000,
+    "maximumRequestsPerSession": 2,
+    "minimumRequestSpacingMs": 15000,
+    "automaticUnknownServiceCycleVerified": true,
+    "automaticServiceStages": [
+      "detached",
+      "reattached",
+      "first_frame",
+      "subsequent_FULL_model_frame"
+    ],
+    "automaticNaturalGeometryFaultRepairProven": false,
+    "normalFixtureRunsPassed": 5,
+    "normalFixtureGoldenFrames": 131,
+    "normalFixtureEvidence": [
+      {
+        "run": "case1-landscape-image-False-False-refreshFalse-20261021T141900Z",
+        "goldenFrames": 31,
+        "sameFramePairs": 1,
+        "rawConvertedPixelComparisons": 3,
+        "conversionMismatchPixels": 0,
+        "projectionReleased": true,
+        "recoveryCycles": 0
+      },
+      {
+        "run": "case2-portrait-image-False-True-refreshFalse-20261021T142006Z",
+        "goldenFrames": 37,
+        "sameFramePairs": 2,
+        "rawConvertedPixelComparisons": 3,
+        "conversionMismatchPixels": 0,
+        "projectionReleased": true,
+        "recoveryCycles": 0
+      },
+      {
+        "run": "case3-landscape-surface-False-False-refreshFalse-20261021T142109Z",
+        "goldenFrames": 24,
+        "sameFramePairs": 2,
+        "rawConvertedPixelComparisons": 3,
+        "conversionMismatchPixels": 0,
+        "projectionReleased": true,
+        "recoveryCycles": 0
+      },
+      {
+        "run": "case4-landscape-surface-True-True-refreshFalse-20261021T142203Z",
+        "goldenFrames": 23,
+        "sameFramePairs": 1,
+        "rawConvertedPixelComparisons": 3,
+        "conversionMismatchPixels": 0,
+        "projectionReleased": true,
+        "recoveryCycles": 0
+      },
+      {
+        "run": "case4-landscape-gl-True-True-refreshFalse-20261021T142255Z",
+        "goldenFrames": 16,
+        "sameFramePairs": 3,
+        "rawConvertedPixelComparisons": 3,
+        "conversionMismatchPixels": 0,
+        "projectionReleased": true,
+        "recoveryCycles": 0
+      }
+    ],
+    "unknownEvidence": {
+      "run": "run-20261021T141807Z-d9d87678",
+      "scope": "long_unrecognised_input_service_smoke_not_geometry_repair",
+      "automaticServiceCycles": 1,
+      "orderedServiceStagesAndSubsequentFullFrames": true,
+      "diagnosticJpegs": 2,
+      "projectionReleased": true
+    },
+    "finalX86ApkSha256": "1b08df4c2013c702ae039da5f5d2cde0bb4b57ea10e262381c22ed7905ad2da9",
+    "finalArmBuildPassed": true,
+    "stableRollbackReverified": true,
+    "phoneConnectedAtClose": false,
+    "phonePreflightPassed": false,
+    "liveMatchPassed": false,
+    "powerBenefitMeasured": false,
+    "stablePublished": false,
+    "sourceCodeFingerprintSha256": "7cdf589c19a137dcee42c059d53005d3633654472c5c3ace34b774b86da08178",
+    "sourceCodeFileCount": 238,
+    "documentation": "docs/development/candidate-c2-failure-20261021.md",
+    "visibilityAndPartialFramePersistenceReset": true,
+    "verificationScope": "capture-to-model golden fixtures and startup service chain; not complete live ledger or OEM repair acceptance"
+  },
+  "nextCandidateC3": {
+    "package": "com.cyotun.jpq.candidate",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression-candidate",
+    "apkSha256": "98af0158b226fad41077c353315eebed16f65716f3d632c8820ed0ceab8340d7",
+    "apkBytes": 73082910,
+    "abi": [
+      "arm64-v8a"
+    ],
+    "testApkSha256": "109d0dd55a4fd0d329a9aa65f155f799257062b647e3d5c20101e71498de3879",
+    "artifact": "artifacts/candidate-c3/记牌器-单应用候选-c3-开局采集恢复.apk",
+    "artifactManifest": "artifacts/candidate-c3/manifest.json",
+    "installedOnPhone": false,
+    "published": false,
+    "liveMatchReady": false,
+    "status": "offline_passed_phone_preflight_pending",
+    "stableUpdaterDisabled": true,
+    "productionFixtureImagesAbsent": true
   }
 }

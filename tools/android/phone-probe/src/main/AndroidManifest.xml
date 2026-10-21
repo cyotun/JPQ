@@ -6,6 +6,20 @@
     <application android:label="记牌器手机测试" android:allowBackup="false">
         <activity android:name="com.cyotun.jpq.vision.PhoneFrameProbeActivity"
             android:exported="true" android:launchMode="singleTop" />
+        <activity android:name="com.cyotun.jpq.vision.CardFixtureProbeActivity"
+            android:exported="true" android:launchMode="singleTop"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density" />
+        <activity android:name="com.cyotun.jpq.vision.SurfaceCardFixtureProbeActivity"
+            android:exported="true" android:launchMode="singleTop"
+            android:resizeableActivity="false"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density" />
+        <activity android:name="com.cyotun.jpq.vision.GlCardFixtureProbeActivity"
+            android:exported="true" android:launchMode="singleTop"
+            android:resizeableActivity="false"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density" />
         <activity android:name="com.cyotun.jpq.vision.ScopeProbeActivity"
             android:exported="true" android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density" />

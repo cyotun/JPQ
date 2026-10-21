@@ -61,3 +61,49 @@ adb shell am start -W -n com.cyotun.jpq.tests/com.cyotun.jpq.vision.ScopeProbeAc
 2026-10-15 最终状态：整屏阳性和单应用排除对照均已完成，包括横屏→竖屏→横屏、独立 UID、独立物理截图和采集 PNG 对照。20 项工具单元检查通过；实际系统对洋红色窗口的合成结果为 `(204,51,204)`，颜色判定已覆盖该值及负例。原始失败记录也保留。
 
 实验投影停止、正常 AndroidTest 包恢复、临时亮屏值恢复 0、旧测试悬浮 app-op 恢复 default，辅助包卸载。用户选择不接入生产，工具仅留存备用，正式 APP 继续原整屏共享流程。完整结论与局限见 [实测记录](../../../docs/development/scope-probe-20261015.md)，此前审查见 [修复记录](../../../docs/development/review-0.2.16.md)。
+
+## Card recognition fixture display
+
+`CardFixtureProbeActivity` displays a bundled real card fixture only when explicitly launched with `cardFixtureProbe=true`, a `caseIndex` from 1 through 4, and `orientation` set to `landscape` or `portrait`. It reads the existing `app/src/androidTest/assets/fixtures/case1.jpg` through `case4.jpg`; Gradle stages only those four files as helper APK assets, without copying or changing the source fixtures. The screen uses a black background and `FIT_CENTER`, preserving the complete image and its original aspect ratio. System bars are hidden and the screen stays awake. `timeoutSeconds` is optional, defaults to 180, and accepts 15–300 seconds. Invalid arguments cause the activity to exit. Launching it again in the same task can change the case or orientation.
+
+After confirming there is no real game in progress and production capture is stopped, install the local helper APK and launch the fixture through Android's normal Activity entry point:
+
+```powershell
+adb shell am start -W -n com.cyotun.jpq.tests/com.cyotun.jpq.vision.CardFixtureProbeActivity --ez cardFixtureProbe true --ei caseIndex 1 --es orientation landscape --ei timeoutSeconds 180
+```
+
+Change `caseIndex` to select another fixture; rerunning the command updates the current task. This gives the screen-capture-to-model-input path a deterministic real card image. It does not measure full live recognition accuracy and must never be recorded as a production model-ledger success.
+
+An 8×8 pixel blue/green clock at the far top-right alternates every 250ms. A completely static ImageView may generate only one or two Surface buffers, so a running-frame preflight would otherwise time out despite correctly reading the image. This marker is outside the card detector's accepted horizontal region; exclude it from any whole-image fixture comparison.
+
+## SurfaceView card fixture lifecycle probe
+
+`SurfaceCardFixtureProbeActivity` shows the same bundled cases through a dedicated `SurfaceView` and `SurfaceHolder` Canvas. It reuses the validated `cardFixtureProbe`, `caseIndex`, `orientation`, and `timeoutSeconds` contract. The image is drawn fully with `FIT_CENTER` on black at its original aspect ratio, with system bars hidden, cutout layout enabled, a no-ActionBar theme, and `resizeableActivity=false`. A 8×8 blue/green clock at the top-right changes on each 250 ms Canvas frame. All decoding and drawing stay on the main thread; `surfaceDestroyed` stops the frame loop before the old holder can be used again.
+
+Use the same explicit fixture launch arguments with this Activity name:
+
+```powershell
+adb shell am start -W -n com.cyotun.jpq.tests/com.cyotun.jpq.vision.SurfaceCardFixtureProbeActivity --ez cardFixtureProbe true --ei caseIndex 1 --es orientation landscape --ei timeoutSeconds 180
+```
+
+To replace the SurfaceView in the existing single-top task while changing the fixture, add `--ez recreateSurface true` and provide the new `caseIndex` or `orientation`. Without that flag the current surface remains and the new case is drawn into it. This checks capture behavior across a real `SurfaceView` buffer lifecycle; it still does not establish successful recognition during a complete live game.
+
+## OpenGL card fixture lifecycle probe
+
+`GlCardFixtureProbeActivity` uses a GLES2 `GLSurfaceView` and a real uploaded texture for the same bundled fixture contract. It draws the full image centered with aspect ratio preserved, maps bitmap top rows to the top of the screen, clears the surrounding area to black, and alternates an 8×8 blue/green marker at the far top-right on its GL render thread about once per second. The clock deliberately leaves time for raw/model diagnostic pairing on a software GLES host; it is not a recognition throughput benchmark. ImageView and Canvas fixtures retain their 250 ms clocks. Its Activity remains responsive while the GL thread renders. `onPause`/`onResume` are forwarded to `GLSurfaceView`; `--ez recreateSurface true` in the existing single-top task removes the old view/context and installs a fresh one, exercising EGL surface/context creation. Bitmap replacement and release are synchronized with GL upload/draw, and the renderer keeps the current bitmap until Activity teardown so a recreated EGL context can upload it again.
+
+Launch it with the same `cardFixtureProbe=true`, `caseIndex`, `orientation`, and optional `timeoutSeconds` arguments, using this Activity name:
+
+```powershell
+adb shell am start -W -n com.cyotun.jpq.tests/com.cyotun.jpq.vision.GlCardFixtureProbeActivity --ez cardFixtureProbe true --ei caseIndex 1 --es orientation landscape --ei timeoutSeconds 180
+```
+
+The emulator consent fixture runner accepts `-RenderMode gl`; surface lifecycle switches such as `-RecreateSurfaceAfterConsent` and `-RecreateOnTaskReturn` apply to both `surface` and `gl`. This helper only stresses GL-backed capture surfaces. Its successful image capture is not a full live-game recognition result.
+
+## 采集到识别与开局恢复回归
+
+只在模拟器使用 `tools/android/run-emulator-card-fixture.ps1`。`-Case 1..4` 选牌面，`-RenderMode surface` 使用独立绘图层，`-RenderMode gl` 使用 GLES2 纹理；`-InitialOrientation portrait`、`-RecentTaskCycle`、`-RecreateSurfaceAfterConsent` 分别覆盖方向和任务/绘图层生命周期。脚本核对正常授权产生的真实目标 task/UID，原始图与模型图必须有至少一组同时间戳配对，且稳定取样区间至少十帧的生产手牌/出牌结果全部满足 golden。任一失败不算通过。
+
+`-RefreshTaskSurface` 是严格模拟器的手动恢复对照，要求重挂前已实际观测到缺失手牌，未复现缺陷时拒绝判通过。`-ExpectStartupRecovery` 则要求最终 trace 有自动恢复事件，两种方式不能混用。普通 golden 场景不强制要求触发恢复。所有轮次最后应正常停止系统投影；不能在真实对局运行这些会停止共享的插桩脚本。
+
+`run-emulator-unknown-diagnostic.ps1` 独立验证开局未识别画面的本地稀疏 JPEG 保存，要求同一新会话的两组图像/metadata/trace 证据匹配。C3 还必须实际触发有界的 8 秒开局兜底，检查同会话 `detached → reattached → first_frame` 顺序，以及重挂后新 epoch 的 FULL 模型帧。测试画面刻意保持 UNKNOWN；通过只证明自动服务链路和本地证据保存，不验证整局记账，也不为手机布局修复背书。近黑 3 秒快路与 8 秒兜底共享每会话 2 次、至少 15 秒间隔的预算；已绑定的牌局不执行这项恢复。

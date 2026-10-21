@@ -1,7 +1,16 @@
 import java.util.Properties
+import org.gradle.api.tasks.Sync
 
 plugins { id("com.android.application") }
 dependencies { testImplementation("junit:junit:4.13.2") }
+
+val cardFixtureSource=project.file("../../../app/src/androidTest/assets/fixtures")
+val stagedCardFixtureAssets=layout.buildDirectory.dir("generated/cardFixtureAssets")
+val stageCardFixtureAssets=tasks.register<Sync>("stageCardFixtureAssets") {
+    from(cardFixtureSource) { include("case1.jpg", "case2.jpg", "case3.jpg", "case4.jpg") }
+    into(stagedCardFixtureAssets)
+}
+
 android {
     namespace="com.cyotun.jpq.phoneprobe"
     compileSdk=36
@@ -15,6 +24,7 @@ android {
         // so restoring that APK does not require a version downgrade.
         versionName="1.0-local-preflight"
     }
+    sourceSets.getByName("main").assets.srcDir(stagedCardFixtureAssets)
     compileOptions { sourceCompatibility=JavaVersion.VERSION_17; targetCompatibility=JavaVersion.VERSION_17 }
     val identityFile=rootProject.file(".signing/release.properties")
     if(identityFile.exists()) {
@@ -25,4 +35,8 @@ android {
         }
         buildTypes.getByName("debug").signingConfig=signingConfigs.getByName("personal")
     }
+}
+
+tasks.configureEach {
+    if(name.startsWith("merge") && name.endsWith("Assets")) dependsOn(stageCardFixtureAssets)
 }
