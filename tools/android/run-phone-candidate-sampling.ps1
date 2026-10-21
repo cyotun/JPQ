@@ -3,6 +3,7 @@ param(
     [ValidateSet('floats','shade')][string]$Mode='floats',
     [switch]$DragCounter,
     [switch]$GameLobbyConfirmed,
+    [string]$EvidenceRoot='captures/phone/beta-app-task-20261021',
     [string]$Serial='f29c66d0'
 )
 $ErrorActionPreference='Stop'
@@ -10,7 +11,12 @@ if($Serial -ne 'f29c66d0') { throw 'Only the explicitly authorized phone is supp
 if($Target -eq 'game' -and -not $GameLobbyConfirmed) { throw 'Visually verify the lobby and pass -GameLobbyConfirmed before this non-match test. Never use instrumentation in a real match.' }
 $jpqRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $jpqAdb=Join-Path $jpqRoot '.android-tools/sdk/platform-tools/adb.exe'
-$jpqOutput=Join-Path $jpqRoot ("captures/phone/beta-app-task-20261021/$Target-$Mode-"+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))
+$phoneCaptureRoot=[IO.Path]::GetFullPath((Join-Path $jpqRoot 'captures/phone'))
+$phoneCapturePrefix=$phoneCaptureRoot+[IO.Path]::DirectorySeparatorChar
+$jpqEvidenceRoot=if([IO.Path]::IsPathRooted($EvidenceRoot)) { [IO.Path]::GetFullPath($EvidenceRoot) } else { [IO.Path]::GetFullPath((Join-Path $jpqRoot $EvidenceRoot)) }
+if(-not $jpqEvidenceRoot.StartsWith($phoneCapturePrefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'EvidenceRoot must stay inside captures/phone.' }
+$jpqOutput=[IO.Path]::GetFullPath((Join-Path $jpqEvidenceRoot ("$Target-$Mode-"+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))))
+if(-not $jpqOutput.StartsWith($phoneCapturePrefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Run output must stay inside captures/phone.' }
 New-Item -ItemType Directory -Path $jpqOutput | Out-Null
 $displayId='4630946457447247251'
 $testProcess=$null
@@ -23,10 +29,16 @@ function Invoke-Adb([string[]]$Arguments) {
 try {
     $projection=Invoke-Adb @('shell','dumpsys','media_projection') | Out-String
     if($projection -notmatch 'Media Projection:\s*null') { throw 'An existing projection must be stopped first.' }
-    $started=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     $oldPidResult=& $jpqAdb -s $Serial shell pidof com.cyotun.jpq.candidate 2>&1
     if($LASTEXITCODE -ne 0 -and ($oldPidResult | Out-String).Trim()) { throw ($oldPidResult | Out-String) }
     $oldPid=($oldPidResult | Out-String).Trim()
+    $readyPath='/sdcard/Android/data/com.cyotun.jpq.candidate/files/phone-preflight/candidate-sampling-ready.json'
+    Invoke-Adb @('shell','rm','-f',$readyPath) | Out-Null
+    $hostStarted=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    # Compare device readiness with the device clock, not Windows clock skew.
+    $started=0L
+    $deviceStarted=([string](Invoke-Adb @('shell','date','+%s%3N'))).Trim()
+    if(-not [long]::TryParse($deviceStarted,[ref]$started)) { throw 'Device wall clock is unavailable.' }
     Invoke-Adb @('shell','am','force-stop','com.cyotun.jpq.scopeoverlay') | Out-Null
     Invoke-Adb @('shell','am','start','-W','-n','com.cyotun.jpq.scopeoverlay/.ScopeOverlayLauncherActivity','--ez','overlayProbe','true','--ez','notifyProbe','true') | Out-Null
     $testProcess=Start-Process -FilePath $jpqAdb -ArgumentList @('-s',$Serial,'shell','am','instrument','-w','-e','candidateLobbySampling','true','-e','candidateDiagnostics','true','-e','class','com.cyotun.jpq.vision.CandidateCaptureSamplingTest','com.cyotun.jpq.candidate.tests/androidx.test.runner.AndroidJUnitRunner') -WindowStyle Hidden -RedirectStandardOutput (Join-Path $jpqOutput 'instrumentation.txt') -RedirectStandardError (Join-Path $jpqOutput 'instrumentation-stderr.txt') -PassThru
@@ -38,7 +50,32 @@ try {
         Start-Sleep -Milliseconds 200
     }
     if(-not $newProcess) { throw 'Instrumentation did not initialize a fresh process.' }
-    & (Join-Path $PSScriptRoot 'start-phone-candidate-consent.ps1') -Serial $Serial -Target $Target -GameLobbyConfirmed:$GameLobbyConfirmed -OutputDirectory ([IO.Path]::GetRelativePath($jpqRoot,(Join-Path $jpqOutput 'consent')))
+    $ready=$null
+    for($i=0;$i -lt 40;$i++) {
+        $remoteReady=& $jpqAdb -s $Serial shell cat $readyPath 2>$null
+        if($LASTEXITCODE -eq 0) {
+            try { $candidateReady=($remoteReady | Out-String) | ConvertFrom-Json }
+            catch { $candidateReady=$null }
+            $readyWallMs=0L
+            $validWallTime=$candidateReady -and [long]::TryParse([string]$candidateReady.readyWallMs,[ref]$readyWallMs)
+            if($candidateReady -and $candidateReady.runId -match '^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$' -and
+                $validWallTime -and $readyWallMs -ge $started -and $null -eq $candidateReady.expectedFixtureCase) {
+                $ready=$candidateReady;break
+            }
+        }
+        if($testProcess.HasExited) { throw 'Instrumentation ended before readiness signal.' }
+        Start-Sleep -Milliseconds 200
+    }
+    if(-not $ready) { throw 'Fresh UUID and wall-time readiness record is required before consent.' }
+    $ready | Add-Member -NotePropertyMembers @{ hostStartedWallMs=$hostStarted; deviceStartedWallMs=$started }
+    $ready | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $jpqOutput 'ready.json')
+    & (Join-Path $PSScriptRoot 'start-phone-candidate-consent.ps1') -Serial $Serial -Target $Target `
+        -GameLobbyConfirmed:$GameLobbyConfirmed -EvidenceRoot ([IO.Path]::GetRelativePath($jpqRoot,$jpqEvidenceRoot)) `
+        -OutputDirectory ([IO.Path]::GetRelativePath($jpqRoot,(Join-Path $jpqOutput 'consent')))
+    if($Target -eq 'fixture') {
+        Invoke-Adb @('shell','am','start','-W','-n','com.cyotun.jpq.tests/com.cyotun.jpq.vision.ScopeProbeActivity',
+            '--ez','scopeProbe','true','--es','orientation','landscape','--ei','timeoutSeconds','90') | Out-Null
+    }
     if($DragCounter) {
         $windows=Invoke-Adb @('shell','dumpsys','window','windows') | Out-String
         $windows | Set-Content -LiteralPath (Join-Path $jpqOutput 'windows-before-drag.txt')
@@ -115,6 +152,11 @@ try {
     $finished=$true
     Write-Output "Fresh phone capture sampling saved: $jpqOutput. Review physical visibility, target identity and raw pixels before acceptance."
 } finally {
+    if(-not $finished -and $testProcess -and -not $testProcess.HasExited) {
+        # An unconsented test can still be waiting in instrumentation with no
+        # projection. End only this non-match candidate test process as well.
+        & $jpqAdb -s $Serial shell am force-stop com.cyotun.jpq.candidate | Out-Null
+    }
     & $jpqAdb -s $Serial shell rm -f /sdcard/jpq-beta-physical.png | Out-Null
     if(-not $finished) {
         $active=& $jpqAdb -s $Serial shell dumpsys media_projection | Out-String

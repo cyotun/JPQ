@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "date": "2026-10-21",
-  "status": "c2_live_failed_c3_offline_passed_phone_preflight_pending",
+  "date": "2026-10-22",
+  "status": "c3_phone_non_game_verified_live_acceptance_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -28,10 +28,12 @@
     "scope": "APP_TASK",
     "publicApiOnly": true,
     "buildId": "c2",
-    "installed": true,
+    "installed": false,
     "detectionPipeline": "FULL_CPU",
     "phoneBetaArtifact": "artifacts/记牌器-0.2.26-beta-单应用采集.apk",
-    "phoneBetaIsExistingC2ArmBinaryAlias": true
+    "phoneBetaIsExistingC2ArmBinaryAlias": true,
+    "historicalInstalled": true,
+    "installationStatus": "C2 binary replaced on phone by C3; local C2 Beta alias retained unchanged"
   },
   "offline": {
     "coreTests": 631,
@@ -103,7 +105,8 @@
       "projectionReleased": true
     },
     "evidenceApkSha256": "c8e53f568f7ed11643fd3838261d69f0843873fe8aa1e169a8515405b0c91406",
-    "currentCandidatePhoneValidation": "c2_non_match_checks_passed_live_match_failed"
+    "currentCandidatePhoneValidation": "c2_non_match_checks_passed_live_match_failed",
+    "scope": "Historical C2 non-game observations; current C3 verification is under phoneC3NonGame20261022"
   },
   "scope": "Recorded replay and non-game pixel isolation, not a 99.9 percent accuracy or energy certification",
   "c1LiveFailure": {
@@ -248,7 +251,7 @@
       "first_frame",
       "subsequent_FULL_model_frame"
     ],
-    "automaticNaturalGeometryFaultRepairProven": false,
+    "automaticNaturalGeometryFaultRepairProven": true,
     "normalFixtureRunsPassed": 5,
     "normalFixtureGoldenFrames": 131,
     "normalFixtureEvidence": [
@@ -309,7 +312,6 @@
     "finalX86ApkSha256": "1b08df4c2013c702ae039da5f5d2cde0bb4b57ea10e262381c22ed7905ad2da9",
     "finalArmBuildPassed": true,
     "stableRollbackReverified": true,
-    "phoneConnectedAtClose": false,
     "phonePreflightPassed": false,
     "liveMatchPassed": false,
     "powerBenefitMeasured": false,
@@ -318,7 +320,12 @@
     "sourceCodeFileCount": 238,
     "documentation": "docs/development/candidate-c2-failure-20261021.md",
     "visibilityAndPartialFramePersistenceReset": true,
-    "verificationScope": "capture-to-model golden fixtures and startup service chain; not complete live ledger or OEM repair acceptance"
+    "verificationScope": "capture-to-model golden fixtures and startup service chain; not complete live ledger or OEM repair acceptance",
+    "automaticNaturalGeometryFaultRepairScope": "one naturally reproduced phone helper GLES2 task composition fault; not a Tencent match",
+    "phoneNonGameTestsPassed": true,
+    "phonePreflightPendingScope": "C3 actual Tencent-task non-game sampling and subsequent user-controlled live match; not performed this run",
+    "originalOfflineReportDate": "2026-10-21",
+    "phoneConnectedAtCloseOf20261021OfflineRun": false
   },
   "nextCandidateC3": {
     "package": "com.cyotun.jpq.candidate",
@@ -332,11 +339,53 @@
     "testApkSha256": "109d0dd55a4fd0d329a9aa65f155f799257062b647e3d5c20101e71498de3879",
     "artifact": "artifacts/candidate-c3/记牌器-单应用候选-c3-开局采集恢复.apk",
     "artifactManifest": "artifacts/candidate-c3/manifest.json",
-    "installedOnPhone": false,
+    "installedOnPhone": true,
     "published": false,
     "liveMatchReady": false,
-    "status": "offline_passed_phone_preflight_pending",
+    "status": "phone_dedicated_non_game_verified_actual_Tencent_and_live_pending",
     "stableUpdaterDisabled": true,
-    "productionFixtureImagesAbsent": true
+    "productionFixtureImagesAbsent": true,
+    "phoneUiCompatibilityTestApkSha256": "ba411d6764225c580505c4e26829316ea08ebc7fb8c228ee71bb91808811a706"
+  },
+  "phoneC3NonGame20261022": {
+    "date": "2026-10-22",
+    "scope": "phone_non_game_UI_and_dedicated_fixtures_only",
+    "candidateApkSha256": "98af0158b226fad41077c353315eebed16f65716f3d632c8820ed0ceab8340d7",
+    "mainApkUnchanged": true,
+    "baseTestsPassed": 25,
+    "uiAndStateTestsPassed": 26,
+    "testsSkipped": 0,
+    "actualCaptureRuns": 5,
+    "rawModelPairs": 15,
+    "rawConversionMismatchPixels": 0,
+    "maskMismatchPixels": 0,
+    "solidPixelsPerScopeImage": 1934677,
+    "staticScopeImageCount": 6,
+    "staticMismatchPixels": 0,
+    "normalWindowGoldenFrames": 150,
+    "postRepairGoldenFrames": 28,
+    "automaticGeometryRepairProven": true,
+    "automaticRepairScope": "one_naturally_reproduced_phone_helper_GLES2_task_composition_fault",
+    "fullLiveLedgerValidated": false,
+    "tencentTaskSharedThisRun": false,
+    "liveGameEntered": false,
+    "powerBenefitMeasured": false,
+    "actualStopButtonPassed": true,
+    "actualRecentsRemovalStopPassed": true,
+    "configRestoredExactly": true,
+    "diagnosticsSettingRestoredExactly": true,
+    "usbWakeRestored": true,
+    "temporaryOverlayUninstalled": true,
+    "originalStableTestRestored": true,
+    "stableApkAndVersionUnchanged": true,
+    "sharingStopped": true,
+    "captureServiceStopped": true,
+    "returnedToDesktop": true,
+    "uiTestApkSha256": "ba411d6764225c580505c4e26829316ea08ebc7fb8c228ee71bb91808811a706",
+    "sourceCommitOfMainApk": "f5fa2bee5e4475f45c709288290e08104f06b7dd",
+    "documentation": "docs/development/phone-c3-non-game-20261022.md",
+    "privateEvidenceRoot": "captures/phone/candidate-c3-20261022",
+    "published": false,
+    "phoneConnectedAtFinalCheck": true
   }
 }

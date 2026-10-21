@@ -4,6 +4,7 @@ import android.app.Instrumentation
 import android.app.KeyguardManager
 import android.os.ParcelFileDescriptor
 import com.cyotun.jpq.AppState
+import com.cyotun.jpq.BuildConfig
 
 /** Explicit app-only preflight. OEM background-start rules also apply to tests. */
 internal fun launchStoppedJpqPage(instrument: Instrumentation, page: String) {
@@ -13,7 +14,9 @@ internal fun launchStoppedJpqPage(instrument: Instrumentation, page: String) {
         "Unlock the test phone before running UI checks"
     }
     val packageName=context.packageName
-    require(packageName in setOf("com.cyotun.jpq","com.cyotun.jpq.dev"))
+    val candidate=BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && packageName=="com.cyotun.jpq.candidate" &&
+        instrument.context.packageName=="com.cyotun.jpq.candidate.tests"
+    require(packageName in setOf("com.cyotun.jpq","com.cyotun.jpq.dev") || candidate)
     require(page in setOf("home","settings"))
     // Launch only our own page as the already-authorized USB test operator.
     // Do not grant the production app a background-launch exemption.
@@ -28,7 +31,9 @@ internal fun launchStoppedLandscapeHost(instrument: Instrumentation) {
     val context=instrument.targetContext
     check(!context.getSystemService(KeyguardManager::class.java).isKeyguardLocked)
     val packageName=instrument.context.packageName
-    require(packageName=="com.cyotun.jpq.tests")
+    val candidate=BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && context.packageName=="com.cyotun.jpq.candidate" &&
+        packageName=="com.cyotun.jpq.candidate.tests"
+    require((packageName=="com.cyotun.jpq.tests" && context.packageName in setOf("com.cyotun.jpq","com.cyotun.jpq.dev")) || candidate)
     ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand(
         "am start -W -n $packageName/com.cyotun.jpq.vision.LandscapeProbeActivity -f 0x10008000"
     )).bufferedReader().use { it.readText() }
