@@ -35,8 +35,8 @@ try {
     Adb @('shell','am','force-stop','com.cyotun.jpq.tests') | Out-Null
     Adb @('shell','am','start','-W','-n',"com.cyotun.jpq.tests/$fixtureActivity",'--ez','cardFixtureProbe','true','--ei','caseIndex',"$Case",'--es','orientation',$InitialOrientation,'--ei','timeoutSeconds','180') | Out-Null
     $oldPid=(& $jpqAdb -s $Serial shell pidof com.cyotun.jpq.candidate | Out-String).Trim()
-    $startedWall=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $process=Start-Process $jpqAdb -ArgumentList @('-s',$Serial,'shell','am','instrument','-w','-e','candidateLobbySampling','true','-e','candidateDiagnostics','true','-e','expectedFixtureCase',"$Case",'-e','refreshTaskSurface',([string][bool]$RefreshTaskSurface).ToLowerInvariant(),'-e','expectStartupRecovery',([string][bool]$ExpectStartupRecovery).ToLowerInvariant(),'-e','class','com.cyotun.jpq.vision.CandidateCaptureSamplingTest','com.cyotun.jpq.candidate.tests/androidx.test.runner.AndroidJUnitRunner') -WindowStyle Hidden -RedirectStandardOutput (Join-Path $out 'instrumentation.txt') -RedirectStandardError (Join-Path $out 'instrumentation-stderr.txt') -PassThru
+    $samplingRunNonce=[guid]::NewGuid().ToString('D')
+    $process=Start-Process $jpqAdb -ArgumentList @('-s',$Serial,'shell','am','instrument','-w','-e','candidateLobbySampling','true','-e','candidateDiagnostics','true','-e','samplingRunNonce',$samplingRunNonce,'-e','expectedFixtureCase',"$Case",'-e','refreshTaskSurface',([string][bool]$RefreshTaskSurface).ToLowerInvariant(),'-e','expectStartupRecovery',([string][bool]$ExpectStartupRecovery).ToLowerInvariant(),'-e','class','com.cyotun.jpq.vision.CandidateCaptureSamplingTest','com.cyotun.jpq.candidate.tests/androidx.test.runner.AndroidJUnitRunner') -WindowStyle Hidden -RedirectStandardOutput (Join-Path $out 'instrumentation.txt') -RedirectStandardError (Join-Path $out 'instrumentation-stderr.txt') -PassThru
     $fresh=$false
     for($i=0;$i -lt 60;$i++) {
         $newPid=(& $jpqAdb -s $Serial shell pidof com.cyotun.jpq.candidate | Out-String).Trim()
@@ -50,7 +50,9 @@ try {
         $remoteReady=& $jpqAdb -s $Serial shell cat /sdcard/Android/data/com.cyotun.jpq.candidate/files/phone-preflight/candidate-sampling-ready.json 2>$null
         if($LASTEXITCODE -eq 0) {
             $readyRecord=($remoteReady | Out-String) | ConvertFrom-Json
-            if($readyRecord.readyWallMs -ge $startedWall -and $readyRecord.expectedFixtureCase -eq $Case) { $ready=$true;break }
+            # VM wall clocks can drift while the host suspends. A per-run random
+            # challenge plus a fresh PID proves readiness without trusting time.
+            if($readyRecord.samplingRunNonce -eq $samplingRunNonce -and $readyRecord.expectedFixtureCase -eq $Case) { $ready=$true;break }
         }
         if($process.HasExited) { throw 'Instrumentation ended before readiness signal.' }
         Start-Sleep -Milliseconds 200

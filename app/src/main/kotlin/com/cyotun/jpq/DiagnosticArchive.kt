@@ -6,8 +6,7 @@ import java.io.File
 import java.util.zip.*
 
 object DiagnosticArchive {
-    fun write(context: Context,output: OutputStream) {
-        check(!AppState.running) { "Stop capture after the match before exporting" }
+    fun write(context: Context,output: OutputStream) = EvidenceWork.maintain {
         ZipOutputStream(output).use { zip ->
             zip.putNextEntry(ZipEntry("rounds.json")); RoundRepository(context).use { zip.write(it.export().toByteArray()) }; zip.closeEntry()
             for(name in listOf("sessions","diagnostic","capture-probes")) {

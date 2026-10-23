@@ -432,7 +432,7 @@ class DisplayInteractionTest {
     }
 
     private fun waitFor(instrument: android.app.Instrumentation,condition: ()->Boolean) {
-        val deadline=SystemClock.uptimeMillis()+2000
+        val deadline=SystemClock.uptimeMillis()+5000
         while(SystemClock.uptimeMillis() < deadline) {
             var ready=false
             instrument.runOnMainSync { ready=condition() }

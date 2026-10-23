@@ -42,6 +42,9 @@ class CandidateCaptureSamplingTest {
         val diagnosticsEnabled=diagnosticsArgument=="true"
         val fixtureArgument=InstrumentationRegistry.getArguments().getString("expectedFixtureCase")
         val fixtureCase=fixtureArgument?.toIntOrNull()
+        val samplingRunNonce=InstrumentationRegistry.getArguments().getString("samplingRunNonce")
+        if(fixtureCase!=null) require(samplingRunNonce!=null &&
+            runCatching { java.util.UUID.fromString(samplingRunNonce).toString()==samplingRunNonce }.getOrDefault(false))
         val refreshTaskSurface=InstrumentationRegistry.getArguments().getString("refreshTaskSurface")=="true"
         require(!refreshTaskSurface || fixtureCase!=null)
         val expectStartupRecovery=InstrumentationRegistry.getArguments().getString("expectStartupRecovery")=="true"
@@ -107,6 +110,7 @@ class CandidateCaptureSamplingTest {
         }
         File(output,"candidate-sampling-ready.json").writeText(JSONObject()
             .put("runId",java.util.UUID.randomUUID().toString()).put("readyWallMs",System.currentTimeMillis())
+            .put("samplingRunNonce",samplingRunNonce ?: JSONObject.NULL)
             .put("expectedFixtureCase",fixtureCase ?: JSONObject.NULL).toString())
         fun await(label: String,timeout: Long,condition: ()->Boolean) {
             val deadline=SystemClock.elapsedRealtime()+timeout

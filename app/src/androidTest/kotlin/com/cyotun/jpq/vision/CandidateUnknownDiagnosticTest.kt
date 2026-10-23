@@ -32,6 +32,8 @@ class CandidateUnknownDiagnosticTest {
         assumeTrue("Pass -e candidateUnknownDiagnostic true to run this emulator-only test",
             args.getString("candidateUnknownDiagnostic")=="true")
         assumeTrue("This diagnostic test is emulator-only",isEmulator())
+        val diagnosticRunNonce=checkNotNull(args.getString("diagnosticRunNonce"))
+        require(UUID.fromString(diagnosticRunNonce).toString()==diagnosticRunNonce)
 
         val instrument=InstrumentationRegistry.getInstrumentation()
         val context=instrument.targetContext
@@ -158,13 +160,17 @@ class CandidateUnknownDiagnosticTest {
 
             File(output,"candidate-unknown-diagnostic-ready.json").writeText(JSONObject()
                 .put("runId",runId).put("readyWallMs",readyWallMs)
+                .put("diagnosticRunNonce",diagnosticRunNonce)
                 .put("expectedCaptureTargetPackage","com.cyotun.jpq.tests")
                 .put("expectedCaptureScope","APP_TASK").toString(),Charsets.UTF_8)
 
-            await("new visible APP_TASK landscape capture with ten processed frames",65_000) {
+            // System selector automation is preparation, not model processing time.
+            // Keep the ten-frame requirement, with its own budget after consent.
+            await("new visible APP_TASK landscape capture",65_000) {
                 AppState.running && AppState.recognitionReady && AppState.captureScope==CaptureScope.APP_TASK &&
-                    AppState.capturedWidth>AppState.capturedHeight && AppState.capturedFrames>=10
+                    AppState.capturedWidth>AppState.capturedHeight
             }
+            await("ten processed frames after capture starts",65_000) { AppState.capturedFrames>=10 }
             val captureReadyElapsed=SystemClock.elapsedRealtime()
             val dimensions=JSONObject().put("width",AppState.capturedWidth).put("height",AppState.capturedHeight)
             report.put("captureReadyElapsedMs",captureReadyElapsed).put("captureDimensions",dimensions)

@@ -12,7 +12,7 @@ class CapturePipelineHealth(context: Context, val generation: Long) : AutoClosea
     private val id="${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(8)}"
     private val started=SystemClock.elapsedRealtime()
     private val healthFile=java.io.File(context.filesDir,"sessions/capture-$id/capture-health.jsonl")
-    private val io=if(enabled) java.util.concurrent.Executors.newSingleThreadExecutor() else null
+    private val io=if(enabled) com.cyotun.jpq.EvidenceExecutor("jpq-capture-health") else null
     private val writePending=java.util.concurrent.atomic.AtomicBoolean(false)
     private var closed=false
     private var callbacks=0L

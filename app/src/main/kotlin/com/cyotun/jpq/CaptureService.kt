@@ -130,6 +130,10 @@ class CaptureService : Service() {
         }
         if (projection != null) return START_NOT_STICKY
         if (intent == null) { stopSelf(startId); return START_NOT_STICKY }
+        if (!EvidenceWork.beginCapture()) {
+            android.widget.Toast.makeText(this,"本机记录正在处理，请稍后开始记牌",android.widget.Toast.LENGTH_SHORT).show()
+            stopSelf(startId); return START_NOT_STICKY
+        }
         AppState.captureGapCheckpointed()
         capturedVisible=true; requestedVisible=true; visibilityEpoch=0L
         taskSurfaceRecoveryId=0; taskSurfaceAwaitingFrame=0
@@ -175,7 +179,9 @@ class CaptureService : Service() {
                     }
                 } finally { health.consumeEnded() }
             },{ error -> frameFailed(generation,error) })
+            val initializationLease=EvidenceWork.writer()
             visionWorker.post {
+              try {
                 if(generation==session && !closed) try {
                     // Old session observations/close must finish before clearing its ledger.
                     AppState.ledger.waitForNext()
@@ -202,6 +208,7 @@ class CaptureService : Service() {
                     }
                 } catch(error: Exception) { initializationFailed(generation,error) }
                   catch(error: LinkageError) { initializationFailed(generation,error) }
+              } finally { initializationLease.close() }
             }
             projection=(getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager).getMediaProjection(intent.getIntExtra("code",Activity.RESULT_CANCELED),data)
             callback=projectionCallback(generation).also { projection!!.registerCallback(it,main) }
@@ -310,7 +317,9 @@ class CaptureService : Service() {
                         }
                         health?.captureStage("copy_end")
                         health?.offered()
-                        delivery.offer(frame)
+                        // Only an explicitly armed, at-most-three raw lab probe needs
+                        // a matching model result. Ordinary capture stays latest-only.
+                        if(frame.probeFolder==null) delivery.offer(frame) else delivery.offerDiagnostic(frame)
                     } else {
                         health?.captureStage("discarded_gate")
                     }
@@ -484,6 +493,9 @@ class CaptureService : Service() {
             AppState.notifyChanged()
         }
         cleanup.release("service") { if(lastStartId>0) stopSelf(lastStartId) else stopSelf() }
+        EvidenceWork.endCapture()
+        val appContext=applicationContext
+        Thread({ runCatching { EvidenceWork.maintain { DiagnosticStorage.prune(appContext) } } },"jpq-evidence-retention").start()
         cleanup.release("update_schedule") { com.cyotun.jpq.updates.UpdateManager.scheduleDownload(this) }
     }
     override fun onTaskRemoved(rootIntent: Intent?) {

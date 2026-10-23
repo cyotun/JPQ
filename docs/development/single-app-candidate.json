@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "date": "2026-10-22",
-  "status": "c3_phone_non_game_verified_live_acceptance_pending",
+  "date": "2026-10-23",
+  "status": "c4_computer_verified_phone_validation_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -387,5 +387,66 @@
     "privateEvidenceRoot": "captures/phone/candidate-c3-20261022",
     "published": false,
     "phoneConnectedAtFinalCheck": true
+  },
+  "c4Optimization": {
+    "date": "2026-10-23",
+    "package": "com.cyotun.jpq.candidate",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression-candidate",
+    "status": "computer_verified_phone_validation_pending",
+    "artifacts": {
+      "arm64": {
+        "path": "artifacts/candidate-c4/记牌器-单应用候选-c4-后台保存与画面优化.apk",
+        "sha256": "2a2fa8d8dd342f03d0394182615dc315873529c1bec492884f50c3067c1ff2e4",
+        "bytes": 73115678
+      },
+      "emulator": {
+        "path": "artifacts/candidate-c4/jpq-c4-x86-emulator.apk",
+        "sha256": "a806681933e215a3f36b66bb08680fe72a20c2e4399ac63cbcddebffed27ac7a",
+        "bytes": 96674848
+      },
+      "tests": {
+        "path": "artifacts/candidate-c4/jpq-c4-tests.apk",
+        "sha256": "f086b59b74ffb86b0fe3b60ddcf525db075947e25c5ea6386ed4040703c269fd",
+        "bytes": 20306758
+      }
+    },
+    "coreTests": 651,
+    "candidateHostTests": 17,
+    "releaseHostTests": 17,
+    "emulatorComponentAndUiTests": 57,
+    "testFailures": 0,
+    "testsSkipped": 0,
+    "lintErrors": 0,
+    "actualCaptureIsolationStages": 3,
+    "solidPixelsPerStage": 702866,
+    "staticPixelMismatches": 0,
+    "rawConversionMismatches": 0,
+    "notificationPanelPhysicallyConfirmed": true,
+    "headsUpBannerConfirmed": false,
+    "actualCaptureToModelScenarios": 6,
+    "fullGoldenFrames": 201,
+    "sameFrameRawModelPairs": 13,
+    "unknownDiagnosticImagesVerified": 2,
+    "latestLedgerReplay": {
+      "frames": 3749,
+      "finishedRounds": 3,
+      "verifiedFinishedRounds": 3,
+      "failures": 0,
+      "unresolvedRounds": 0
+    },
+    "captureFrequencyChanged": false,
+    "modelOrRecognitionThresholdChanged": false,
+    "stableRollbackVerified": true,
+    "phoneTouchedThisRun": false,
+    "installedOnPhone": false,
+    "powerBenefitMeasured": false,
+    "liveGameValidated": false,
+    "publishedToStable": false,
+    "serverChanged": false,
+    "emulatorSharingStopped": true,
+    "emulatorClosed": true,
+    "documentation": "docs/development/candidate-c4-optimization-20261023.md",
+    "privateEvidenceRoot": "captures/emulator/candidate-c4-optimization-20261023"
   }
 }

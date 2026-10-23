@@ -21,15 +21,14 @@ class CaptureFrameProducer(private val context: Context): AutoCloseable {
         if(image.width<=image.height || sourceWidth<=sourceHeight || adjusting)
             return CapturedFrame(null,image.width,image.height,sourceWidth,sourceHeight,adjusting,
                 image.timestamp,capturedMs,SystemClock.elapsedRealtime(),emptyList(),null,false,::release)
-        val converted=converter.convert(image)
         val owned=take(image.width,image.height)
         try {
-            val canvas=Canvas(owned)
-            // Keep full-display coordinates even if a producer provides only a cropped plane.
-            canvas.drawColor(Color.BLACK)
-            canvas.drawBitmap(converted,image.cropRect.left.toFloat(),image.cropRect.top.toFloat(),null)
+            // Write capture pixels directly into the returned bitmap. A partial crop is
+            // black padded by the converter; a full crop needs no erase or second draw.
+            converter.convertInto(image,owned)
             val folder=probe.capture(context,image,owned)
             val normalized=mutableListOf<GlyphBox>()
+            val canvas=Canvas(owned)
             masks.forEach { mask ->
                 if(mask.screenWidth<=0 || mask.screenHeight<=0 || (mask.screenWidth>mask.screenHeight)!=(image.width>image.height)) return@forEach
                 val box=GlyphBox(mask.rectangle.left.toFloat()/mask.screenWidth,mask.rectangle.top.toFloat()/mask.screenHeight,

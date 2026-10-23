@@ -32,6 +32,15 @@ try {
         $prior=@()
     }
     Invoke-Adb @('shell','am','force-stop','com.cyotun.jpq.scopeoverlay') | Out-Null
+    # Recents can retain a fixture activity whose required intent extras expired.
+    # Start a fresh opted-in colour task before the system's app selector sees it.
+    Invoke-Adb @('shell','am','start','-W','-f','0x10008000','-n',
+        'com.cyotun.jpq.tests/com.cyotun.jpq.vision.ScopeProbeActivity',
+        '--ez','scopeProbe','true','--es','orientation','landscape') | Out-Null
+    Start-Sleep -Milliseconds 600
+    Invoke-Adb @('shell','screencap','-p','/sdcard/jpq-scope-baseline.png') | Out-Null
+    Invoke-Adb @('pull','/sdcard/jpq-scope-baseline.png',(Join-Path $jpqOutput 'baseline-initial.png')) | Out-Null
+    Invoke-Adb @('shell','rm','-f','/sdcard/jpq-scope-baseline.png') | Out-Null
     $testProcess=Start-Process -FilePath $jpqAdb -ArgumentList @('-s',$Serial,'shell','am','instrument','-w','-e','emulatorTaskCapture','true','-e','class','com.cyotun.jpq.vision.EmulatorTaskCaptureTest','com.cyotun.jpq.candidate.tests/androidx.test.runner.AndroidJUnitRunner') -WindowStyle Hidden -RedirectStandardOutput (Join-Path $jpqOutput 'instrumentation.txt') -RedirectStandardError (Join-Path $jpqOutput 'instrumentation-stderr.txt') -PassThru
     # Instrumentation first restarts its target process. Do not race the home
     # launch against that restart; the fresh run.json is our explicit ready signal.
@@ -54,6 +63,15 @@ try {
         $readyFile=Join-Path $jpqOutput "awaiting-$stage.json"
         Wait-Remote "$remoteRun/awaiting-$stage.json" $readyFile 150
         $ready=Get-Content -LiteralPath $readyFile -Raw | ConvertFrom-Json
+        if($stage -eq 'own') {
+            # Cover the fixture's verified solid region, not just its excluded
+            # title strip; the pixel verifier must witness real occlusion.
+            $bar=$ready.barMask.rectangle
+            $dragX=[int]($bar[0]+($bar[2]-$bar[0])*.6)
+            $dragY=[int](($bar[1]+$bar[3])/2)
+            $toY=[int]($ready.barMask.screenHeight*.25)
+            Invoke-Adb @('shell','input','-d','0','swipe',"$dragX","$dragY","$dragX","$toY",'900') | Out-Null
+        }
         if($stage -eq 'other') {
             Invoke-Adb @('shell','am','start','-W','-n','com.cyotun.jpq.scopeoverlay/.ScopeOverlayLauncherActivity','--ez','overlayProbe','true') | Out-Null
             Start-Sleep -Milliseconds 600
@@ -72,6 +90,12 @@ try {
             Start-Sleep -Milliseconds 800
             if($NotificationMode -eq 'shade') {
                 Invoke-Adb @('shell','cmd','statusbar','expand-notifications') | Out-Null
+                # Immersive tasks can ignore the shell expansion until the edge
+                # gesture reveals system bars. Use actual primary-display swipes.
+                $edgeX=[int]($ready.barMask.screenWidth*.9)
+                $panelY=[int]($ready.barMask.screenHeight*.9)
+                Invoke-Adb @('shell','input','-d','0','swipe',"$edgeX",'1',"$edgeX","$panelY",'600') | Out-Null
+                Invoke-Adb @('shell','input','-d','0','swipe',"$edgeX",'1',"$edgeX","$panelY",'600') | Out-Null
                 Start-Sleep -Milliseconds 300
             }
         }
@@ -107,4 +131,12 @@ try {
     & $jpqAdb -s $Serial shell cmd statusbar collapse | Out-Null
     & $jpqAdb -s $Serial shell am force-stop com.cyotun.jpq.scopeoverlay | Out-Null
     & $jpqAdb -s $Serial shell dumpsys media_projection | Set-Content -LiteralPath (Join-Path $jpqOutput 'stopped-projection.txt')
+    if($completed) {
+        # Opening animations can tint a pre-consent screenshot by one RGB level.
+        # The same live fixture remains in front after all overlay cleanup.
+        Start-Sleep -Milliseconds 600
+        Invoke-Adb @('shell','screencap','-p','/sdcard/jpq-scope-baseline.png') | Out-Null
+        Invoke-Adb @('pull','/sdcard/jpq-scope-baseline.png',(Join-Path $jpqOutput 'baseline.png')) | Out-Null
+        Invoke-Adb @('shell','rm','-f','/sdcard/jpq-scope-baseline.png') | Out-Null
+    }
 }

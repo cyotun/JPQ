@@ -51,4 +51,28 @@ class LatestFrameDispatcherTest {
         LatestFrameDispatcher<Frame>({ false },{ fail("must not be called") }).use { it.offer(rejected) }
         assertEquals(1,rejected.releases)
     }
+    @Test fun diagnosticFrameUsesTheSinglePendingSlotWithoutBlockingOrLeakingNewFrames() {
+        val tasks=ArrayDeque<Runnable>(); val received=mutableListOf<Int>()
+        val first=Frame(1); val probe=Frame(2); val newer=Frame(3)
+        lateinit var queue: LatestFrameDispatcher<Frame>
+        queue=LatestFrameDispatcher({ tasks.add(it); true },{
+            received.add(it.id)
+            if(it===first) { queue.offerDiagnostic(probe); queue.offer(newer) }
+        })
+        queue.offer(first); tasks.removeFirst().run()
+        assertEquals(1,newer.releases); assertEquals(0,probe.releases)
+        assertEquals(1,tasks.size); tasks.removeFirst().run()
+        assertEquals(listOf(1,2),received); assertEquals(1,probe.releases)
+        queue.close()
+    }
+    @Test fun shutdownRetiresPinnedDiagnosticsAndRejectsLateDiagnosticsExactlyOnce() {
+        val tasks=ArrayDeque<Runnable>(); var calls=0
+        val queue=LatestFrameDispatcher<Frame>({ tasks.add(it); true },{ calls++ })
+        val probe=Frame(1); val replaced=Frame(2); val late=Frame(3)
+        queue.offerDiagnostic(probe); queue.offerDiagnostic(replaced)
+        assertEquals(1,replaced.releases)
+        queue.close(); queue.close(); queue.offerDiagnostic(late)
+        tasks.removeFirst().run()
+        assertEquals(0,calls); assertEquals(1,probe.releases); assertEquals(1,late.releases)
+    }
 }

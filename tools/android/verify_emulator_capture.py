@@ -43,6 +43,7 @@ def verify(run: Path, reference: Path, notification_panel: bool):
     static[:int(height * .16), :] = False
     static[int(height * .66):int(height * .72), :] = False
     static[int(height * .85):, :] = False
+    assert static.sum() > width * height * .5, "Reference must contain the unobstructed solid fixture"
     evidence = run / "run" / "evidence"
     archive = run / "run" / "diagnostics.zip"
     # Extract only the named probe files, with no archive-controlled destination paths.

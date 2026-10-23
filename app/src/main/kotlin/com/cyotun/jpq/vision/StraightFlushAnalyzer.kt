@@ -22,7 +22,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
     private data class Input(val glyph: PlayGlyph,val pixels: SuitSymbolPixels)
     private val store=ConfigStore(context)
     private val reader=SuitPixelReader()
-    private val executor=Executors.newSingleThreadExecutor()
+    private val executor=com.cyotun.jpq.EvidenceExecutor("jpq-suit-evidence")
     private val busy=AtomicBoolean(false)
     private val generation=AtomicLong(0L)
     private val evidence=StraightFlushEvidenceTracker()

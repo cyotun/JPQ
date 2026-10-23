@@ -22,9 +22,7 @@ import kotlin.math.abs
  * committed preference count, and at most three attempts are made by this instance.
  */
 class CaptureFrameProbe : AutoCloseable {
-    private val io = Executors.newSingleThreadExecutor { task ->
-        Thread(task, "JPQCaptureProbe")
-    }
+    private val io = com.cyotun.jpq.EvidenceExecutor("JPQCaptureProbe")
     private val inFlight = AtomicBoolean(false)
     private var closed = false
     private var attempts = 0

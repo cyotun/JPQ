@@ -18,11 +18,19 @@ internal class DiagnosticSnapshotGate<T>(val enabled: Boolean, private val sink:
 class SessionTrace(context: Context, private val detectionPipeline: String = DetectionPipelinePolicy.FULL_CPU): AutoCloseable {
     val id="${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(8)}"
     private val snapshotEnabled=context.getSharedPreferences("jpq-diagnostics",Context.MODE_PRIVATE).getBoolean("enabled",false)
-    private val gate=DiagnosticSnapshotGate(snapshotEnabled, ::write)
+    private val gate: DiagnosticSnapshotGate<JSONObject> =DiagnosticSnapshotGate(snapshotEnabled, ::write)
     val enabled get()=gate.enabled
-    private val folder=File(context.filesDir,"sessions/$id").apply { if(enabled) mkdirs() }
-    private var writer=if(enabled) runCatching { File(folder,"trace.jsonl").bufferedWriter() }.getOrNull() else null
+    private val folder=File(context.filesDir,"sessions/$id")
+    private var sink: java.io.BufferedWriter?=null
+    private var bytes=0L
     private var flushed=0L
+    private var closed=false
+    private val dropped=java.util.concurrent.atomic.AtomicLong()
+    private val lease: AutoCloseable?=if(enabled) com.cyotun.jpq.EvidenceWork.writer() else null
+    private val writer=if(enabled) com.cyotun.jpq.core.BoundedWriter<String>("jpq-session-trace",256,
+        write={ persist(it) }, dropped={ dropped.incrementAndGet() },
+        failed={ android.util.Log.w("JPQTrace","local_trace_unavailable",it) },
+        finished={ try { recordDrops(); sink?.close() } finally { sink=null; lease?.close() } }) else null
     init {
         writeIfEnabled { JSONObject().put("type","session").put("schemaVersion",1).put("sessionId",id)
             .put("versionCode",BuildConfig.VERSION_CODE).put("versionName",BuildConfig.VERSION_NAME)
@@ -38,16 +46,39 @@ class SessionTrace(context: Context, private val detectionPipeline: String = Det
     }
     fun writeIfEnabled(record: () -> JSONObject) = gate.write(record)
     @Synchronized fun write(record: JSONObject) {
-        if(!enabled) return
-        val encoded=record.put("sessionId",id).toString()
-        // ADB streams compact records during live testing; full evidence stays in the private file.
-        val compact=if(encoded.length<=3600) encoded else JSONObject(record.toString()).apply { remove("detections"); remove("events"); remove("glyphs") }.toString()
-        if(compact.length<=3600) android.util.Log.i("JPQTrace",compact)
-        val sink=writer ?: return
-        runCatching {
-            sink.write(encoded); sink.newLine()
-            val now=SystemClock.elapsedRealtime(); if(now-flushed>=1000) { sink.flush(); flushed=now }
-        }.onFailure { runCatching { sink.close() }; writer=null; android.util.Log.w("JPQTrace","local_trace_unavailable") }
+        if(!enabled || closed) return
+        // Freeze the small record now; encoding/flush of queued records never reads live state.
+        writer?.offer(record.put("sessionId",id).toString())
     }
-    @Synchronized override fun close() { runCatching { writer?.flush() }; runCatching { writer?.close() }; writer=null }
+    private fun recordDrops() {
+        val count=dropped.getAndSet(0)
+        if(count>0) append(JSONObject().put("type","diagnostic_gap").put("sessionId",id)
+            .put("droppedRecords",count).put("reason","writer_queue_capacity").toString())
+    }
+    private fun persist(encoded: String) {
+        recordDrops()
+        val compact=if(encoded.length<=3600) encoded else JSONObject(encoded).apply {
+            remove("detections"); remove("events"); remove("glyphs")
+        }.toString()
+        if(compact.length<=3600) android.util.Log.i("JPQTrace",compact)
+        append(encoded)
+    }
+    private fun append(encoded: String) {
+        folder.mkdirs()
+        val file=File(folder,"trace.jsonl")
+        val length=encoded.toByteArray(Charsets.UTF_8).size+1
+        if(sink!=null && bytes+length>8L*1024*1024) {
+            sink?.close(); sink=null
+            val previous=File(folder,"trace.previous.jsonl")
+            check(!previous.exists() || previous.delete())
+            check(file.renameTo(previous)); bytes=0
+        }
+        if(sink==null) { bytes=file.length(); sink=file.bufferedWriter(Charsets.UTF_8,8192) }
+        sink!!.write(encoded); sink!!.newLine(); bytes+=length
+        val now=SystemClock.elapsedRealtime()
+        if(now-flushed>=1000) { sink!!.flush(); flushed=now }
+    }
+    @Synchronized override fun close() { if(!closed) { closed=true; writer?.close() } }
+    /** Test barrier for large synthetic traces; production maintenance remains time bounded. */
+    internal fun awaitClosed(timeoutMs: Long): Boolean = writer?.awaitClosed(timeoutMs) ?: true
 }

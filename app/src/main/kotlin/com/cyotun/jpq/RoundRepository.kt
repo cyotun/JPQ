@@ -20,10 +20,15 @@ class RoundRepository(context: Context,databaseName: String="rounds.db"): SQLite
         writableDatabase.insertWithOnConflict("suit_evidence",null,ContentValues().apply {
             put("id",id); put("state",state.toString())
         },SQLiteDatabase.CONFLICT_REPLACE)
-        writableDatabase.execSQL("DELETE FROM suit_evidence WHERE id NOT IN (SELECT id FROM rounds)")
+
     }
-    @Synchronized fun save(ledger: RoundLedger) {
-        val s=ledger.snapshot(); val id=s.roundId ?: return
+    fun save(ledger: RoundLedger) { checkpoint(ledger)?.let(::save) }
+    data class Checkpoint(val id: String,val touched: Long,val state: String)
+    companion object {
+    private fun cards(values: List<Card>)=JSONArray(values.map { JSONObject().put("rank",it.rank.name).put("colorOrSuit",it.suit.name) })
+    /** Freeze on the ledger owner; the disk worker never reads mutable live state. */
+    fun checkpoint(ledger: RoundLedger): Checkpoint? {
+        val s=ledger.snapshot(); val id=s.roundId ?: return null
         val state=JSONObject().put("schemaVersion",1).put("roundId",id).put("phase",s.phase.name)
             .put("phaseBeforeRecovery",ledger.phaseBeforeRecovery()?.name ?: JSONObject.NULL)
             .put("reason",s.reason ?: JSONObject.NULL).put("initial",cards(ledger.initialHand()))
@@ -32,15 +37,20 @@ class RoundRepository(context: Context,databaseName: String="rounds.db"): SQLite
             events.put(JSONObject().put("id",p.eventId).put("sequence",p.sequence).put("seat",p.seat.name).put("cards",cards(p.cards)))
         }
         state.put("events",events)
+        return Checkpoint(id,System.currentTimeMillis(),state.toString())
+    }
+    }
+    @Synchronized fun save(checkpoint: Checkpoint) {
         val db=writableDatabase; db.beginTransaction()
         try {
             db.insertWithOnConflict("rounds",null,ContentValues().apply {
-                put("id",id); put("touched",System.currentTimeMillis()); put("state",state.toString())
+                put("id",checkpoint.id); put("touched",checkpoint.touched); put("state",checkpoint.state)
             },SQLiteDatabase.CONFLICT_REPLACE)
             db.execSQL("DELETE FROM rounds WHERE id NOT IN (SELECT id FROM rounds ORDER BY touched DESC LIMIT 21)")
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }
+    fun pruneOrphanEvidence() { writableDatabase.execSQL("DELETE FROM suit_evidence WHERE id NOT IN (SELECT id FROM rounds)") }
     fun export(): String {
         val a=JSONArray(); readableDatabase.rawQuery("SELECT r.state,s.state FROM rounds r LEFT JOIN suit_evidence s ON s.id=r.id ORDER BY r.touched DESC",null).use { q ->
             while(q.moveToNext()) a.put(JSONObject(q.getString(0)).apply { if(!q.isNull(1)) put("suitEvidence",JSONObject(q.getString(1))) })
@@ -63,5 +73,5 @@ class RoundRepository(context: Context,databaseName: String="rounds.db"): SQLite
         try { db.delete("rounds",null,null); db.delete("suit_evidence",null,null); db.setTransactionSuccessful() }
         finally { db.endTransaction() }
     }
-    private fun cards(values: List<Card>)=JSONArray(values.map { JSONObject().put("rank",it.rank.name).put("colorOrSuit",it.suit.name) })
+
 }

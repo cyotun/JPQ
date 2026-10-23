@@ -9,6 +9,7 @@ import com.cyotun.jpq.CaptureMask
 
 /** A session owns its capture thread, converter and bitmap pool independently of the model worker. */
 class CaptureWorker(private val context: Context) {
+    private val lease=com.cyotun.jpq.EvidenceWork.writer()
     private val thread=HandlerThread("jpq-capture",android.os.Process.THREAD_PRIORITY_DISPLAY).apply { start() }
     val handler=Handler(thread.looper)
     private var producer: CaptureFrameProducer?=null
@@ -22,7 +23,7 @@ class CaptureWorker(private val context: Context) {
     fun closeAfter(retireReader: ()->Unit) {
         handler.post {
             try { retireReader() } finally {
-                try { producer?.close(); producer=null } finally { thread.quitSafely() }
+                try { producer?.close(); producer=null } finally { lease.close(); thread.quitSafely() }
             }
         }
     }

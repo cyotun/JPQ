@@ -14,6 +14,8 @@ import java.io.*
 import java.net.URL
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.HttpsURLConnection
 
 class UpdateManager(private val context: Context) {
@@ -118,18 +120,58 @@ class UpdateManager(private val context: Context) {
         }.toSet()
         require(signatures(target)==signatures(own)); true
     }.getOrDefault(false)
-    fun install(activity: Activity) {
+    fun install(activity: Activity,onFinished: ()->Unit = {}) {
         if(candidate) { status(CANDIDATE_STATUS); return }
         if(AppState.running) { status("请先停止记牌，再安装更新"); return }
-        runCatching {
-            val r=release(); require(apk.exists() && validApk(apk,r))
-            if(!context.packageManager.canRequestPackageInstalls()) {
-                activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:${context.packageName}"))); return
-            }
-            val uri=FileProvider.getUriForFile(context,"${context.packageName}.updates",apk)
-            activity.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive")
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)); status("请按系统提示完成安装")
-        }.onFailure { status("安装包尚未准备好或校验失败") }
+        var version=""
+        var installFile: File?=null
+        val installerLaunched=AtomicBoolean(false)
+        val coordinator=InstallCoordinator(
+            executor=installExecutor,
+            updateLock=lock,
+            dispatchMain={ action -> activity.runOnUiThread(action) },
+            verify={
+                if(candidate || AppState.running) false
+                else {
+                    val r=release()
+                    val valid=apk.exists() && validApk(apk,r)
+                    if(valid) {
+                        version=r.versionName
+                        installFile=InstallFileSnapshot.create(apk,folder)
+                    }
+                    valid
+                }
+            },
+            canInstall={
+                when {
+                    activity.isFinishing || activity.isDestroyed -> { status("安装已取消"); false }
+                    candidate -> false
+                    AppState.running -> { status("请先停止记牌，再安装更新"); false }
+                    else -> true
+                }
+            },
+            launch={
+                if(!context.packageManager.canRequestPackageInstalls()) {
+                    activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:${context.packageName}")))
+                } else {
+                    val stableFile=checkNotNull(installFile)
+                    val uri=FileProvider.getUriForFile(context,"${context.packageName}.updates",stableFile)
+                    activity.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    installerLaunched.set(true)
+                    status("请按系统提示完成安装 $version")
+                }
+            },
+            onFailure={
+                if(!installerLaunched.get()) installFile?.delete()
+                status("安装包尚未准备好或校验失败")
+            },
+            active=installGate,
+        )
+        coordinator.request(onStarted={ status("正在后台校验安装包") },onFinished={
+            if(!installerLaunched.get()) installFile?.delete()
+            onFinished()
+        })
     }
     private fun notifyReady(version: String) {
         val nm=context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -143,6 +185,10 @@ class UpdateManager(private val context: Context) {
         private const val CANDIDATE_STATUS="候选包独立验证中；稳定更新不可用"
         private const val BASE="https://jpq.240438457.workers.dev"
         private val lock=Any()
+        private val installGate=AtomicBoolean(false)
+        private val installExecutor=Executors.newSingleThreadExecutor { task ->
+            Thread(task,"jpq-update-install-check").apply { isDaemon=true }
+        }
         fun schedule(context: Context) {
             if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE) return
             val jobs=context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler

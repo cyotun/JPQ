@@ -32,8 +32,9 @@ try {
     $projection=Invoke-Adb @('shell','dumpsys','media_projection') | Out-String
     if($projection -notmatch 'Media Projection:\s*null') { throw 'Another projection is active; stop it before this emulator-only test.' }
 
-    $startedWall=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $diagnosticRunNonce=[guid]::NewGuid().ToString('D')
     $instrumentArgs=@('-s',$Serial,'shell','am','instrument','-w','-e','candidateUnknownDiagnostic','true',
+        '-e','diagnosticRunNonce',$diagnosticRunNonce,
         '-e','class','com.cyotun.jpq.vision.CandidateUnknownDiagnosticTest',
         'com.cyotun.jpq.candidate.tests/androidx.test.runner.AndroidJUnitRunner')
     $process=Start-Process -FilePath $jpqAdb -ArgumentList $instrumentArgs -WindowStyle Hidden `
@@ -48,7 +49,7 @@ try {
             try { $candidateReady=($remoteReady | Out-String) | ConvertFrom-Json }
             catch { $candidateReady=$null }
             if($candidateReady -and $candidateReady.runId -and
-                [long]$candidateReady.readyWallMs -ge $startedWall -and
+                $candidateReady.diagnosticRunNonce -eq $diagnosticRunNonce -and
                 $candidateReady.expectedCaptureTargetPackage -eq 'com.cyotun.jpq.tests' -and
                 $candidateReady.expectedCaptureScope -eq 'APP_TASK') {
                 $ready=$candidateReady;break
@@ -57,7 +58,7 @@ try {
         if($process.HasExited) { throw 'Unknown-diagnostic instrumentation ended before readiness.' }
         Start-Sleep -Milliseconds 200
     }
-    if(-not $ready) { throw 'Fresh UUID and wall-time readiness record was not produced.' }
+    if(-not $ready) { throw "Readiness record did not answer this run's random challenge." }
     $runId=[string]$ready.runId
     $ready | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $runDir 'ready.json')
 

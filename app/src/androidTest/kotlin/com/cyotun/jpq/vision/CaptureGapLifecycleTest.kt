@@ -82,11 +82,14 @@ class CaptureGapLifecycleTest {
             assertEquals(replacement,AppState.ledger.snapshot())
           } finally {
             AppState.ledger.waitForNext(); recognizer.close()
-            directory.deleteRecursively()
             AppState.captureGapCheckpointed()
           }
         })
-        check(VisionRuntime.handler.post(task))
-        task.get(30,TimeUnit.SECONDS)
+        try {
+            check(VisionRuntime.handler.post(task))
+            task.get(30,TimeUnit.SECONDS)
+        } finally {
+            com.cyotun.jpq.EvidenceWork.maintain { directory.deleteRecursively() }
+        }
     }
 }

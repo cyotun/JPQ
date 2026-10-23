@@ -37,12 +37,12 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         { sessionAlive() && frameAvailable() && !closed },visibilityEpoch,report={},
         remainingPool={ snapshot,epoch -> AppState.remainingPoolFor(snapshot,epoch) },
         lazyReport={ trace.writeIfEnabled(it) })
-    private val evidenceIo=java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val evidenceIo=EvidenceExecutor("jpq-evidence-image")
     private val evidenceBusy=java.util.concurrent.atomic.AtomicBoolean(false)
     private val emptyGuard=EmptyRegionGuard()
     private val singleCardReader=SingleCardIdentityReader()
     private var frameNumber=0L
-    private val repository=RoundRepository(context)
+    private val repository=AsyncRoundStore(context)
     private var tracedEvents=emptyMap<String,PlayEvent>()
     private val observer=RoundObserver(AppState.ledger) { snapshot ->
         straightFlush.onLedgerChanged(snapshot)

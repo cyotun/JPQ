@@ -343,10 +343,13 @@ class MainActivity : ComponentActivity() {
         switch(c,"保存本机识别诊断画面",getSharedPreferences("jpq-diagnostics",MODE_PRIVATE).getBoolean("enabled",false)) {
             getSharedPreferences("jpq-diagnostics",MODE_PRIVATE).edit().putBoolean("enabled",it).apply()
         }
-        add(c,text("默认关闭。开启后画面仅保存在本机，最多100 MiB，不上传服务器。",13f,muted))
+        add(c,text("默认关闭。画面最多100 MiB，会话日志停止后保留64 MiB，采集探针保留256 MiB；仅存本机。",13f,muted))
         add(c,row("清理牌局和诊断","清理") {
             AlertDialog.Builder(this).setMessage("清理已保存的本机记录和诊断画面？正在记牌时不可清理。").setPositiveButton("清理") { _,_ ->
-                if(!AppState.running) { RoundRepository(this).use { it.clear() }; java.io.File(filesDir,"diagnostic").listFiles()?.filter { it.isFile }?.forEach { it.delete() } }
+                Thread {
+                    val cleared=runCatching { DiagnosticStorage.clear(applicationContext) }.isSuccess
+                    runOnUiThread { if(!isDestroyed) Toast.makeText(this,if(cleared) "本机牌局和诊断已清理" else "请先停止记牌，等待记录保存后重试",Toast.LENGTH_LONG).show() }
+                }.start()
             }.setNegativeButton("取消",null).show()
         })
     }
@@ -449,7 +452,10 @@ class MainActivity : ComponentActivity() {
             val action={ Thread { updates.download(true); runOnUiThread { if(!isFinishing) status.text=updates.status() } }.start(); Unit }
             AlertDialog.Builder(this).setMessage("手动下载可能使用移动网络流量，是否下载？").setPositiveButton("下载") { _,_ -> action() }.setNegativeButton("取消",null).show()
         },56)
-        add(c,button("安装已下载的更新") { updates.install(this); status.text=updates.status() },56)
+        add(c,button("安装已下载的更新") {
+            updates.install(this) { if(!isFinishing && !isDestroyed) status.text=updates.status() }
+            status.text=updates.status()
+        },56)
     }
     private fun backup(c: LinearLayout) {
         add(c,text("只备份显示配置，不含权限、录屏、牌局或密钥。",15f,muted))
