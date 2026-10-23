@@ -72,3 +72,5 @@ Android SQLite 的插入 API 可能通过 `-1` 返回失败，而不是抛异常
 最终 ARM64 候选 SHA-256：`aaa2164a4ab28dd3158624409b2dfedce40bd49e2fe6aee70f55ebadd13cde86`；测试工具 SHA-256：`5b6f16fba28ea964ba9689ed910e3072497a0f6fa69586eac8516526b1ea479a`。构建清单位于本机 `artifacts/candidate-c4-review/manifest.json`。原 C4 和稳定 v0.2.26 的 APK 摘要再次核对未变；稳定源 bundle 与签名校验通过，没有发布服务器更新。
 
 经过修复与最后两轮复查，目前没有尚未处理的明确代码问题。本轮结论是电脑端检查通过；真机非对局、实局与功耗仍需分别验证。
+
+后续状态（2026-10-24）：同一 C4.1 ARM64 产物已完成真机非对局检查，未修改生产代码。详见 [手机验证报告](phone-c4-review-non-game-20261024.md)；真实整局和实际功耗仍未验收。
