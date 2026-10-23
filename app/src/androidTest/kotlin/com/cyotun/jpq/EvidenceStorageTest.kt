@@ -121,4 +121,111 @@ class EvidenceStorageTest {
         finally { EvidenceWork.endCapture() }
         DiagnosticStorage.clear(c)
     }
+    @Test fun jsonExportDrainsLateCheckpointBeforeOpeningItsDestination()=isolated { c ->
+        val release=CountDownLatch(1); val entered=CountDownLatch(1); val done=CountDownLatch(1)
+        val failure=AtomicReference<Throwable?>(); val opened=java.util.concurrent.atomic.AtomicBoolean()
+        val output=java.io.ByteArrayOutputStream()
+        val io=EvidenceExecutor("test-final-checkpoint")
+        io.execute {
+            entered.countDown(); check(release.await(3,TimeUnit.SECONDS))
+            AsyncRoundStore(c).use { it.save(ledger()) }
+        }
+        assertTrue(entered.await(2,TimeUnit.SECONDS)); io.shutdown()
+        Thread {
+            try { DiagnosticArchive.export(c,false) { opened.set(true); output } }
+            catch(t: Throwable) { failure.set(t) } finally { done.countDown() }
+        }.start()
+        try {
+            assertFalse(done.await(100,TimeUnit.MILLISECONDS)); assertFalse(opened.get())
+            release.countDown(); assertTrue(done.await(3,TimeUnit.SECONDS)); assertNull(failure.get())
+            val rounds=JSONObject(output.toString("UTF-8")).getJSONArray("rounds")
+            assertEquals(1,rounds.length()); assertEquals("round-test",rounds.getJSONObject(0).getString("roundId"))
+        } finally { release.countDown() }
+    }
+    @Test fun activeCaptureRejectsBothExportsWithoutTruncatingDestination()=isolated { c ->
+        val output=file(c,"existing-export","keep previous export")
+        assertTrue(EvidenceWork.beginCapture())
+        try {
+            for(fullArchive in listOf(false,true)) {
+                assertTrue(runCatching { DiagnosticArchive.export(c,fullArchive) { output.outputStream() } }.isFailure)
+                assertEquals("keep previous export",output.readText())
+            }
+        } finally { EvidenceWork.endCapture() }
+    }
+    @Test fun successfulExportsCloseTheirDestinationExactlyOnce()=isolated { c ->
+        for(fullArchive in listOf(false,true)) {
+            var closes=0
+            val output=object: java.io.ByteArrayOutputStream() {
+                override fun close() { closes++; check(closes==1); super.close() }
+            }
+            DiagnosticArchive.export(c,fullArchive) { output }
+            assertEquals(1,closes); assertTrue(output.size()>0)
+        }
+    }
+    @Test fun failedRotationPreservesExistingTraceWhenReopened()=isolated { c ->
+        c.getSharedPreferences("jpq-diagnostics",0).edit().putBoolean("enabled",true).commit()
+        val trace=SessionTrace(c,maximumFileBytes=4096)
+        // A nonempty directory at the rotation target forces rotation to fail.
+        file(c,"sessions/${trace.id}/trace.previous.jsonl/blocked")
+        trace.write(JSONObject().put("type","prefix-sentinel"))
+        trace.write(JSONObject().put("type","too-large-for-test-limit").put("payload","x".repeat(6000)))
+        trace.write(JSONObject().put("type","tail-sentinel"))
+        trace.close(); assertTrue(trace.awaitClosed(5000))
+        EvidenceWork.maintain {
+            val types=File(c.filesDir,"sessions/${trace.id}/trace.jsonl").readLines().map { JSONObject(it).getString("type") }
+            assertTrue(types.contains("session")); assertTrue(types.contains("prefix-sentinel")); assertTrue(types.contains("tail-sentinel"))
+        }
+    }
+    @Test fun unavailableTraceDirectoryDoesNotLeakItsWriterLease()=isolated { c ->
+        c.getSharedPreferences("jpq-diagnostics",0).edit().putBoolean("enabled",true).commit()
+        file(c,"sessions","not a directory")
+        val trace=SessionTrace(c)
+        trace.write(JSONObject().put("type","storage-unavailable")); trace.close()
+        assertTrue(trace.awaitClosed(5000))
+        DiagnosticStorage.clear(c)
+        assertFalse(File(c.filesDir,"sessions").exists())
+    }
+    @Test fun rejectedDatabaseInsertsAreNotReportedAsSaved()=isolated { c ->
+        RoundRepository(c).use { repository ->
+            val state=ledger()
+            repository.save(state)
+            repository.saveSuitEvidence("round-test",JSONObject().put("proof","original"))
+            for(table in listOf("rounds","suit_evidence")) repository.writableDatabase.execSQL(
+                "CREATE TRIGGER reject_$table BEFORE INSERT ON $table BEGIN SELECT RAISE(IGNORE); END")
+            state.invalidate("not persisted")
+            assertTrue(runCatching { repository.save(state) }.isFailure)
+            assertTrue(runCatching { repository.saveSuitEvidence("round-test",JSONObject().put("proof","replacement")) }.isFailure)
+            val saved=JSONObject(repository.export()).getJSONArray("rounds").getJSONObject(0)
+            assertEquals("ACTIVE",saved.getString("phase"))
+            assertEquals("original",saved.getJSONObject("suitEvidence").getString("proof"))
+        }
+    }
+    @Test fun failedSuitCheckpointKeepsAcceptedDisplayAndCanRetryIdenticalEvidence()=isolated { c ->
+        val previousResult=StraightFlushResult(AppState.straightFlushState,candidateRanks=AppState.straightFlushCandidateRanks)
+        val previousWildcards=AppState.straightFlushIncludesWildcards
+        val previousCounter=AppState.counterState
+        val analyzer=com.cyotun.jpq.vision.StraightFlushAnalyzer(c,Any(),{true},{0L},{})
+        try {
+            val confirmed=GradeCounterState("round-test",setOf(Rank.TEN),GradeCountBounds(0,0),
+                mapOf(Rank.TEN to GradeCountBounds(3,3)))
+            AppState.publishStraightFlush(StraightFlushResult(StraightFlushState.IMPOSSIBLE),false)
+            AppState.publishCounterState(confirmed)
+            RoundRepository(c).use { repository ->
+                repository.save(ledger())
+                repository.writableDatabase.execSQL("CREATE TRIGGER reject_suit BEFORE INSERT ON suit_evidence BEGIN SELECT RAISE(IGNORE); END")
+                val metadata=JSONObject().put("proof","accepted-analysis")
+                assertFalse(analyzer.persistCheckpoint("round-test",metadata))
+                assertEquals(StraightFlushState.IMPOSSIBLE,AppState.straightFlushState)
+                assertTrue(AppState.straightFlushCandidateRanks.isEmpty()); assertEquals(confirmed,AppState.counterState)
+                repository.writableDatabase.execSQL("DROP TRIGGER reject_suit")
+                assertTrue(analyzer.persistCheckpoint("round-test",metadata))
+                val saved=JSONObject(repository.export()).getJSONArray("rounds").getJSONObject(0)
+                assertEquals("accepted-analysis",saved.getJSONObject("suitEvidence").getString("proof"))
+            }
+        } finally {
+            analyzer.close()
+            AppState.publishStraightFlush(previousResult,previousWildcards)
+            AppState.publishCounterState(GradeCounterState()); AppState.publishCounterState(previousCounter)
+        }
+    }
 }

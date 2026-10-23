@@ -15,12 +15,14 @@ internal class DiagnosticSnapshotGate<T>(val enabled: Boolean, private val sink:
 }
 
 /** Append-only local test evidence. No network, secret values, or other-app identifiers. */
-class SessionTrace(context: Context, private val detectionPipeline: String = DetectionPipelinePolicy.FULL_CPU): AutoCloseable {
+class SessionTrace(context: Context, private val detectionPipeline: String = DetectionPipelinePolicy.FULL_CPU,
+                   maximumFileBytes: Long = 8L*1024*1024): AutoCloseable {
     val id="${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(8)}"
     private val snapshotEnabled=context.getSharedPreferences("jpq-diagnostics",Context.MODE_PRIVATE).getBoolean("enabled",false)
     private val gate: DiagnosticSnapshotGate<JSONObject> =DiagnosticSnapshotGate(snapshotEnabled, ::write)
     val enabled get()=gate.enabled
     private val folder=File(context.filesDir,"sessions/$id")
+    private val rotationLimit=maximumFileBytes.also { require(it>0) }
     private var sink: java.io.BufferedWriter?=null
     private var bytes=0L
     private var flushed=0L
@@ -30,7 +32,11 @@ class SessionTrace(context: Context, private val detectionPipeline: String = Det
     private val writer=if(enabled) com.cyotun.jpq.core.BoundedWriter<String>("jpq-session-trace",256,
         write={ persist(it) }, dropped={ dropped.incrementAndGet() },
         failed={ android.util.Log.w("JPQTrace","local_trace_unavailable",it) },
-        finished={ try { recordDrops(); sink?.close() } finally { sink=null; lease?.close() } }) else null
+        finished={
+            try { recordDrops() } finally {
+                try { sink?.close() } finally { sink=null; lease?.close() }
+            }
+        }) else null
     init {
         writeIfEnabled { JSONObject().put("type","session").put("schemaVersion",1).put("sessionId",id)
             .put("versionCode",BuildConfig.VERSION_CODE).put("versionName",BuildConfig.VERSION_NAME)
@@ -67,13 +73,19 @@ class SessionTrace(context: Context, private val detectionPipeline: String = Det
         folder.mkdirs()
         val file=File(folder,"trace.jsonl")
         val length=encoded.toByteArray(Charsets.UTF_8).size+1
-        if(sink!=null && bytes+length>8L*1024*1024) {
-            sink?.close(); sink=null
+        if(sink!=null && bytes+length>rotationLimit) {
+            val previousSink=sink; sink=null
+            previousSink?.close()
             val previous=File(folder,"trace.previous.jsonl")
             check(!previous.exists() || previous.delete())
             check(file.renameTo(previous)); bytes=0
         }
-        if(sink==null) { bytes=file.length(); sink=file.bufferedWriter(Charsets.UTF_8,8192) }
+        if(sink==null) {
+            bytes=file.length()
+            // A failed close/rotation can leave the current file in place.
+            // Reopening must preserve that evidence instead of truncating it.
+            sink=java.io.FileOutputStream(file,true).writer(Charsets.UTF_8).buffered(8192)
+        }
         sink!!.write(encoded); sink!!.newLine(); bytes+=length
         val now=SystemClock.elapsedRealtime()
         if(now-flushed>=1000) { sink!!.flush(); flushed=now }

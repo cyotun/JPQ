@@ -59,4 +59,19 @@ class BoundedWriterTest {
         assertTrue(writer.awaitClosed(2000)); assertEquals(listOf(2),written)
         assertEquals(1,failures); assertEquals(1,closed)
     }
+    @Test fun writeAndCloseFailuresAreReportedWithoutEscapingTheWorker() {
+        val failures=Collections.synchronizedList(mutableListOf<String>())
+        val worker=java.util.concurrent.atomic.AtomicReference<Thread>()
+        val escaped=java.util.concurrent.atomic.AtomicInteger()
+        val writer=BoundedWriter<Int>("test-close-failure",2,write={
+            worker.set(Thread.currentThread().apply { uncaughtExceptionHandler=Thread.UncaughtExceptionHandler { _,_ -> escaped.incrementAndGet() } })
+            throw java.io.IOException("write failed")
+        },failed={ failures.add(it.message.orEmpty()) },finished={ throw java.io.IOException("close failed") })
+        writer.offer(1); writer.close()
+        val drained=writer.awaitClosed(2000)
+        assertTrue("worker=${worker.get()?.state}, failures=$failures, escaped=${escaped.get()}, stack=${worker.get()?.stackTrace?.toList()}",drained)
+        worker.get().join(2000)
+        assertEquals(listOf("write failed","close failed"),failures)
+        assertEquals(0,escaped.get())
+    }
 }

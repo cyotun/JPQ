@@ -326,11 +326,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                     }
                     // Database I/O stays outside the capture/ledger lock and runs only when
                     // accepted annotations change. It cannot alter the main round state.
-                    val checkpoint=metadata.toString()
-                    if(accepted && checkpoint!=lastCheckpoint) {
-                        repository.saveSuitEvidence(snapshot.roundId!!,metadata)
-                        lastCheckpoint=checkpoint
-                    }
+                    if(accepted) persistCheckpoint(snapshot.roundId!!,metadata)
                 } catch(error: Exception) {
                     synchronized(sessionGuard) {
                         if(!closed && requestGeneration==generation.get() && alive() && visibilityEpoch()==epoch) publishUnknown()
@@ -355,6 +351,19 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
         return green>=12 && green.toFloat()/pixels.argb.size>=.025f
     }
     private fun cards(values: List<Card>)=JSONArray(values.map { JSONObject().put("rank",it.rank.name).put("colorOrSuit",it.suit.name) })
+    /** Persistence is advisory; a disk failure cannot invalidate accepted card analysis. */
+    internal fun persistCheckpoint(roundId: String,metadata: JSONObject): Boolean {
+        val checkpoint=metadata.toString()
+        if(checkpoint==lastCheckpoint) return true
+        return try {
+            repository.saveSuitEvidence(roundId,metadata)
+            lastCheckpoint=checkpoint
+            true
+        } catch(error: Exception) {
+            android.util.Log.w("JPQVision","suit_checkpoint_unavailable",error)
+            false
+        }
+    }
     override fun close() {
         if(closed) return
         closed=true; generation.incrementAndGet()

@@ -17,10 +17,10 @@ class RoundRepository(context: Context,databaseName: String="rounds.db"): SQLite
     override fun onUpgrade(db: SQLiteDatabase,oldVersion: Int,newVersion: Int) { if(oldVersion<2) createSuitEvidence(db) }
     /** Separate annotations cannot overwrite the immutable rank/color round checkpoint. */
     @Synchronized fun saveSuitEvidence(id: String,state: JSONObject) {
-        writableDatabase.insertWithOnConflict("suit_evidence",null,ContentValues().apply {
+        val inserted=writableDatabase.insertWithOnConflict("suit_evidence",null,ContentValues().apply {
             put("id",id); put("state",state.toString())
         },SQLiteDatabase.CONFLICT_REPLACE)
-
+        check(inserted!=-1L) { "Suit evidence checkpoint was not saved" }
     }
     fun save(ledger: RoundLedger) { checkpoint(ledger)?.let(::save) }
     data class Checkpoint(val id: String,val touched: Long,val state: String)
@@ -43,9 +43,10 @@ class RoundRepository(context: Context,databaseName: String="rounds.db"): SQLite
     @Synchronized fun save(checkpoint: Checkpoint) {
         val db=writableDatabase; db.beginTransaction()
         try {
-            db.insertWithOnConflict("rounds",null,ContentValues().apply {
+            val inserted=db.insertWithOnConflict("rounds",null,ContentValues().apply {
                 put("id",checkpoint.id); put("touched",checkpoint.touched); put("state",checkpoint.state)
             },SQLiteDatabase.CONFLICT_REPLACE)
+            check(inserted!=-1L) { "Round checkpoint was not saved" }
             db.execSQL("DELETE FROM rounds WHERE id NOT IN (SELECT id FROM rounds ORDER BY touched DESC LIMIT 21)")
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }

@@ -62,14 +62,19 @@ class MainActivity : ComponentActivity() {
         if(uri!=null) importConfig(uri)
     }
     private val diagnosticResult=registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if(uri!=null) runCatching { RoundRepository(this).use { db -> contentResolver.openOutputStream(uri,"wt")!!.use { it.write(db.export().toByteArray()) } } }
-            .onFailure { Toast.makeText(this,"导出失败",Toast.LENGTH_LONG).show() }
+        if(uri!=null) exportDiagnostics(uri,false)
     }
     private val archiveResult=registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
-        if(uri!=null) Thread {
-            runCatching { contentResolver.openOutputStream(uri,"wt")!!.use { DiagnosticArchive.write(applicationContext,it) } }
-                .onFailure { runOnUiThread { Toast.makeText(this,"请在本局结束并停止记牌后导出",Toast.LENGTH_LONG).show() } }
-        }.start()
+        if(uri!=null) exportDiagnostics(uri,true)
+    }
+    private fun exportDiagnostics(uri: Uri,fullArchive: Boolean) {
+        val appContext=applicationContext
+        val resolver=contentResolver
+        Thread({
+            runCatching { DiagnosticArchive.export(appContext,fullArchive) { checkNotNull(resolver.openOutputStream(uri,"wt")) } }
+                .onFailure { runOnUiThread { if(!isFinishing && !isDestroyed)
+                    Toast.makeText(this,"导出未完成，请停止记牌并等待记录保存后重试",Toast.LENGTH_LONG).show() } }
+        },"jpq-diagnostic-export").start()
     }
     private fun dp(v: Int)=(v*resources.displayMetrics.density).toInt()
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -336,7 +341,9 @@ class MainActivity : ComponentActivity() {
     private fun diagnostics(c: LinearLayout) {
         add(c,text("用于本机回看与排查记牌问题。",14f,muted))
         add(c,row("最近牌局","查看") { RoundRepository(this).use { db -> AlertDialog.Builder(this).setTitle("最近牌局").setMessage(db.summary()).setPositiveButton("关闭",null).show() } })
-        add(c,row("导出牌局诊断","仅保存到本机") { diagnosticResult.launch("记牌器牌局诊断.json") })
+        add(c,row("导出牌局诊断","仅保存到本机") {
+            if(!AppState.running) diagnosticResult.launch("记牌器牌局诊断.json") else Toast.makeText(this,"请先正常完成本局，再停止记牌导出",Toast.LENGTH_LONG).show()
+        })
         add(c,row("导出完整测试日志","日志和诊断画面") {
             if(!AppState.running) archiveResult.launch("记牌器测试日志.zip") else Toast.makeText(this,"请先正常完成本局，再停止记牌导出",Toast.LENGTH_LONG).show()
         })

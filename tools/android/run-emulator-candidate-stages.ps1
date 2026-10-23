@@ -96,7 +96,29 @@ try {
                 $panelY=[int]($ready.barMask.screenHeight*.9)
                 Invoke-Adb @('shell','input','-d','0','swipe',"$edgeX",'1',"$edgeX","$panelY",'600') | Out-Null
                 Invoke-Adb @('shell','input','-d','0','swipe',"$edgeX",'1',"$edgeX","$panelY",'600') | Out-Null
-                Start-Sleep -Milliseconds 300
+                # Revealed bars do not prove the panel expanded. Request it
+                # again after the gestures, then require its actual UI bounds.
+                $panelConfirmed=$false
+                for($attempt=0;$attempt -lt 3;$attempt++) {
+                    Invoke-Adb @('shell','cmd','statusbar','expand-notifications') | Out-Null
+                    $panelRemote="/sdcard/jpq-shade-$([IO.Path]::GetFileName($jpqOutput))-$attempt.xml"
+                    $panelLocal=Join-Path $jpqOutput "notification-panel-$attempt.xml"
+                    try {
+                        $dump=Invoke-Adb @('shell','uiautomator','dump','--compressed',$panelRemote) | Out-String
+                        if($dump.Contains("dumped to: $panelRemote")) {
+                            Invoke-Adb @('pull',$panelRemote,$panelLocal) | Out-Null
+                            [xml]$panelUi=Get-Content -LiteralPath $panelLocal -Raw -Encoding UTF8
+                            foreach($node in $panelUi.SelectNodes('//node')) {
+                                if($node.package -eq 'com.android.systemui' -and $node.'resource-id' -eq 'com.android.systemui:id/notification_stack_scroller' -and
+                                    $node.bounds -match '^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$' -and
+                                    ([int]$Matches[3]-[int]$Matches[1]) -gt $ready.barMask.screenWidth*.5 -and
+                                    ([int]$Matches[4]-[int]$Matches[2]) -gt $ready.barMask.screenHeight*.5) { $panelConfirmed=$true }
+                            }
+                        }
+                    } finally { Invoke-Adb @('shell','rm','-f',$panelRemote) | Out-Null }
+                    if($panelConfirmed) { break }
+                }
+                if(-not $panelConfirmed) { throw 'Notification panel did not become physically visible.' }
             }
         }
         $record=[ordered]@{stage=$stage;notificationMode=$NotificationMode;hostBeforeScreenshotMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}

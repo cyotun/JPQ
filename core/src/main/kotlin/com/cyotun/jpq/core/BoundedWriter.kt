@@ -24,8 +24,13 @@ class BoundedWriter<T>(name: String, private val capacity: Int,
                     }
                     try { write(item) } catch (error: Exception) { runCatching { failed(error) } }
                 }
-            } finally { try { finished() } finally { done.countDown() } }
+            } finally { finishSafely() }
         }, name).apply { isDaemon = true; start() }
+    }
+    // Keep cleanup outside the synchronized lambda's nonlocal return path.
+    private fun finishSafely() {
+        try { finished() } catch(error: Exception) { runCatching { failed(error) } }
+        finally { done.countDown() }
     }
     fun offer(item: T): Boolean = synchronized(lock) {
         if (closed) return false
