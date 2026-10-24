@@ -11,6 +11,23 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class TencentFrameVisibilityTest {
+    @Test fun passSourcesRequireFreshPositionedUnmaskedInputsAndNoCurrentCards() {
+        val text=SceneText(listOf(OcrLine("不出",Rect(460,160,540,205))),900L,1000,500,7)
+        fun read(t: SceneText?=text,now: Long=1000L,epoch: Long=7L,scene: TableScene=TableScene.TABLE,
+            groups: Map<Seat,List<PlayGlyph>> = empty,masks: List<GlyphBox> = emptyList()) =
+            TencentFrameVisibility.observedPasses(t,now,1000,500,epoch,scene,groups,masks)
+        assertEquals(mapOf(Seat.OPPOSITE to 900L),read())
+        assertEquals(read(),read(now=1100L)) // Same cached source, never a later vote.
+        assertTrue(read(now=1901L).isEmpty()); assertTrue(read(now=899L).isEmpty())
+        assertTrue(read(epoch=8).isEmpty()); assertTrue(read(t=text.copy(width=999)).isEmpty())
+        assertTrue(read(scene=TableScene.TEAMMATE).isEmpty())
+        assertTrue(read(groups=empty+(Seat.OPPOSITE to listOf(handGlyph))).isEmpty())
+        val mask=GlyphBox(.7f,.2f,.75f,.3f) // Hidden possible group tail, outside the word.
+        assertTrue(read(masks=listOf(mask)).isEmpty())
+        assertTrue(read(t=text.copy(sourceMasks=listOf(mask))).isEmpty())
+        assertTrue(read(masks=listOf(GlyphBox(Float.NaN,0f,.2f,.3f))).isEmpty())
+        assertTrue(read(t=text.copy(lines=listOf(OcrLine("不出",null)))).isEmpty())
+    }
     private val card=Card(Rank.FIVE,Suit.RED)
     private val handGlyph=PlayGlyph(card,.95f,GlyphBox(.20f,.65f,.23f,.75f))
     private val empty=Seat.entries.associateWith { emptyList<PlayGlyph>() }

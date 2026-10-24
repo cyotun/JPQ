@@ -4,6 +4,22 @@ import com.cyotun.jpq.core.*
 
 /** Preserve independent evidence without treating an obscured region as complete. */
 internal object TencentFrameVisibility {
+    fun observedPasses(text: SceneText?,timeMs: Long,width: Int,height: Int,epoch: Long,
+        scene: TableScene,groups: Map<Seat,List<PlayGlyph>>,masks: List<GlyphBox>): Map<Seat,Long> {
+        if(scene!=TableScene.TABLE || text==null || text.width!=width || text.height!=height ||
+            text.visibilityEpoch!=epoch || timeMs-text.timeMs !in 0L..1000L) return emptyMap()
+        val allMasks=text.sourceMasks+masks
+        if(allMasks.any { !validMask(it) }) return emptyMap()
+        val hints=text.lines.mapNotNull { line ->
+            val r=line.box ?: return@mapNotNull null
+            val b=GlyphBox(r.left.toFloat()/width,r.top.toFloat()/height,r.right.toFloat()/width,r.bottom.toFloat()/height)
+            if(allMasks.any { intersects(it,b) }) null else SceneHint(line.text,b)
+        }
+        val visibility=EmptyRegionEvidence()
+        return tencentPassSeats(hints).filter { seat ->
+            groups[seat]?.isEmpty()==true && !visibility.overlayOccluded(scene,seat,emptyList(),allMasks)
+        }.associateWith { text.timeMs }
+    }
     private fun validMask(box: GlyphBox)=
         listOf(box.left,box.top,box.right,box.bottom).all { it.isFinite() } &&
             box.left>=0f && box.top>=0f && box.right<=1f && box.bottom<=1f && box.width>0f && box.height>0f

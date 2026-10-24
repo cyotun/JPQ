@@ -94,7 +94,7 @@ class EvidenceStorageTest {
             assertEquals((0..29).toList(),values)
         }
     }
-    @Test fun traceRotationRetainsOrderedUtf8RecordsAcrossBothFiles()=isolated { c ->
+    @Test fun traceRotationRetainsOrderedUtf8RecordsAcrossRotatedFiles()=isolated { c ->
         c.getSharedPreferences("jpq-diagnostics",0).edit().putBoolean("enabled",true).commit()
         val trace=SessionTrace(c)
         val payload="牌".repeat(110_000)
@@ -105,13 +105,41 @@ class EvidenceStorageTest {
         assertTrue("Synthetic trace did not drain",trace.awaitClosed(60_000))
         EvidenceWork.maintain {
             val folder=File(c.filesDir,"sessions/${trace.id}")
-            val previous=File(folder,"trace.previous.jsonl"); val current=File(folder,"trace.jsonl")
-            assertTrue(previous.exists()); assertTrue(current.exists())
-            assertTrue(previous.length()<=8L*1024*1024); assertTrue(current.length()<=8L*1024*1024)
-            val records=listOf(previous,current).flatMap { file -> file.readLines().filter { it.isNotBlank() }.map(::JSONObject) }
+            val history=(6 downTo 1).mapNotNull { index ->
+                File(folder,if(index==1) "trace.previous.jsonl" else "trace.previous.$index.jsonl")
+                    .takeIf { it.isFile }
+            }+File(folder,"trace.jsonl")
+            assertTrue(history.size>=2)
+            assertTrue(history.all { it.length()<=8L*1024*1024 })
+            val records=history.flatMap { file -> file.readLines().filter { it.isNotBlank() }.map(::JSONObject) }
                 .filter { it.optString("type")=="rotation-test" }
             assertEquals((0..29).toList(),records.map { it.getInt("order") })
             assertTrue(records.all { it.getString("payload")==payload })
+        }
+    }
+    @Test fun traceRotationKeepsBoundedRecentWindowAndExportsEveryRetainedFile()=isolated { c ->
+        c.getSharedPreferences("jpq-diagnostics",0).edit().putBoolean("enabled",true).commit()
+        val trace=SessionTrace(c,maximumFileBytes=4096,maximumFileCount=3)
+        val payload="牌".repeat(1000)
+        repeat(30) { trace.write(JSONObject().put("type","bounded-rotation-test").put("order",it).put("payload",payload)) }
+        trace.close(); assertTrue("Synthetic trace did not drain",trace.awaitClosed(10_000))
+        val folder=File(c.filesDir,"sessions/${trace.id}")
+        EvidenceWork.maintain {
+            val expectedNames=listOf("trace.previous.2.jsonl","trace.previous.jsonl","trace.jsonl")
+            val retained=expectedNames.map { File(folder,it) }
+            assertTrue(retained.all { it.isFile })
+            assertTrue(retained.all { it.length()<=4096 })
+            val records=retained.flatMap { it.readLines().filter { line -> line.isNotBlank() }.map(::JSONObject) }
+                .filter { it.optString("type")=="bounded-rotation-test" }
+            assertEquals((27..29).toList(),records.map { it.getInt("order") })
+        }
+        val archive=File(c.cacheDir,"bounded-trace-export.zip")
+        archive.outputStream().use { DiagnosticArchive.write(c,it) }
+        ZipFile(archive).use { zip ->
+            val prefix="sessions/${trace.id}/"
+            val traceEntries=zip.entries().asSequence().map { it.name }
+                .filter { it.startsWith(prefix) && it.substringAfter(prefix).startsWith("trace") }.toSet()
+            assertEquals(setOf("trace.previous.2.jsonl","trace.previous.jsonl","trace.jsonl").map { prefix+it }.toSet(),traceEntries)
         }
     }
     @Test fun maintenanceBlocksCaptureAndCaptureBlocksClear()=isolated { c ->

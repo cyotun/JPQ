@@ -182,39 +182,45 @@ def frame_to_tape_row(frame: dict) -> tuple[str, int]:
                      str(self_clean).lower(), str(adjusting).lower(), glyph_vector(frame),
                      ",".join(passing), str(capture_gap).lower(), str(dealing).lower(),
                      masks, opening_field, counts, empty_reasons))
-    if isinstance(frame.get("singleCardIdentities"), dict):
+    if isinstance(frame.get("singleCardIdentities"), dict) or isinstance(frame.get("observedPasses"), dict):
         row += ";" + encode_single_identities(frame)
+    if isinstance(frame.get("observedPasses"), dict):
+        passes = frame["observedPasses"]
+        row += ";" + "|".join(f"{seat},{source}" for seat, source in passes.items()
+                               if seat in SEATS[1:] and type(source) is int and 0 <= elapsed-source <= 1000)
     return row, omitted_counts
 
 
-def parse_trace(zipped: zipfile.ZipFile, member: str, session: str):
+def parse_trace(zipped: zipfile.ZipFile, member: str | list[str], session: str):
     digest = hashlib.sha256()
     header_seen = False
     rows, omitted_counts = [], 0
     probe_timestamps = set()
-    with zipped.open(member) as stream:
-        for raw in stream:
-            digest.update(raw)
-            try:
-                record = json.loads(raw)
-            except (ValueError, UnicodeError):
-                raise ValueError("Malformed JSON in selected trace")
-            if not isinstance(record, dict):
-                continue
-            record_session = record.get("sessionId")
-            if record.get("type") == "session":
-                if record_session != session:
-                    raise ValueError("Session header does not match selected ID")
-                header_seen = True
-            elif record.get("type") == "frame":
-                if record_session is not None and record_session != session:
-                    raise ValueError("Frame session ID does not match selected ID")
-                row, omitted = frame_to_tape_row(record)
-                rows.append(row)
-                omitted_counts += omitted
-                image_time = record.get("imageTimestampNs")
-                if type(image_time) is int and image_time >= 0:
-                    probe_timestamps.add(image_time)
+    members = [member] if isinstance(member, str) else member
+    for part in members:
+        with zipped.open(part) as stream:
+            for raw in stream:
+                digest.update(raw)
+                try:
+                    record = json.loads(raw)
+                except (ValueError, UnicodeError):
+                    raise ValueError("Malformed JSON in selected trace")
+                if not isinstance(record, dict):
+                    continue
+                record_session = record.get("sessionId")
+                if record.get("type") == "session":
+                    if record_session != session:
+                        raise ValueError("Session header does not match selected ID")
+                    header_seen = True
+                elif record.get("type") == "frame":
+                    if record_session is not None and record_session != session:
+                        raise ValueError("Frame session ID does not match selected ID")
+                    row, omitted = frame_to_tape_row(record)
+                    rows.append(row)
+                    omitted_counts += omitted
+                    image_time = record.get("imageTimestampNs")
+                    if type(image_time) is int and image_time >= 0:
+                        probe_timestamps.add(image_time)
     if not header_seen:
         raise ValueError("Selected trace has no matching session header")
     if not rows:
@@ -284,7 +290,14 @@ def prepare(archive: Path, sessions: list[str], output: Path, manifest_path: Pat
                 member = f"sessions/{session}/trace.jsonl"
                 if names.count(member) != 1:
                     raise ValueError("Selected session trace is missing or ambiguous")
-                tape_text, trace_hash, omitted_counts, probe_times = parse_trace(zipped, member, session)
+                prefix = f"sessions/{session}/"
+                pattern = re.compile(re.escape(prefix) + r"trace\.previous(?:\.([2-9]|[1-9][0-9]+))?\.jsonl$")
+                rotated = [(int(match.group(1) or 1), name) for name in names
+                           if (match := pattern.fullmatch(name))]
+                parts = [name for _, name in sorted(rotated, reverse=True)] + [member]
+                if len(parts) != len(set(parts)):
+                    raise ValueError("Selected session trace part is ambiguous")
+                tape_text, trace_hash, omitted_counts, probe_times = parse_trace(zipped, parts, session)
                 tape_bytes = tape_text.encode("utf-8")
                 tape_path = output / f"{session}.tape"
                 tape_path.write_bytes(tape_bytes)
@@ -293,6 +306,7 @@ def prepare(archive: Path, sessions: list[str], output: Path, manifest_path: Pat
                     "session": session,
                     "traceMember": member,
                     "traceSha256": trace_hash,
+                    "traceParts": [{"member": part, "sha256": sha256_bytes(zipped.read(part))} for part in parts],
                     "tapeFile": tape_path.name,
                     "tapeSha256": sha256_bytes(tape_bytes),
                     "frameCount": len(tape_text.splitlines()),

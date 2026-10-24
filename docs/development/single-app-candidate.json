@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "date": "2026-10-24",
-  "status": "beta_c44_phone_non_game_verified_live_pending",
+  "date": "2026-10-25",
+  "status": "beta_c45_phone_non_game_verified_user_scheduled_live_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -449,7 +449,7 @@
     "documentation": "docs/development/candidate-c4-optimization-20261023.md",
     "privateEvidenceRoot": "captures/emulator/candidate-c4-optimization-20261023"
   },
-  "currentCandidateRecord": "betaC44",
+  "currentCandidateRecord": "betaC45",
   "c4Review": {
     "date": "2026-10-23",
     "package": "com.cyotun.jpq.candidate",
@@ -936,7 +936,7 @@
     "date": "2026-10-24",
     "package": "com.cyotun.jpq.candidate",
     "label": "记牌器BETA",
-    "status": "phone_non_game_verified_live_pending",
+    "status": "live_review_found_one_stall_not_accepted",
     "baseCommit": "ab2f7d8",
     "versionCode": 28,
     "versionName": "0.2.26-regression-candidate",
@@ -1061,6 +1061,161 @@
       "liveAcceptancePassed": false,
       "privateEvidence": "captures/phone/beta-c44-preflight-20261024/c44-20261024T235856",
       "documentation": "docs/development/phone-beta-c44-20261025.md"
+    },
+    "liveAudit": {
+      "date": "2026-10-25",
+      "rounds": 5,
+      "ledgerEvents": 166,
+      "physicalSamples": 172,
+      "sfRecords": 1142,
+      "displayedSfRebounds": 0,
+      "accepted": false,
+      "allFiveIndependentlyVerified": false,
+      "findings": [
+        "round2_unresolved_strict_superset_stalled_all_ledger_counts"
+      ],
+      "archiveSha256": "b945ac508f33b5ab01efa9e8bb0c8956a25505555a71f7e153c376c357d3c0a9",
+      "documentation": "docs/development/beta-c4.5-live-audit-20261025.md"
     }
+  },
+  "betaC45": {
+    "buildId": "C4.5",
+    "date": "2026-10-25",
+    "package": "com.cyotun.jpq.candidate",
+    "label": "记牌器BETA",
+    "status": "phone_non_game_verified_user_scheduled_live_pending",
+    "baseCommit": "14b24a9",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression-candidate",
+    "apk": "artifacts/beta-c4.5/记牌器BETA-c4.5.apk",
+    "apkSha256": "c4d2c01fc7b689c0e63da52124d59141be01c1e2fbd4ada46e135365f5b3f9b0",
+    "testApkSha256": "d30dc551ba03e0dde90d4568c6bf3b1bf909bbdb2e41a52e28b9202dd617f761",
+    "tests": {
+      "core": {
+        "tests": 697,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "betaHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "officialHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "pythonTests": 32,
+    "lintErrors": 0,
+    "lintWarnings": 59,
+    "sourceFingerprint": {
+      "sha256": "a88c0666ec32a0ad140ecfda1b02003c3e832aea5f1f3721a1be8f1f3f7b0f03",
+      "files": 105,
+      "scope": "production Kotlin/XML only; excludes private assets"
+    },
+    "currentSourceReplay": {
+      "frames": 3717,
+      "fullGlyphFrames": 2969,
+      "verifiedFinishedRounds": 1,
+      "failures": 0,
+      "unresolvedRounds": 0,
+      "allFiveIndependentlyVerified": false
+    },
+    "priorSourceRegression": {
+      "frames": 8865,
+      "eventHistoryUnchanged": true,
+      "teammatePoolHistoryUnchanged": true,
+      "scope": "preserves prior supported source results; not independent truth for missing events"
+    },
+    "phoneNonGame": {
+      "tests": 90,
+      "failures": 0,
+      "unresolvedSkippedTests": 0,
+      "checks": [
+        {
+          "file": "final-pass-visibility-storage.txt",
+          "tests": 24,
+          "passed": 24
+        },
+        {
+          "file": "final-component.txt",
+          "tests": 50,
+          "passed": 50
+        },
+        {
+          "file": "final-home-isolation.txt",
+          "tests": 8,
+          "passed": 8
+        },
+        {
+          "file": "final-overlay.txt",
+          "tests": 7,
+          "passed": 7
+        },
+        {
+          "file": "task-capture-case2-final/instrumentation.txt",
+          "tests": 1,
+          "passed": 1
+        }
+      ],
+      "actualTaskCapture": {
+        "scope": "actual phone test fixture capture and model; not a live match",
+        "sameFrameProbes": [
+          {
+            "probeId": "1792863697896-4c558a5a",
+            "imageTimestampNs": 462809163008293,
+            "fullHandAndPreviousMatch": true,
+            "conversionAndMaskMismatches": 0
+          },
+          {
+            "probeId": "1792863700398-fb7abda8",
+            "imageTimestampNs": 462811669369958,
+            "fullHandAndPreviousMatch": true,
+            "conversionAndMaskMismatches": 0
+          },
+          {
+            "probeId": "1792863703152-2a98c6c8",
+            "imageTimestampNs": 462814421862926,
+            "fullHandAndPreviousMatch": true,
+            "conversionAndMaskMismatches": 0
+          }
+        ],
+        "goldenProductionFrames": 119,
+        "expectedHandCards": 25,
+        "expectedPreviousCards": 4,
+        "allFramesCorrect": true,
+        "captureScope": "APP_TASK",
+        "normalStopReleased": true,
+        "sessionId": "1792863692088-04e0695a"
+      },
+      "normalHomeStop": {
+        "captureServiceAbsent": true,
+        "normalHomeStart": true,
+        "noInstrumentationDuringCapture": true,
+        "normalHomeStop": true,
+        "noForceStop": true,
+        "normalSystemTaskConsent": true,
+        "projectionReleased": true,
+        "target": "dedicated_fixture_only"
+      },
+      "configurationRestored": true,
+      "helperRestored": true,
+      "usbAwakeSettingUnchanged": true,
+      "formalApkAndUpdateTimeUnchanged": true,
+      "projectionReleased": true,
+      "returnedToDesktop": true,
+      "testProgramsClosed": true
+    },
+    "phoneInstalled": true,
+    "liveAcceptancePassed": false,
+    "officialFeaturePromotion": false,
+    "stableServerChanged": false,
+    "documentation": "docs/development/beta-c4.5-live-audit-20261025.md",
+    "privateEvidence": "captures/phone/beta-c45-preflight-20261025/c45-20261025T010450"
   }
 }

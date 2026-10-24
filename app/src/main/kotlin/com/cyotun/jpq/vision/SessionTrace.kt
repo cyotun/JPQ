@@ -16,13 +16,15 @@ internal class DiagnosticSnapshotGate<T>(val enabled: Boolean, private val sink:
 
 /** Append-only local test evidence. No network, secret values, or other-app identifiers. */
 class SessionTrace(context: Context, private val detectionPipeline: String = DetectionPipelinePolicy.FULL_CPU,
-                   maximumFileBytes: Long = 8L*1024*1024): AutoCloseable {
+                   maximumFileBytes: Long = 8L*1024*1024,
+                   private val maximumFileCount: Int = 7): AutoCloseable {
     val id="${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(8)}"
     private val snapshotEnabled=context.getSharedPreferences("jpq-diagnostics",Context.MODE_PRIVATE).getBoolean("enabled",false)
     private val gate: DiagnosticSnapshotGate<JSONObject> =DiagnosticSnapshotGate(snapshotEnabled, ::write)
     val enabled get()=gate.enabled
     private val folder=File(context.filesDir,"sessions/$id")
     private val rotationLimit=maximumFileBytes.also { require(it>0) }
+    init { require(maximumFileCount>=2) }
     private var sink: java.io.BufferedWriter?=null
     private var bytes=0L
     private var flushed=0L
@@ -76,9 +78,7 @@ class SessionTrace(context: Context, private val detectionPipeline: String = Det
         if(sink!=null && bytes+length>rotationLimit) {
             val previousSink=sink; sink=null
             previousSink?.close()
-            val previous=File(folder,"trace.previous.jsonl")
-            check(!previous.exists() || previous.delete())
-            check(file.renameTo(previous)); bytes=0
+            rotate(file); bytes=0
         }
         if(sink==null) {
             bytes=file.length()
@@ -90,6 +90,29 @@ class SessionTrace(context: Context, private val detectionPipeline: String = Det
         val now=SystemClock.elapsedRealtime()
         if(now-flushed>=1000) { sink!!.flush(); flushed=now }
     }
+    /** Retain the newest bounded window while keeping `trace.previous.jsonl` as the newest backup. */
+    private fun rotate(current: File) {
+        val rotated=(1 until maximumFileCount).map(::rotatedFile)
+        // A non-file at any rotation path indicates a storage failure. Detect it before moving
+        // anything so a failed rotation cannot strand the current trace or partially shift history.
+        check(rotated.none { it.exists() && !it.isFile }) { "Cannot rotate local trace" }
+
+        val oldest=rotated.last()
+        check(!oldest.exists() || oldest.delete()) { "Cannot discard oldest local trace" }
+        for(index in rotated.size-2 downTo 0) {
+            val source=rotated[index]
+            if(source.exists()) {
+                val target=rotated[index+1]
+                check(!target.exists() || target.delete()) { "Cannot shift local trace history" }
+                check(source.renameTo(target)) { "Cannot shift local trace history" }
+            }
+        }
+        val newest=rotated.first()
+        check(!newest.exists() || newest.delete()) { "Cannot replace previous local trace" }
+        check(current.renameTo(newest)) { "Cannot rotate local trace" }
+    }
+    private fun rotatedFile(index: Int): File = File(folder,
+        if(index==1) "trace.previous.jsonl" else "trace.previous.$index.jsonl")
     @Synchronized override fun close() { if(!closed) { closed=true; writer?.close() } }
     /** Test barrier for large synthetic traces; production maintenance remains time bounded. */
     internal fun awaitClosed(timeoutMs: Long): Boolean = writer?.awaitClosed(timeoutMs) ?: true

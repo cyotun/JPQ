@@ -52,7 +52,7 @@ internal fun replayLoggedTape(args: Array<String>) {
         history.append("{\"timeMs\":$time,\"phase\":\"${snap.phase}\",\"reason\":${snap.reason?.let { "\"$it\"" } ?: "null"},\"self\":${snap.played(Seat.SELF)},\"previous\":${snap.played(Seat.PREVIOUS)},\"opposite\":${snap.played(Seat.OPPOSITE)},\"next\":${snap.played(Seat.NEXT)},\"remaining\":${snap.remaining?.values?.sum()}}")
     }
     File(args[0]).forEachLine { line ->
-        val fields=line.split(';',limit=15); time=fields[0].toLong(); val detectedScene=TableScene.valueOf(fields[1])
+        val fields=line.split(';',limit=16); time=fields[0].toLong(); val detectedScene=TableScene.valueOf(fields[1])
         currentRound?.let { id -> coverage[id]?.let { round ->
             round.endingScene=detectedScene
             if(detectedScene==TableScene.RESULT) round.resultSceneObserved=true
@@ -78,6 +78,10 @@ internal fun replayLoggedTape(args: Array<String>) {
                 val c=value.split(','); require(c.size==3)
                 Seat.valueOf(c[0]) to RemainingHandCount(c[1].toInt(),c[2].toLong())
             }
+        }.orEmpty()
+        val observedPasses=fields.getOrNull(15)?.takeIf { it!="?" && it.isNotEmpty() }?.split('|')?.associate { value ->
+            val c=value.split(','); require(c.size==2)
+            Seat.valueOf(c[0]) to c[1].toLong()
         }.orEmpty()
         val physicalSingles=fields.getOrNull(14)?.takeIf { it!="?" && it.isNotEmpty() }?.split('|')?.associate { value ->
             val c=value.split(','); require(c.size==6)
@@ -148,7 +152,7 @@ internal fun replayLoggedTape(args: Array<String>) {
                 teammateHand=hand.takeIf { scene==TableScene.TEAMMATE && !adjusting && !handMasked && partition.hand.all { it.confidence>=.65f } },
                 teammateHandConfidence=partition.hand.minOfOrNull { it.confidence } ?: 1f,dealingChoicesObserved=dealingChoicesObserved,
                 remainingHandCounts=remainingCounts,openingChoiceSourceTimeMs=openingSource,
-                localizedOverlaySeats=localizedOverlaySeats))
+                localizedOverlaySeats=localizedOverlaySeats,observedPasses=observedPasses))
         }
         // Mirror the production rank/color reveal gate after the observer has
         // updated the ledger. This is a recorded projection check, not fresh

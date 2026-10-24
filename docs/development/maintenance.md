@@ -79,6 +79,8 @@
 
 停止使用该目录 `stop.signal`；必须等用户确认对局结束。完整 ZIP 从 APP「设置 → 牌局与诊断」导出，或在停止采集后按 `DeviceEvidenceTest` 的既有导出测试执行。`SessionTrace` 的电脑日志会精简/省略大帧，不能替代原始 ZIP。
 
+每个会话的 `SessionTrace` 保留当前文件和最近 6 个轮转文件（默认每个最多 8 MiB），总量上限约 56 MiB，为 `sessions` 目录现有 64 MiB 清理配额中的其他会话证据留出空间。完整导出会包含保留的所有轮转文件；按目录清理仍删除最旧会话，不改变导出结构中的 `sessions/<sessionId>/trace*.jsonl` 路径。
+
 更新服务改动另运行 `npm test`、`npm run check`、`npm run build`（dry-run），不把 dry-run 当成部署成功。
 
 ## 4. 证据等级

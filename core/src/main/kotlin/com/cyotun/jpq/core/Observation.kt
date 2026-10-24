@@ -12,7 +12,10 @@ data class TableFrame(val timeMs: Long,val scene: TableScene,val hand: List<Card
                       val openingChoiceSourceTimeMs: Long? = null,
                       // Qualified by the source adapter only when the overlay is
                       // the sole incompleteness and the own hand is unobstructed.
-                      val localizedOverlaySeats: Set<Seat> = emptySet())
+                      val localizedOverlaySeats: Set<Seat> = emptySet(),
+                      // Qualified positioned pass bubbles, timestamped at OCR capture.
+                      // They close an action; they never prove that its old pixels are empty.
+                      val observedPasses: Map<Seat,Long> = emptyMap())
 
 internal fun TableFrame.onlyLocalizedOverlay(): Boolean = incompleteReason!=null &&
     localizedOverlaySeats.isNotEmpty() && !captureGap && !ambiguousPresentation &&
@@ -96,6 +99,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     private val repeatedPlayProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RepeatedPlayCountProof() }
     private val repeatedSingleProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RepeatedSingleCardProof() }
     private val countAnchoredRepeatedSingles=CountAnchoredRepeatedSingleProof()
+    private val passedSupersetProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { PassClosedSupersetProof() }
     private val observedEmptyAt=mutableMapOf<Seat,Long>()
     private val countPlayBoundaryAt=mutableMapOf<Seat,Long>()
     fun diagnosticStatus()=ObserverStatus(armed,locked,baselineWindow,tribute,handVote.count,playVotes.mapValues { it.value.count },pending.size,sequence,recovery!=null)
@@ -114,6 +118,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         repeatedPlayProofs.values.forEach { it.clear() }
         repeatedSingleProofs.values.forEach { it.clear() }
         countAnchoredRepeatedSingles.clear()
+        passedSupersetProofs.values.forEach { it.clear() }
     }
     fun interrupted(reason: String) { locked=true; ledger.invalidate(reason); clearCandidates(); emit() }
     /** A fragmented confirmed display stays that event; no missing glyph is invented. */
@@ -148,6 +153,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         repeatedPlayProofs.values.forEach { it.clear() }
         repeatedSingleProofs.values.forEach { it.clear() }
         countAnchoredRepeatedSingles.clear()
+        passedSupersetProofs.values.forEach { it.clear() }
         val snapshot=ledger.snapshot()
         if(recovery!=null) { recovery!!.observationInterrupted(timeMs); publishRecoveryIfDue(timeMs,immediate); return }
         if(snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) return
@@ -236,6 +242,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE)) {
             quantityProofs.values.forEach { it.clear() }
             countAnchoredRepeatedSingles.clear()
+            passedSupersetProofs.values.forEach { it.clear() }
         }
         val localizedPlay=localizedPendingRecovery.observe(frame,ledger.snapshot(),ledger.currentHand(),ledger.phaseBeforeRecovery())
         if(localizedPlay!=null && recovery!=null) {
@@ -487,10 +494,12 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             val repeatedProof=repeatedPlayProofs.getValue(seat)
             val singleProof=repeatedSingleProofs.getValue(seat)
             val quantityProof=quantityProofs.getValue(seat)
+            val passedSupersetProof=passedSupersetProofs.getValue(seat)
             if(confirmed?.played(seat)==27) {
                 repeatedProof.clear()
                 singleProof.clear()
                 quantityProof.clear()
+                passedSupersetProof.clear()
                 // A finished player's last presentation can temporarily move away during
                 // an effect and return over real table pixels. It cannot be another play.
                 playVotes[seat]!!.clear(); emptyVotes[seat]!!.clear(); visible[seat]=""
@@ -515,7 +524,13 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 continue
             }
             val priorPresentation=quantityPrior(seat)
-            val shortPlay=if(confirmed!=null) quantityProof.observe(frame,confirmed,seat,
+            // A pass bubble can cover the old glyph sampling area for seconds.
+            // Keep that old event intact: only a separately located, repeatedly
+            // observed complete group after a proved closed turn earns a new event.
+            val passedSuperset=if(confirmed!=null) passedSupersetProof.observe(frame,confirmed,seat,
+                priorPresentation,ledger.currentHand(),presentations[seat]?.lastSeen ?: -1L)
+                else { passedSupersetProof.clear(); null }
+            val shortPlay=passedSuperset ?: if(confirmed!=null) quantityProof.observe(frame,confirmed,seat,
                 countPlayBoundaryAt[seat].takeIf { presentations[seat]==null },priorPresentation)
                 else { quantityProof.clear(); null }
             if(shortPlay!=null) {
@@ -524,7 +539,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 presentations[seat]=Presentation(shortPlay.cards.toList(),shortPlay.glyphs.toList(),frame.timeMs,event.eventId)
                 visible[seat]=key(shortPlay.cards); previousGlyphs[seat]=shortPlay.glyphs.toList()
                 playVotes.getValue(seat).clear(); emptyVotes.getValue(seat).clear()
-                repeatedProof.clear(); singleProof.clear()
+                repeatedProof.clear(); singleProof.clear(); quantityProof.clear(); passedSupersetProof.clear()
                 if(p?.cards?.isEmpty()==true) observedEmptyAt[seat]=frame.timeMs
                 if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
                 continue

@@ -14,6 +14,32 @@ TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 class SessionReplayTests(unittest.TestCase):
+    def test_rotated_sources_replay_oldest_first_and_bind_every_part(self):
+        with self.temporary_directory() as folder:
+            archive=Path(folder)/"parts.zip"
+            prefix="sessions/session-1/"
+            header={"type":"session","sessionId":"session-1"}
+            with zipfile.ZipFile(archive,"w") as zipped:
+                for name,records in [("trace.jsonl",[self.frame(elapsedMs=3000)]),
+                                     ("trace.previous.2.jsonl",[header,self.frame(elapsedMs=1000)]),
+                                     ("trace.previous.jsonl",[self.frame(elapsedMs=2000)])]:
+                    zipped.writestr(prefix+name,"".join(json.dumps(j)+"\n" for j in records))
+            out=Path(folder)/"out";result=replay.prepare(archive,["session-1"],out,out/"manifest.json")
+            self.assertEqual(["1000","2000","3000"],[row.split(";")[0] for row in (out/"session-1.tape").read_text().splitlines()])
+            parts=result["sources"][0]["traceParts"]
+            self.assertEqual([prefix+name for name in ["trace.previous.2.jsonl","trace.previous.jsonl","trace.jsonl"]],
+                             [part["member"] for part in parts])
+            with zipfile.ZipFile(archive) as zipped:
+                self.assertTrue(all(part["sha256"]==replay.sha256_bytes(zipped.read(part["member"])) for part in parts))
+
+    def test_pass_sources_are_optional_and_never_inferred_from_legacy_passing_flags(self):
+        row,_=replay.frame_to_tape_row(self.frame())
+        self.assertEqual(14,len(row.split(";")))
+        frame=self.frame(observedPasses={"OPPOSITE":1200,"NEXT":1235,"SELF":1200,"PREVIOUS":100})
+        row,_=replay.frame_to_tape_row(frame)
+        self.assertEqual("",row.split(";")[14])
+        self.assertEqual("OPPOSITE,1200",row.split(";")[15])
+
     def test_explicit_physical_single_keeps_its_own_source_and_no_legacy_inference(self):
         frame=self.frame(groups={"OPPOSITE":["A:BLACK"]},regionObserved={"OPPOSITE":True},
             singleCardIdentities={"OPPOSITE":{"card":"A:BLACK","suit":"CLUB","similarity":.86,"margin":.15,"sourceTimeMs":1234}})
