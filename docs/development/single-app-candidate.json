@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-24",
-  "status": "beta_c42_computer_verified_phone_retest_pending",
+  "status": "beta_c42_phone_non_game_verified_live_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -683,7 +683,7 @@
     "date": "2026-10-24",
     "label": "记牌器BETA",
     "package": "com.cyotun.jpq.candidate",
-    "status": "computer_verified_phone_and_live_retest_pending",
+    "status": "computer_and_phone_non_game_verified_live_pending",
     "artifacts": {
       "arm64": {
         "path": "artifacts/beta-c4.2/记牌器BETA-c4.2.apk",
@@ -756,7 +756,7 @@
       "sha256": "68217f8c65b3c42db014bf31b7f58a919267d883d57e6206b8a781e147c9fedc",
       "scope": "current production Kotlin/XML sources only, excludes private model/font and docs"
     },
-    "phoneInstalled": false,
+    "phoneInstalled": true,
     "officialFeaturePromotion": false,
     "productionCodeFixes": [
       "bounded unknown SF rank refinement",
@@ -764,7 +764,67 @@
       "single OCR badge border tolerance",
       "pending official download resumption"
     ],
-    "documentation": "docs/development/beta-c4.2-live-review-20261024.md"
+    "documentation": "docs/development/beta-c4.2-live-review-20261024.md",
+    "phoneNonGame": {
+      "date": "2026-10-24",
+      "status": "non_game_verified_live_pending",
+      "package": "com.cyotun.jpq.candidate",
+      "label": "记牌器BETA",
+      "apkSha256": "f0dbda989c1010e79237cb8b092938f771f04cc33d16e70818a6f316d92c0a6e",
+      "tests": 77,
+      "failures": 0,
+      "unresolvedSkippedTests": 0,
+      "initialSkippedAttempts": 1,
+      "explicitArchiveProbePassed": true,
+      "componentTests": 65,
+      "overlayTests": 7,
+      "homeTests": 3,
+      "privateCountFixtureTests": 1,
+      "actualTaskCaptureTests": 1,
+      "cpuFixtureInputs": 8,
+      "cpuTimingRuns": 12,
+      "cpuMedianMs": 127,
+      "cpuMaximumMs": 131,
+      "actualCapture": {
+        "scope": "actual phone test fixture capture and model; not a live match",
+        "sameFrameProbes": [
+          {
+            "probeId": "1792832130670-9a4a8dd2",
+            "imageTimestampNs": 435058668213775,
+            "fullHandAndPreviousMatch": true,
+            "conversionAndMaskMismatches": 0
+          },
+          {
+            "probeId": "1792832133667-3160c23c",
+            "imageTimestampNs": 435061669037576,
+            "fullHandAndPreviousMatch": true,
+            "conversionAndMaskMismatches": 0
+          },
+          {
+            "probeId": "1792832136423-f5a759e2",
+            "imageTimestampNs": 435064425517991,
+            "fullHandAndPreviousMatch": true,
+            "conversionAndMaskMismatches": 0
+          }
+        ],
+        "goldenProductionFrames": 119,
+        "expectedHandCards": 25,
+        "expectedPreviousCards": 4,
+        "allFramesCorrect": true,
+        "captureScope": "APP_TASK",
+        "normalStopReleased": true,
+        "sessionId": "1792832124869-caa9f080"
+      },
+      "normalUiStopReleased": true,
+      "settingsRestored": true,
+      "originalHelperRestored": true,
+      "usbAwakeSettingUnchanged": true,
+      "officialApkAndUpdateTimeUnchanged": true,
+      "realGameEntered": false,
+      "liveAcceptancePassed": false,
+      "privateEvidence": "captures/phone/beta-c42-preflight-20261024/c42-20261024T084603693Z",
+      "documentation": "docs/development/phone-beta-c42-20261024.md"
+    }
   },
   "projectRules": "AGENTS.md",
   "releaseWorkflow": "docs/development/beta-release-workflow.md",

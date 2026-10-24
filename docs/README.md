@@ -6,6 +6,7 @@
 | --- | --- |
 | 确认 BETA 开发、验收、正式发布与回滚规则 | [根目录项目规则](../AGENTS.md)、[发布流程](development/beta-release-workflow.md) |
 | 查看最新 BETA 的六局核查和正式更新恢复 | [BETA C4.2](development/beta-c4.2-live-review-20261024.md)、[正式更新](development/official-updates-20261024.md) |
+| 查看 C4.2 真机非对局检查及下一轮实战准备 | [手机检查记录](development/phone-beta-c42-20261024.md) |
 | 看稳定版本、支持范围、验证结果和限制 | [版本说明](releases/0.2.26.md)、[JSON](releases/0.2.26.json) |
 | 修改首页、设置或悬浮窗 | [当前规格](design/current-spec.md) |
 | 理解识别、账本、复核和同花顺算法 | [架构说明](development/architecture.md) |
