@@ -17,7 +17,7 @@ internal fun launchStoppedJpqPage(instrument: Instrumentation, page: String) {
     val candidate=BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && packageName=="com.cyotun.jpq.candidate" &&
         instrument.context.packageName=="com.cyotun.jpq.candidate.tests"
     require(packageName in setOf("com.cyotun.jpq","com.cyotun.jpq.dev") || candidate)
-    require(page in setOf("home","settings"))
+    require(page in setOf("home","settings","update")) // Legacy notification alias now resolves to settings.
     // Launch only our own page as the already-authorized USB test operator.
     // Do not grant the production app a background-launch exemption.
     val output=ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand(

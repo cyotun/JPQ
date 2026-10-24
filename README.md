@@ -28,6 +28,8 @@ Android 本地记牌工具，当前适配腾讯独立 App「大掼蛋」四人�
 
 更新使用独立 Cloudflare Worker `jpq`，仅检查/下载更新，不上传诊断。2026-10-24 已恢复原正式 v0.2.26 APK 的签名分发，安装包字节不变；未验收的 BETA 功能未推送正式通道。见 [正式更新验证](docs/development/official-updates-20261024.md) 和 [最新 BETA 六局核查](docs/development/beta-c4.2-live-review-20261024.md)。GitHub 源码推送和服务器正式发布分别管理。
 
+BETA C4.3 已将应用更新改为一级设置右侧的单个操作按钮，原地完成检查、下载和安装，无更新二级页。见 [实现与验证](docs/development/beta-c4.3-inline-updates-20261024.md)；BETA 继续隔离正式更新通道，正式发布前仍需相应验收。
+
 ## 资产与源码
 
 源码：[cyotun/JPQ](https://github.com/cyotun/JPQ)。项目自有源码 MIT；第三方字体、模型和原生库有独立来源与许可，不随仓库发布。原 APK、私人素材、签名密钥、本机配置和构建产物由 `.gitignore` 排除。新克隆需自行准备合法持有的本地资产，见 [第三方说明](THIRD_PARTY_NOTICES.md)。

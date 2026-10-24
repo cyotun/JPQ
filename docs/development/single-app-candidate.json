@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-24",
-  "status": "beta_c42_phone_non_game_verified_live_pending",
+  "status": "beta_c43_computer_update_ui_verified_phone_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -449,7 +449,7 @@
     "documentation": "docs/development/candidate-c4-optimization-20261023.md",
     "privateEvidenceRoot": "captures/emulator/candidate-c4-optimization-20261023"
   },
-  "currentCandidateRecord": "betaC42",
+  "currentCandidateRecord": "betaC43",
   "c4Review": {
     "date": "2026-10-23",
     "package": "com.cyotun.jpq.candidate",
@@ -839,5 +839,67 @@
     "fullDownload": true,
     "privateRouteRejected": true,
     "betaPublished": false
+  },
+  "betaC43": {
+    "buildId": "C4.3",
+    "date": "2026-10-24",
+    "status": "computer_update_ui_verified_phone_and_live_pending",
+    "package": "com.cyotun.jpq.candidate",
+    "label": "记牌器BETA",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression-candidate",
+    "apk": "artifacts/beta-c4.3/记牌器BETA-c4.3.apk",
+    "apkSha256": "d0c870bd060a475627fe0ebbc0c32c5839c4e84771a5f57db39f95d46af3ada6",
+    "apkBytes": 73132058,
+    "testApkSha256": "995c641e9b7ae679a230ef0f6666c7dc50e59d30661202b812584581b1a6f580",
+    "emulatorApkSha256": "bc2bfe063bba550e45a54a92c187b4ca2da3e2be2bf8643f97b77f628735d630",
+    "tests": {
+      "core": {
+        "tests": 664,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "betaHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "officialHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "emulatorUi": {
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "lintErrors": 0,
+    "phoneInstalled": false,
+    "realGameEntered": false,
+    "officialFeaturePromotion": false,
+    "stableRollbackVerified": true,
+    "stableServerChanged": false,
+    "stableUpdaterDisabled": true,
+    "scope": "inline settings update UI, notification compatibility and state policy; not a real official cross-version install or live-game acceptance",
+    "productionChanges": [
+      "one first-level update action",
+      "background-only cache verification",
+      "legacy update-page notification mapping"
+    ],
+    "recognitionLedgerChanges": false,
+    "screenshot": "artifacts/beta-c4.3/settings-inline-update.png",
+    "documentation": "docs/development/beta-c4.3-inline-updates-20261024.md",
+    "localEvidence": {
+      "armBuild": "tmp/beta-inline-update-arm-final.log",
+      "emulatorBuild": "tmp/beta-inline-update-x86-final.log",
+      "officialConfigurationBuild": "tmp/beta-inline-update-release-verified.log",
+      "uiTests": "tmp/beta-inline-update-emulator-final.txt"
+    }
   }
 }

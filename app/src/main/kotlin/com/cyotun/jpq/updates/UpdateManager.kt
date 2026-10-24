@@ -25,9 +25,29 @@ class UpdateManager(private val context: Context) {
     private val apk=File(folder,"verified.apk")
     private val partial=File(folder,"download.part")
     private val manifestFile=File(folder,"verified-manifest.json")
-    private val publicKey=context.assets.open("update-key.txt").bufferedReader().use { Base64.getDecoder().decode(it.readText().trim()) }
+    private val publicKey by lazy { context.assets.open("update-key.txt").bufferedReader().use { Base64.getDecoder().decode(it.readText().trim()) } }
     fun status()=if(candidate) CANDIDATE_STATUS else prefs.getString("status","尚未检查更新")!!
     private fun status(value: String) { if(!candidate) prefs.edit().putString("status",value).apply() }
+    internal fun rowState(requested: UpdateOperation?=null): UpdateRowState = UpdateRowPolicy.state(
+        candidate,BuildConfig.VERSION_CODE.toLong(),prefs.getLong("uiAvailableVersion",0),prefs.getLong("uiReadyVersion",0),
+        prefs.getBoolean("uiNeedsCheck",false),AppState.running,
+        if(installGate.get()) UpdateOperation.INSTALLING else operation ?: requested,prefs.getInt("uiProgress",-1))
+    private fun availability(release: ReleaseManifest?,ready: Boolean=false,needsCheck: Boolean=false) {
+        if(!candidate) prefs.edit().putLong("uiAvailableVersion",release?.versionCode ?: 0)
+            .putLong("uiReadyVersion",if(ready) release!!.versionCode else 0).putBoolean("uiNeedsCheck",needsCheck).apply()
+    }
+    /** Called only by a background worker when the settings row appears. */
+    internal fun refreshCachedState() = synchronized(lock) {
+        if(candidate || AppState.running) return@synchronized
+        val r=runCatching { release() }.getOrNull()
+        availability(r,r!=null && apk.exists() && validApk(apk,r),prefs.getBoolean("uiNeedsCheck",false) && r!=null)
+        if(r==null && manifestFile.exists()) status("请检查更新")
+    }
+    internal fun mobileDownloadConfirmationRequired() = !wifi()
+    private inline fun <T> withOperation(value: UpdateOperation,action: ()->T): T = synchronized(lock) {
+        operation=value
+        try { action() } finally { operation=null }
+    }
     private fun wifi(): Boolean {
         val cm=context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val cap=cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
@@ -37,29 +57,33 @@ class UpdateManager(private val context: Context) {
     private fun connection(path: String): HttpsURLConnection=(URL(BASE+path).openConnection() as HttpsURLConnection).apply {
         connectTimeout=15000; readTimeout=20000; instanceFollowRedirects=false; setRequestProperty("Accept-Encoding","identity")
     }
-    fun check(manual: Boolean=false): Boolean = synchronized(lock) {
-        if(candidate) { status(CANDIDATE_STATUS); return@synchronized false }
+    fun check(manual: Boolean=false): Boolean = withOperation(UpdateOperation.CHECKING) {
+        if(candidate) { status(CANDIDATE_STATUS); return@withOperation false }
         when(UpdateCheckPolicy.next(manual,System.currentTimeMillis(),prefs.getLong("checked",0),hasPendingUpdate())) {
-            UpdateCheckPolicy.Action.RESUME_PENDING -> { scheduleDownload(context); return@synchronized false }
-            UpdateCheckPolicy.Action.THROTTLED -> return@synchronized false
+            UpdateCheckPolicy.Action.RESUME_PENDING -> { scheduleDownload(context); return@withOperation false }
+            UpdateCheckPolicy.Action.THROTTLED -> return@withOperation false
             UpdateCheckPolicy.Action.FETCH -> Unit
         }
         status("正在检查更新")
         runCatching {
             val c=connection("/v1/releases/latest")
             try {
-                if(c.responseCode==204) { status("暂无发布版本"); prefs.edit().putLong("checked",System.currentTimeMillis()).apply(); return@synchronized false }
+                if(c.responseCode==204) { availability(null); status("暂无发布版本"); prefs.edit().putLong("checked",System.currentTimeMillis()).apply(); return@withOperation false }
                 require(c.responseCode==200)
                 val bytes=c.inputStream.use { bounded(it,32768) }; val text=bytes.toString(Charsets.UTF_8)
                 val release=ReleaseManifest.parse(text); require(release.verify(publicKey)) { "Release signature mismatch" }
                 require(release.minSdk<=Build.VERSION.SDK_INT)
-                if(release.versionCode<=currentVersion()) { status("已是当前版本"); prefs.edit().putLong("checked",System.currentTimeMillis()).apply(); return@synchronized false }
+                if(release.versionCode<=currentVersion()) { availability(null); status("已是当前版本"); prefs.edit().putLong("checked",System.currentTimeMillis()).apply(); return@withOperation false }
                 require(context.packageName==release.packageName)
                 val previous=if(manifestFile.exists()) manifestFile.readText() else null
                 if(previous!=text) { partial.delete(); apk.delete() }
                 File(folder,"manifest.tmp").apply { writeText(text); kotlin.check(renameTo(manifestFile)) }
+                val ready=apk.exists() && validApk(apk,release)
+                availability(release,ready)
                 prefs.edit().putLong("checked",System.currentTimeMillis()).apply()
-                status("发现 ${release.versionName}，等待空闲下载"); scheduleDownload(context); true
+                if(ready) status("更新已下载，可安装 ${release.versionName}")
+                else { status("发现 ${release.versionName}，等待空闲下载"); scheduleDownload(context) }
+                true
             } finally { c.disconnect() }
         }.getOrElse { status("暂时无法检查更新，请稍后重试"); false }
     }
@@ -72,13 +96,15 @@ class UpdateManager(private val context: Context) {
     fun hasPendingUpdate(): Boolean = synchronized(lock) {
         !candidate && runCatching { release(); true }.getOrDefault(false)
     }
-    fun download(manual: Boolean=false,shouldCancel: ()->Boolean = { false }): Boolean = synchronized(lock) {
-        if(candidate) { status(CANDIDATE_STATUS); return@synchronized false }
-        if(AppState.running) { status("记牌停止后再下载更新"); return@synchronized false }
-        if(!manual && !wifi()) { status("等待 Wi-Fi 下载更新"); return@synchronized false }
+    fun download(manual: Boolean=false,shouldCancel: ()->Boolean = { false }): Boolean = withOperation(UpdateOperation.DOWNLOADING) {
+        if(candidate) { status(CANDIDATE_STATUS); return@withOperation false }
+        if(AppState.running) { status("记牌停止后再下载更新"); return@withOperation false }
+        if(!manual && !wifi()) { status("等待 Wi-Fi 下载更新"); return@withOperation false }
+        prefs.edit().putInt("uiProgress",-1).apply()
         runCatching {
             val r=release()
-            if(apk.exists() && validApk(apk,r)) { status("更新已下载，可安装 ${r.versionName}"); return@synchronized true }
+            if(apk.exists() && validApk(apk,r)) { availability(r,true); status("更新已下载，可安装 ${r.versionName}"); return@withOperation true }
+            availability(r)
             val space=android.os.StatFs(folder.absolutePath).availableBytes
             require(space>r.sizeBytes*2+16*1024*1024) { "Insufficient storage" }
             if(partial.length()>r.sizeBytes) partial.delete()
@@ -88,6 +114,7 @@ class UpdateManager(private val context: Context) {
                 if(offset>0) c.setRequestProperty("Range","bytes=$offset-")
                 try {
                     val code=c.responseCode
+                    if(code==404 || code==410) prefs.edit().putBoolean("uiNeedsCheck",true).apply()
                     if(code==200) { offset=0; partial.delete() }
                     else {
                         require(code==206 && c.getHeaderField("Content-Range")=="bytes $offset-${r.sizeBytes-1}/${r.sizeBytes}")
@@ -99,16 +126,18 @@ class UpdateManager(private val context: Context) {
                         val block=ByteArray(65536); var count=offset
                         while(true) {
                             // Cancellation leaves a resumable partial belonging to this signed manifest.
-                            if(AppState.running || shouldCancel()) { status("下载暂停，空闲时继续"); return@synchronized false }
+                            if(AppState.running || shouldCancel()) { status("下载暂停，空闲时继续"); return@withOperation false }
                             val n=source.read(block); if(n<0) break
                             require(count+n<=r.sizeBytes); dest.write(block,0,n); count+=n
                             status("下载更新 ${(count*100/r.sizeBytes)}%")
+                            prefs.edit().putInt("uiProgress",(count*100/r.sizeBytes).toInt()).apply()
                         }; dest.fd.sync(); require(count==r.sizeBytes)
                     } }
                 } finally { c.disconnect() }
             }
             require(validApk(partial,r)) { "Invalid APK" }
             apk.delete(); kotlin.check(partial.renameTo(apk)); status("更新已下载，可安装 ${r.versionName}")
+            availability(r,true)
             if(!AppState.running) notifyReady(r.versionName)
             true
         }.getOrElse { status("下载或校验未完成，可重试"); if(partial.exists() && partial.length()==runCatching { release().sizeBytes }.getOrDefault(-1)) partial.delete(); false }
@@ -170,8 +199,7 @@ class UpdateManager(private val context: Context) {
                 }
             },
             onFailure={
-                if(!installerLaunched.get()) installFile?.delete()
-                status("安装包尚未准备好或校验失败")
+                installFailed(installFile,installerLaunched.get())
             },
             active=installGate,
         )
@@ -180,11 +208,16 @@ class UpdateManager(private val context: Context) {
             onFinished()
         })
     }
+    private fun installFailed(file: File?,launched: Boolean) {
+        if(!launched) { file?.delete() }
+        prefs.edit().putLong("uiReadyVersion",0).putBoolean("uiNeedsCheck",true).apply()
+        status("安装包尚未准备好或校验失败")
+    }
     private fun notifyReady(version: String) {
         val nm=context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(NotificationChannel("updates","应用更新",NotificationManager.IMPORTANCE_DEFAULT))
         if(Build.VERSION.SDK_INT>=33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) return
-        val open=PendingIntent.getActivity(context,22,Intent(context,MainActivity::class.java).putExtra("page","update"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val open=PendingIntent.getActivity(context,22,Intent(context,MainActivity::class.java).putExtra("page","settings"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         nm.notify(22,Notification.Builder(context,"updates").setSmallIcon(android.R.drawable.stat_sys_download_done).setContentTitle("记牌器更新已准备好")
             .setContentText("$version · 点击查看并安装").setAutoCancel(true).setContentIntent(open).build())
     }
@@ -192,6 +225,7 @@ class UpdateManager(private val context: Context) {
         private const val CANDIDATE_STATUS="记牌器BETA测试中；正式版更新独立管理"
         private const val BASE="https://jpq.240438457.workers.dev"
         private val lock=Any()
+        @Volatile private var operation: UpdateOperation?=null
         private val installGate=AtomicBoolean(false)
         private val installExecutor=Executors.newSingleThreadExecutor { task ->
             Thread(task,"jpq-update-install-check").apply { isDaemon=true }

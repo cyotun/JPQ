@@ -13,7 +13,7 @@
 | 设置/权限 | 底部仅记牌/设置；权限入口在设置，授权返回复查状态、返回原页面；无长按悬浮设置 | `MainActivity.settings/permissions/navigate/leave` |
 | 尺寸/牌序 | 横屏示例预览；八项尺寸参数、牌序拖动；保存、退出、恢复默认 | `MainActivity.size/order`、`ConfigStore` |
 | 牌局与诊断 | 最近牌局、导出、本机诊断开关、清理集中在二级页；停止记牌后可导出完整 ZIP 或清理本机记录和诊断画面 | `MainActivity.diagnostics`、`RoundRepository` |
-| 更新/备份 | 设置保留应用更新；配置导入导出；更新验证后交系统安装 | `UpdateManager`、`ConfigStore` |
+| 更新/备份 | 正式基线保留原更新入口；BETA 新版按用户要求改为一级设置最右侧单按钮，见 [应用更新行](inline-updates.md)；配置导入导出、系统安装确认保留 | `UpdateManager`、`ConfigStore` |
 
 ## 悬浮条
 

@@ -22,6 +22,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import com.cyotun.jpq.updates.UpdateManager
+import com.cyotun.jpq.updates.UpdateOperation
+import com.cyotun.jpq.updates.UpdateRowAction
 
 class MainActivity : ComponentActivity() {
     private lateinit var store: ConfigStore
@@ -35,6 +37,21 @@ class MainActivity : ComponentActivity() {
     private var capturePending=false
     private var stopPending=false
     private var preview: OverlayController?=null
+    private val updates by lazy { UpdateManager(applicationContext) }
+    private var updateActionButton: Button?=null
+    private var updateStatusText: TextView?=null
+    private var updateRequested: UpdateOperation?=null
+    private var updateConsent: AlertDialog?=null
+    private var updateUiResumed=false
+    private val updateHandler=Handler(Looper.getMainLooper())
+    private val updateTick=object: Runnable {
+        override fun run() {
+            if(updateUiResumed && page=="settings") {
+                refreshUpdateRow()
+                updateHandler.postDelayed(this,500)
+            }
+        }
+    }
     private val appFont by lazy { Typeface.createFromAsset(assets,"overlay.ttf") }
     private val homeControls=mutableListOf<View>()
     private var homeState: TextView?=null
@@ -80,6 +97,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store=ConfigStore(this); page=savedInstanceState?.getString("page") ?: intent.getStringExtra("page") ?: "home"
+        if(page=="update") page="settings" // Existing notification/saved-state compatibility.
         if(page in listOf("size","order")) draft=store.load()
         savedInstanceState?.getString("draft")?.let { draft=store.readDraft(it) }
         restorePage=savedInstanceState?.getString("restorePage") ?: "settings"
@@ -98,8 +116,23 @@ class MainActivity : ComponentActivity() {
         outState.putString("permissionsReturnPage",permissionsReturnPage); outState.putBoolean("capturePending",capturePending)
         super.onSaveInstanceState(outState)
     }
-    override fun onResume() { super.onResume(); AppState.subscribe(listener); if(page in listOf("permissions","home")) render(); updateState() }
-    override fun onPause() { AppState.unsubscribe(listener); super.onPause() }
+    override fun onResume() {
+        super.onResume(); updateUiResumed=true; AppState.subscribe(listener)
+        if(page in listOf("permissions","home")) render()
+        updateState(); scheduleUpdateRefresh()
+    }
+    override fun onPause() {
+        updateUiResumed=false; updateHandler.removeCallbacks(updateTick)
+        AppState.unsubscribe(listener); super.onPause()
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent); setIntent(intent)
+        if(intent.getStringExtra("page") in setOf("update","settings")) { page="settings"; render() }
+    }
+    override fun onDestroy() {
+        updateHandler.removeCallbacks(updateTick); updateConsent?.dismiss(); updateConsent=null
+        super.onDestroy()
+    }
     private fun bg(fill: Int,radius: Int=16,stroke: Boolean=false)=GradientDrawable().apply {
         setColor(fill); cornerRadius=dp(radius).toFloat(); if(stroke) setStroke(dp(1),gold)
     }
@@ -128,13 +161,14 @@ class MainActivity : ComponentActivity() {
         stateText=null
         captureButton=null
         preview=null
+        updateActionButton=null; updateStatusText=null
         homeState=null; homeControls.clear()
         root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(19,19,19)); setPadding(dp(18),dp(8),dp(18),dp(12)) }
         root.setOnApplyWindowInsetsListener { v,insets ->
             @Suppress("DEPRECATION") v.setPadding(dp(18),insets.systemWindowInsetTop+dp(8),dp(18),insets.systemWindowInsetBottom+dp(12)); insets
         }
         setContentView(root)
-        val title=when(page) { "settings" -> "设置"; "permissions" -> "权限设置"; "diagnostics" -> "牌局与诊断"; "size" -> "尺寸调整"; "order" -> "牌序调整"; "update" -> "应用更新"; "backup" -> "配置备份"; else -> applicationInfo.loadLabel(packageManager).toString() }
+        val title=when(page) { "settings" -> "设置"; "permissions" -> "权限设置"; "diagnostics" -> "牌局与诊断"; "size" -> "尺寸调整"; "order" -> "牌序调整"; "backup" -> "配置备份"; else -> applicationInfo.loadLabel(packageManager).toString() }
         val head=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
         if(page !in listOf("home","settings")) head.addView(text("‹",32f,gold).apply { setOnClickListener { leave() } })
         head.addView(text(title,26f,gold).apply {
@@ -156,7 +190,6 @@ class MainActivity : ComponentActivity() {
             "diagnostics" -> diagnostics(content)
             "size" -> size(content)
             "order" -> order(content)
-            "update" -> updates(content)
             "backup" -> backup(content)
         }
         if(page=="home") {
@@ -321,7 +354,8 @@ class MainActivity : ComponentActivity() {
         add(c,text("双击开启后移除隐藏按钮；隐藏后只显示恢复按钮。",13f,muted))
         add(c,row("尺寸调整","›") { navigate("size") }); add(c,row("牌序调整","›") { navigate("order") })
         add(c,text("应用设置",15f,muted))
-        add(c,row("权限设置","›") { navigate("permissions") }); add(c,row("应用更新","›") { navigate("update") })
+        add(c,row("权限设置","›") { navigate("permissions") })
+        add(c,updateRow())
         add(c,row("配置备份","›") { navigate("backup") })
         add(c,row("牌局与诊断","›") { navigate("diagnostics") })
         add(c,row("关于记牌器",BuildConfig.VERSION_NAME) {
@@ -443,26 +477,84 @@ class MainActivity : ComponentActivity() {
         add(c,button("保存并退出") { store.save(draft.validate()); changed(); page=restorePage; render() },56)
         add(c,row("退出","不保存") { leave() })
     }
-    private fun updates(c: LinearLayout) {
-        add(c,text("当前版本：${BuildConfig.VERSION_NAME}",17f,gold))
-        add(c,text("每天自动检查；停止记牌后在 Wi-Fi 下下载。安装需要系统确认。",15f,muted))
-        val updates=UpdateManager(this)
-        val status=text(updates.status(),16f); add(c,status)
-        add(c,button("检查更新") {
-            status.text="正在检查更新"
-            Thread {
-                updates.check(true)
-                runOnUiThread { if(!isFinishing) status.text=updates.status() }
-            }.start()
-        },56)
-        add(c,button("下载更新") {
-            val action={ Thread { updates.download(true); runOnUiThread { if(!isFinishing) status.text=updates.status() } }.start(); Unit }
-            AlertDialog.Builder(this).setMessage("手动下载可能使用移动网络流量，是否下载？").setPositiveButton("下载") { _,_ -> action() }.setNegativeButton("取消",null).show()
-        },56)
-        add(c,button("安装已下载的更新") {
-            updates.install(this) { if(!isFinishing && !isDestroyed) status.text=updates.status() }
-            status.text=updates.status()
-        },56)
+    private fun updateRow(): View {
+        val row=LinearLayout(this).apply {
+            tag="application-update-row"; orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL
+            background=bg(Color.rgb(38,38,38)); setPadding(dp(14),dp(10),dp(14),dp(10))
+        }
+        val labels=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
+        labels.addView(text("应用更新",17f).apply { setPadding(0,0,0,dp(4)) })
+        updateStatusText=text("",12f,muted).apply {
+            setPadding(0,0,0,0); maxLines=2; ellipsize=TextUtils.TruncateAt.END
+        }
+        labels.addView(updateStatusText)
+        row.addView(labels,LinearLayout.LayoutParams(0,-2,1f))
+        updateActionButton=button("") { performUpdateAction() }.apply {
+            tag="application-update-action"
+            textSize=14f; setPadding(dp(10),0,dp(10),0)
+            setAutoSizeTextTypeUniformWithConfiguration(10,14,1,android.util.TypedValue.COMPLEX_UNIT_SP)
+        }
+        row.addView(updateActionButton,LinearLayout.LayoutParams(dp(108),dp(48)).apply { marginStart=dp(12) })
+        refreshUpdateRow(); scheduleUpdateRefresh()
+        Thread({
+            runCatching { updates.refreshCachedState() }
+            runOnUiThread { if(!isFinishing && !isDestroyed) refreshUpdateRow() }
+        },"jpq-update-cache-check").start()
+        return row
+    }
+    private fun scheduleUpdateRefresh() {
+        updateHandler.removeCallbacks(updateTick)
+        if(updateUiResumed && page=="settings") updateHandler.post(updateTick)
+    }
+    private fun refreshUpdateRow() {
+        if(page!="settings" || updateActionButton==null) return
+        val model=updates.rowState(updateRequested)
+        updateActionButton!!.apply {
+            val label=if(updateConsent?.isShowing==true) "等待确认" else model.button
+            if(text.toString()!=label) text=label
+            isEnabled=model.enabled && updateConsent?.isShowing!=true
+            alpha=if(isEnabled) 1f else .5f
+            val description="应用更新：$label"
+            if(contentDescription?.toString()!=description) contentDescription=description
+        }
+        val status=when {
+            AppState.running && !BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE -> "停止记牌后可更新"
+            model.action==UpdateRowAction.INSTALL -> "更新已下载，安装需系统确认"
+            else -> updates.status()
+        }
+        updateStatusText?.let { if(it.text.toString()!=status) it.text=status }
+    }
+    private fun performUpdateAction() {
+        val model=updates.rowState(updateRequested)
+        if(!model.enabled || updateConsent!=null || isFinishing || isDestroyed) return
+        when(model.action) {
+            UpdateRowAction.CHECK -> runUpdateAction(UpdateRowAction.CHECK)
+            UpdateRowAction.DOWNLOAD -> if(updates.mobileDownloadConfirmationRequired()) {
+                updateConsent=AlertDialog.Builder(this).setMessage("当前不是 Wi-Fi，下载更新可能使用移动流量。")
+                    .setPositiveButton("下载") { _,_ -> runUpdateAction(UpdateRowAction.DOWNLOAD) }
+                    .setNegativeButton("取消",null).create().also { dialog ->
+                        dialog.setOnDismissListener { updateConsent=null; refreshUpdateRow() }; dialog.show()
+                    }
+                refreshUpdateRow()
+            } else runUpdateAction(UpdateRowAction.DOWNLOAD)
+            UpdateRowAction.INSTALL -> {
+                updates.install(this) { if(!isFinishing && !isDestroyed) refreshUpdateRow() }
+                refreshUpdateRow()
+            }
+            UpdateRowAction.NONE -> Unit
+        }
+    }
+    private fun runUpdateAction(action: UpdateRowAction) {
+        if(updateRequested!=null) return
+        updateRequested=if(action==UpdateRowAction.DOWNLOAD) UpdateOperation.DOWNLOADING else UpdateOperation.CHECKING
+        refreshUpdateRow()
+        Thread({
+            try { if(action==UpdateRowAction.DOWNLOAD) updates.download(true) else updates.check(true) }
+            finally { runOnUiThread {
+                updateRequested=null
+                if(!isFinishing && !isDestroyed) refreshUpdateRow()
+            } }
+        },"jpq-update-action").start()
     }
     private fun backup(c: LinearLayout) {
         add(c,text("只备份显示配置，不含权限、录屏、牌局或密钥。",15f,muted))
@@ -500,6 +592,7 @@ class MainActivity : ComponentActivity() {
         startService(Intent(this,CaptureService::class.java).setAction("STOP"))
     }
     private fun updateState() {
+        refreshUpdateRow()
         if(!AppState.running) stopPending=false
         stateText?.text=when {
             page!="home" -> AppState.message

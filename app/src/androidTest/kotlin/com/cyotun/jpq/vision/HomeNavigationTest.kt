@@ -73,14 +73,46 @@ class HomeNavigationTest {
         }
         instrument.waitForIdleSync()
         instrument.runOnMainSync {
-            val updates=descendants(activity.window.decorView).filterIsInstance<TextView>().single { it.text.toString()=="应用更新" }
-            assertTrue((updates.parent as View).performClick())
+            val row=activity.window.decorView.findViewWithTag<ViewGroup>("application-update-row")
+            assertNotNull("Update action must be in the first-level settings",row)
+            assertFalse("The row must not open a secondary page",row.isClickable)
+            val buttons=descendants(row).filterIsInstance<Button>()
+            assertEquals(1,buttons.size)
+            assertEquals("application-update-action",buttons.single().tag)
+            row.requestRectangleOnScreen(android.graphics.Rect(0,0,row.width,row.height),true)
+            assertEquals("Action must align with the row's right padding",row.width-row.paddingRight,buttons.single().right)
+            val bounds=android.graphics.Rect()
+            assertTrue("Inline action must be visible after scrolling to the row",buttons.single().getGlobalVisibleRect(bounds))
+            assertEquals(buttons.single().height,bounds.height())
+            assertTrue(descendants(activity.window.decorView).filterIsInstance<TextView>().any { it.text.toString()=="显示设置" })
+            activity.onBackPressedDispatcher.onBackPressed()
+            assertTrue(descendants(activity.window.decorView).filterIsInstance<Button>().any { it.text.toString()=="开始记牌" })
+        }
+    }
+
+    @Test fun anOldUpdateNotificationOpensTheFirstLevelSettingsAfterRecreation() = withStoppedPage("update") { original ->
+        val instrument=InstrumentationRegistry.getInstrumentation()
+        fun verify(activity: MainActivity) = instrument.runOnMainSync {
+            assertNotNull(activity.window.decorView.findViewWithTag<View>("application-update-row"))
+            assertTrue(descendants(activity.window.decorView).filterIsInstance<TextView>().any { it.text.toString()=="显示设置" })
+            assertFalse(descendants(activity.window.decorView).filterIsInstance<Button>().any { it.text.toString()=="安装已下载的更新" })
+        }
+        verify(original)
+        instrument.runOnMainSync { original.recreate() }
+        verify(waitForActivity(original))
+    }
+
+    @Test fun anUpdateIntentDeliveredToTheExistingHomeAlsoOpensSettings() = withStoppedHome { activity ->
+        val instrument=InstrumentationRegistry.getInstrumentation()
+        instrument.runOnMainSync {
+            activity.startActivity(android.content.Intent(activity,MainActivity::class.java)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("page","update"))
         }
         instrument.waitForIdleSync()
         instrument.runOnMainSync {
-            assertTrue(descendants(activity.window.decorView).filterIsInstance<Button>().any { it.text.toString()=="检查更新" })
+            assertNotNull(activity.window.decorView.findViewWithTag<View>("application-update-row"))
             activity.onBackPressedDispatcher.onBackPressed()
-            assertTrue(descendants(activity.window.decorView).filterIsInstance<TextView>().any { it.text.toString()=="显示设置" })
+            assertTrue(descendants(activity.window.decorView).filterIsInstance<Button>().any { it.text.toString()=="开始记牌" })
         }
     }
 
@@ -131,11 +163,12 @@ class HomeNavigationTest {
         error("MainActivity did not resume")
     }
 
-    private fun withStoppedHome(action: (MainActivity)->Unit) {
+    private fun withStoppedHome(action: (MainActivity)->Unit) = withStoppedPage("home",action)
+    private fun withStoppedPage(page: String,action: (MainActivity)->Unit) {
         assumeTrue(InstrumentationRegistry.getArguments().getString("appUiProbe")=="true")
         check(!AppState.running) { "Do not run UI probes during capture or a real match" }
         val instrument=InstrumentationRegistry.getInstrumentation()
-        launchStoppedJpqPage(instrument,"home")
+        launchStoppedJpqPage(instrument,page)
         val activity=waitForActivity()
         try { action(activity) }
         finally {
