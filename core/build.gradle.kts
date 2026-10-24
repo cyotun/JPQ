@@ -16,7 +16,10 @@ tasks.register<JavaExec>("replayLoggedFrames") {
     dependsOn(tasks.testClasses)
     classpath=sourceSets.test.get().runtimeClasspath
     mainClass.set("com.cyotun.jpq.core.PhoneLoggedFrameReplayKt")
-    doFirst { args(providers.gradleProperty("loggedTape").get(),providers.gradleProperty("loggedOutput").get()) }
+    doFirst {
+        args(providers.gradleProperty("loggedTape").get(),providers.gradleProperty("loggedOutput").get())
+        providers.gradleProperty("loggedCheckpoint").orNull?.let { args(it) }
+    }
 }
 tasks.register<JavaExec>("probeSuitSymbols") {
     dependsOn(tasks.testClasses)

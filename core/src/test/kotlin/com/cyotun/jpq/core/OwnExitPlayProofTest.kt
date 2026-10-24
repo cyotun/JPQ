@@ -63,6 +63,114 @@ class OwnExitPlayProofTest {
         assertEquals(big,l.snapshot().plays.getValue(Seat.SELF).last().cards)
     }
 
+    @Test fun emptyPartialDepartureAndForeignHandoffRequireFourFreshWholeReadsWithoutOutsidePoolChange() {
+        val own=listOf(Card(Rank.FIVE,Suit.RED),Card(Rank.TWO,Suit.BLACK),Card(Rank.SIX,Suit.BLACK),
+            Card(Rank.FOUR,Suit.BLACK),Card(Rank.THREE,Suit.BLACK))
+        val foreignEight=listOf(Card(Rank.K,Suit.BLACK),Card(Rank.A,Suit.RED),Card(Rank.Q,Suit.BLACK),
+            Card(Rank.J,Suit.RED),Card(Rank.TEN,Suit.BLACK),Card(Rank.NINE,Suit.RED),
+            Card(Rank.EIGHT,Suit.BLACK),Card(Rank.SEVEN,Suit.RED))
+        val l=ledger(own); val proof=OwnExitPlayProof()
+        val outsideBefore=l.snapshot().remaining
+        assertNull(proof.observe(frame(1050,hand=own,p=null),l.snapshot(),l.currentHand()))
+        // This is only an empty-hand departure hint. It must not be used as a
+        // two-card event or as one of the four whole-hand confirmation votes.
+        val partialBlack=listOf(own[1],own[2])
+        assertNull(proof.observe(frame(1300,hand=emptyList(),p=play(partialBlack)),l.snapshot(),l.currentHand()))
+        assertEquals(22,l.snapshot().played(Seat.SELF))
+        assertNull(proof.observe(frame(1600,hand=foreignEight,p=play(own)),l.snapshot(),l.currentHand()))
+        assertNull(proof.observe(frame(1860,hand=foreignEight,p=play(own)),l.snapshot(),l.currentHand()))
+        assertEquals(22,l.snapshot().played(Seat.SELF))
+
+        // The handoff begins only after a complete foreign lower hand has
+        // been observed, and the transient empty/TEAMMATE frames clear votes.
+        assertNull(proof.observe(frame(2100,hand=foreignEight,p=null),l.snapshot(),l.currentHand()))
+        l.selfFinished()
+        assertNull(proof.observe(frame(2360,TableScene.TEAMMATE,p=null),l.snapshot(),l.currentHand()))
+        assertNull(proof.observe(frame(2600,TableScene.TEAMMATE,p=null),l.snapshot(),l.currentHand()))
+        listOf(2850L,3100L,3350L).forEach {
+            assertNull(proof.observe(frame(it,TableScene.TEAMMATE,hand=foreignEight,p=play(own)),l.snapshot(),l.currentHand()))
+        }
+        val certificate=proof.observeWithCertificate(frame(3600,TableScene.TEAMMATE,hand=foreignEight,p=play(own)),l.snapshot(),l.currentHand())
+        assertNotNull(certificate)
+        assertEquals(own,certificate.cards)
+        l.commitLateOwnExit(certificate,PlayEvent("own-exit","own-exit:2",2,Seat.SELF,certificate.cards))
+        assertEquals(27,l.snapshot().played(Seat.SELF))
+        assertEquals(outsideBefore,l.snapshot().remaining)
+    }
+
+    @Test fun handoffContinuationRejectsUnprovedForeignHandTimeoutAndChangedSlots() {
+        val own=listOf(Card(Rank.FIVE,Suit.RED),Card(Rank.TWO,Suit.BLACK),Card(Rank.SIX,Suit.BLACK),
+            Card(Rank.FOUR,Suit.BLACK),Card(Rank.THREE,Suit.BLACK))
+        val foreignEight=listOf(Card(Rank.K,Suit.BLACK),Card(Rank.A,Suit.RED),Card(Rank.Q,Suit.BLACK),
+            Card(Rank.J,Suit.RED),Card(Rank.TEN,Suit.BLACK),Card(Rank.NINE,Suit.RED),
+            Card(Rank.EIGHT,Suit.BLACK),Card(Rank.SEVEN,Suit.RED))
+
+        // A partial return of the original hand is not foreign replacement.
+        run {
+            val l=ledger(own); val proof=OwnExitPlayProof()
+            assertNull(proof.observe(frame(1000,hand=own,p=null),l.snapshot(),own))
+            assertNull(proof.observe(frame(1120,hand=foreignEight,p=play(own)),l.snapshot(),own))
+            assertNull(proof.observe(frame(1240,hand=own.take(2),p=null),l.snapshot(),own))
+            l.selfFinished()
+            repeat(5) { i -> assertNull(proof.observe(frame(1360L+i*120,TableScene.TEAMMATE,p=play(own)),l.snapshot(),l.currentHand())) }
+        }
+
+        // A whole display after 501ms cannot use the departure bridge, even
+        // though the original own-hand witness is still less than one second old.
+        run {
+            val l=ledger(own); val proof=OwnExitPlayProof()
+            assertNull(proof.observe(frame(1050,hand=own,p=null),l.snapshot(),own))
+            assertNull(proof.observe(frame(1300,hand=emptyList(),p=play(listOf(own[1],own[2]))),l.snapshot(),own))
+            assertNull(proof.observe(frame(1801,hand=foreignEight,p=play(own)),l.snapshot(),own))
+            l.selfFinished()
+            repeat(5) { i -> assertNull(proof.observe(frame(1920L+i*120,TableScene.TEAMMATE,p=play(own)),l.snapshot(),l.currentHand())) }
+        }
+
+        // The bounded 2000ms permission is measured from the empty/foreign transition;
+        // after expiry it cannot be restarted by terminal reads.
+        run {
+            val l=ledger(own); val proof=OwnExitPlayProof()
+            assertNull(proof.observe(frame(1000,hand=own,p=null),l.snapshot(),own))
+            assertNull(proof.observe(frame(1120,hand=foreignEight,p=play(own)),l.snapshot(),own))
+            assertNull(proof.observe(frame(1240,hand=foreignEight,p=play(own)),l.snapshot(),own))
+            assertNull(proof.observe(frame(1300,hand=foreignEight,p=null),l.snapshot(),own))
+            l.selfFinished()
+            assertNull(proof.observe(frame(3301,TableScene.TEAMMATE,p=null),l.snapshot(),l.currentHand()))
+            repeat(5) { i -> assertNull(proof.observe(frame(3420L+i*120,TableScene.TEAMMATE,p=play(own)),l.snapshot(),l.currentHand())) }
+        }
+
+        // Exactly 2000ms is still inside the bounded permission; four new
+        // direct reads are required after the handoff cleared the prior votes.
+        run {
+            val l=ledger(own); val proof=OwnExitPlayProof()
+            assertNull(proof.observe(frame(1000,hand=own,p=null),l.snapshot(),own))
+            assertNull(proof.observe(frame(1120,hand=foreignEight,p=play(own)),l.snapshot(),own))
+            assertNull(proof.observe(frame(1240,hand=foreignEight,p=play(own)),l.snapshot(),own))
+            assertNull(proof.observe(frame(1300,hand=foreignEight,p=null),l.snapshot(),own))
+            l.selfFinished()
+            listOf(2800L,2960L,3130L).forEach {
+                assertNull(proof.observe(frame(it,TableScene.TEAMMATE,p=play(own)),l.snapshot(),l.currentHand()))
+            }
+            val certificate=proof.observe(frame(3300,TableScene.TEAMMATE,p=play(own)),l.snapshot(),l.currentHand())
+            assertNotNull(certificate)
+        }
+
+        // Even within the authority window, a moved glyph slot invalidates it.
+        run {
+            val l=ledger(own); val proof=OwnExitPlayProof()
+            assertNull(proof.observe(frame(1000,hand=own,p=null),l.snapshot(),own))
+            assertNull(proof.observe(frame(1120,hand=foreignEight,p=play(own)),l.snapshot(),own))
+            assertNull(proof.observe(frame(1240,hand=foreignEight,p=play(own)),l.snapshot(),own))
+            assertNull(proof.observe(frame(1300,hand=foreignEight,p=null),l.snapshot(),own))
+            l.selfFinished()
+            assertNull(proof.observe(frame(1360,TableScene.TEAMMATE,p=null),l.snapshot(),l.currentHand()))
+            repeat(4) { i ->
+                val shifted=play(own,shift=.08f)
+                assertNull(proof.observe(frame(1480L+i*120,TableScene.TEAMMATE,p=shifted),l.snapshot(),l.currentHand()))
+            }
+        }
+    }
+
     @Test fun fourDisplaysAloneNeverFinishWithoutAPositiveCompletionSignal() {
         val l=ledger(); val proof=OwnExitPlayProof(); seed(proof,l); collect(proof,l)
         assertNull(proof.observe(frame(1600),l.snapshot(),l.currentHand()))

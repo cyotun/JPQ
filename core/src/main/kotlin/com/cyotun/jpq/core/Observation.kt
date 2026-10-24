@@ -95,6 +95,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     private val quantityProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { QuantityAnchoredPlayProof() }
     private val repeatedPlayProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RepeatedPlayCountProof() }
     private val repeatedSingleProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RepeatedSingleCardProof() }
+    private val countAnchoredRepeatedSingles=CountAnchoredRepeatedSingleProof()
     private val observedEmptyAt=mutableMapOf<Seat,Long>()
     private val countPlayBoundaryAt=mutableMapOf<Seat,Long>()
     fun diagnosticStatus()=ObserverStatus(armed,locked,baselineWindow,tribute,handVote.count,playVotes.mapValues { it.value.count },pending.size,sequence,recovery!=null)
@@ -112,6 +113,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         quantityProofs.values.forEach { it.clear() }
         repeatedPlayProofs.values.forEach { it.clear() }
         repeatedSingleProofs.values.forEach { it.clear() }
+        countAnchoredRepeatedSingles.clear()
     }
     fun interrupted(reason: String) { locked=true; ledger.invalidate(reason); clearCandidates(); emit() }
     /** A fragmented confirmed display stays that event; no missing glyph is invented. */
@@ -145,6 +147,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         if(!preserveStrictSupersetQuantity) quantityProofs.values.forEach { it.clear() }
         repeatedPlayProofs.values.forEach { it.clear() }
         repeatedSingleProofs.values.forEach { it.clear() }
+        countAnchoredRepeatedSingles.clear()
         val snapshot=ledger.snapshot()
         if(recovery!=null) { recovery!!.observationInterrupted(timeMs); publishRecoveryIfDue(timeMs,immediate); return }
         if(snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED)) return
@@ -230,7 +233,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             incomplete("画面连续性中断，正在重新核对",lastTime,immediate=true)
         lastTime=frame.timeMs
         if(frame.captureGap || frame.ambiguousPresentation || frame.incompleteReason!=null ||
-            frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE)) quantityProofs.values.forEach { it.clear() }
+            frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE)) {
+            quantityProofs.values.forEach { it.clear() }
+            countAnchoredRepeatedSingles.clear()
+        }
         val localizedPlay=localizedPendingRecovery.observe(frame,ledger.snapshot(),ledger.currentHand(),ledger.phaseBeforeRecovery())
         if(localizedPlay!=null && recovery!=null) {
             // A complete new group was already seen twice before another seat's
@@ -476,6 +482,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         }
     private fun collectOthers(frame: TableFrame,commitNow: Boolean) {
         val confirmed=if(commitNow) ledger.snapshot() else null
+        if(confirmed==null) countAnchoredRepeatedSingles.clear()
         for(seat in listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT)) {
             val repeatedProof=repeatedPlayProofs.getValue(seat)
             val singleProof=repeatedSingleProofs.getValue(seat)
@@ -491,6 +498,22 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 continue
             }
             val p=frame.plays[seat]
+            // A fresh per-seat count baseline remains observable while the old
+            // table row is covered by its ordinary clear animation. Only a new,
+            // directly seen single plus two later decrement sources can commit.
+            val reappeared=confirmed?.let {
+                countAnchoredRepeatedSingles.observe(frame,it,seat,presentations[seat]?.eventId)
+            }
+            if(reappeared!=null) {
+                if(!commit(seat,reappeared.cards)) return
+                val event=ledger.snapshot().plays.getValue(seat).last()
+                presentations[seat]=Presentation(reappeared.cards.toList(),reappeared.glyphs.toList(),frame.timeMs,event.eventId)
+                visible[seat]=key(reappeared.cards); previousGlyphs[seat]=reappeared.glyphs.toList()
+                playVotes.getValue(seat).clear(); emptyVotes.getValue(seat).clear()
+                repeatedProof.clear(); singleProof.clear(); quantityProof.clear()
+                if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
+                continue
+            }
             val priorPresentation=quantityPrior(seat)
             val shortPlay=if(confirmed!=null) quantityProof.observe(frame,confirmed,seat,
                 countPlayBoundaryAt[seat].takeIf { presentations[seat]==null },priorPresentation)

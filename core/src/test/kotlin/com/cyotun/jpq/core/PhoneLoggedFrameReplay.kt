@@ -22,7 +22,9 @@ internal fun replayLoggedTape(args: Array<String>) {
         var selfFinished: Boolean=false,var completionObserved: Boolean=false,
         var teammateExcludedFrames: Int=0,var firstTeammateExcludedAt: Long?=null,var maximumTeammateExcludedCards: Int=0,
         var resultSceneObserved: Boolean=false,var endingScene: TableScene?=null,var unresolvedReason: String?=null)
-    val ledger=RoundLedger(); var time=0L; var failures=0; var frames=0; var baselineCount=0
+    val ledger=RoundLedger()
+    val seeded=args.getOrNull(2)?.let { loadLoggedCheckpoint(File(it),ledger); true } ?: false
+    var time=0L; var failures=0; var frames=0; var baselineCount=0
     val history=StringBuilder(); val ownExit=OwnExitPresentationTracker(); val visibility=EmptyRegionEvidence()
     val ownRegions=PrebaselineOwnRegionReassignment()
     val teammatePool=RemainingPoolTracker()
@@ -188,6 +190,25 @@ internal fun replayLoggedTape(args: Array<String>) {
     val rounds=coverage.values.joinToString(",") { round ->
         "{\"roundId\":\"${round.roundId}\",\"startedAt\":${round.startedAt},\"endedAt\":${round.endedAt},\"lastPhase\":\"${round.lastPhase}\",\"countsVerified\":${round.countsVerified},\"selfFinished\":${round.selfFinished},\"selfHistoryComplete\":${if(round.selfFinished) round.self==27 else "null"},\"teammateExcludedFrames\":${round.teammateExcludedFrames},\"firstTeammateExcludedAt\":${round.firstTeammateExcludedAt},\"maximumTeammateExcludedCards\":${round.maximumTeammateExcludedCards},\"completionObserved\":${round.completionObserved},\"resultSceneObserved\":${round.resultSceneObserved},\"endingScene\":${round.endingScene?.let { "\"$it\"" } ?: "null"},\"unresolvedReason\":${round.unresolvedReason?.let { "\"$it\"" } ?: "null"},\"observedFrames\":${round.observedFrames},\"recoveringFrames\":${round.recoveringFrames},\"longestRecoveryMs\":${round.longestRecoveryMs},\"confirmedEvents\":${round.confirmedEvents},\"self\":${round.self},\"previous\":${round.previous},\"opposite\":${round.opposite},\"next\":${round.next}}"
     }
-    File(args[1]).writeText("{\"scope\":\"recorded_model_and_scene_evidence_not_independent_card_truth\",\"frames\":$frames,\"failures\":$failures,\"finishedRounds\":$finishedRounds,\"verifiedFinishedRounds\":$verifiedFinishedRounds,\"unresolvedRounds\":$unresolvedRounds,\"baselineCount\":$baselineCount,\"finalPhase\":\"${ledger.snapshot().phase}\",\"rounds\":[$rounds],\"history\":[$history],\"teammatePoolHistory\":[$poolHistory]}")
+    File(args[1]).writeText("{\"scope\":\"recorded_model_and_scene_evidence_not_independent_card_truth\",\"checkpointSeeded\":$seeded,\"frames\":$frames,\"failures\":$failures,\"finishedRounds\":$finishedRounds,\"verifiedFinishedRounds\":$verifiedFinishedRounds,\"unresolvedRounds\":$unresolvedRounds,\"baselineCount\":$baselineCount,\"finalPhase\":\"${ledger.snapshot().phase}\",\"rounds\":[$rounds],\"history\":[$history],\"teammatePoolHistory\":[$poolHistory]}")
     println("Logged frame replay frames=$frames failures=$failures baselines=$baselineCount finishedRounds=$finishedRounds verifiedFinishedRounds=$verifiedFinishedRounds unresolvedRounds=$unresolvedRounds")
+}
+
+/** Explicit recorded ledger prefix, for transition regression when the opening frames rotated out.
+ * This is never an independently observed opening and never used by production. */
+internal fun loadLoggedCheckpoint(file: File,ledger: RoundLedger) {
+    val lines=file.readLines().filter { it.isNotBlank() && !it.startsWith("#") }
+    fun cards(encoded: String)=encoded.split('|').map { value ->
+        val fields=value.split(','); require(fields.size==2)
+        Card(Rank.valueOf(fields[0]),Suit.valueOf(fields[1]))
+    }
+    val initial=lines.first().split(';')
+    require(initial.size==3 && initial[0]=="INITIAL")
+    val id=initial[1]
+    ledger.begin(id,cards(initial[2]))
+    for(line in lines.drop(1)) {
+        val fields=line.split(';'); require(fields.size==5 && fields[0]=="EVENT")
+        ledger.commit(PlayEvent(id,fields[1],fields[2].toLong(),Seat.valueOf(fields[3]),cards(fields[4])))
+    }
+    require(ledger.snapshot().phase==RoundPhase.ACTIVE) { "Checkpoint must precede the proved handoff" }
 }

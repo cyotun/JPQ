@@ -65,4 +65,27 @@ class RepeatedPlayObserverTest {
         repeat(6) { physicalTick(f,3226+it*266L,Suit.SPADE) }
         assertEquals(26,f.ledger.snapshot().played(Seat.OPPOSITE))
     }
+
+    @Test fun freshBadgesAcrossAnUnobservedRowCanProveTheReappearingSingleExactlyOnce() {
+        val f=fixture(); anchor(f)
+        // No empty-table observation: the clear animation obscures the row,
+        // while two independent badge sources keep confirming two cards left.
+        for(time in 1900L..7400L step 250L) f.observer.observe(TableFrame(time,TableScene.TABLE,initial,
+            mapOf(Seat.OPPOSITE to ObservedPlay(emptyList(),1f,regionObserved=false)),
+            remainingHandCounts=mapOf(Seat.OPPOSITE to RemainingHandCount(2,time))))
+        fun returning(time: Long,count: Int?=null,source: Long=time) = f.observer.observe(
+            TableFrame(time,TableScene.TABLE,initial,mapOf(Seat.OPPOSITE to play.copy(
+                singleCardIdentity=SingleCardIdentity(Card(Rank.A,Suit.SPADE),.86f,.15f,time))),
+                remainingHandCounts=if(count==null) emptyMap() else mapOf(Seat.OPPOSITE to RemainingHandCount(count,source))))
+        returning(7800)
+        returning(8066,1,7801)
+        returning(8332,1,7801) // One cached OCR source is still just one vote.
+        assertEquals(25,f.ledger.snapshot().played(Seat.OPPOSITE))
+        returning(8598,1,8333)
+        assertEquals(26,f.ledger.snapshot().played(Seat.OPPOSITE))
+        assertEquals(6,f.ledger.snapshot().remaining!![Rank.A])
+        repeat(6) { returning(8864+it*266L,1,8599+it*266L) }
+        assertEquals(26,f.ledger.snapshot().played(Seat.OPPOSITE))
+        assertEquals(3,f.ledger.snapshot().plays.getValue(Seat.OPPOSITE).size)
+    }
 }

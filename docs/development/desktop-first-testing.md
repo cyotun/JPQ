@@ -25,6 +25,8 @@
 
 新预测生成 `model-replay.tape` 后可运行既有测试适配器：
 
+若开局完整帧已轮转，但问题附近的原始识别帧完整，可选用 `:core:replayLoggedFrames` 的 `-PloggedCheckpoint=<绝对路径>` 加载明确导出的账本前缀，定位检查点后的状态转换。文本首行为 `INITIAL;roundId;RANK,SUIT|...`，后续为 `EVENT;eventId;sequence;seat;RANK,SUIT|...`；仍经过正常账本的容量、顺序及本人持牌校验。输出标记 `checkpointSeeded=true`；这是已确认账本前缀加真实后续帧的转移回归，不能叫作完整开局回放，也不能把没有 glyph 的帧补成完整识别证据。具体对照见 [C4.4 审计](beta-c4.4-live-fixes-20261024.md)。
+
 ```powershell
 ./tools/android/build.ps1 -Tasks ':core:replayPhoneVideo','-PreplayTape=D:/JPQ/captures/<run>/video-NEW/model-replay.tape','-PreplayOutput=D:/JPQ/captures/<run>/video-NEW/core.json'
 ```

@@ -18,9 +18,21 @@ class OwnExitPlayProof {
     private var votes=0
     private var ownSeenAt=-1L
     private var lastObservationTime=-1L
+    // A short, rank-only departure hint bridges a known own hand to the next
+    // complete whole-hand play. It never stores a play or contributes a vote.
+    private var departureStart=-1L
+    // Once the lower hand has visibly become foreign, retain an ACTIVE anchor
+    // for at most 2000ms across the empty/scene handoff. Votes restart after it.
+    private var foreignHandSeenAt=-1L
+    private var continuationAt=-1L
 
-    fun reset() { version=null; ownSeenAt=-1L; lastObservationTime=-1L; clearVotes() }
+    fun reset() {
+        version=null; ownSeenAt=-1L; lastObservationTime=-1L
+        clearVotes(); clearTransition()
+    }
     private fun clearVotes() { anchor=null; previous=null; firstTime=-1L; lastTime=-1L; votes=0 }
+    private fun clearFreshVotes() { previous=null; firstTime=-1L; lastTime=-1L; votes=0 }
+    private fun clearTransition() { departureStart=-1L; foreignHandSeenAt=-1L; continuationAt=-1L }
 
     fun observe(frame: TableFrame,snapshot: RoundSnapshot,knownOwnHand: List<Card>): List<Card>? =
         observeWithCertificate(frame,snapshot,knownOwnHand)?.cards
@@ -33,7 +45,10 @@ class OwnExitPlayProof {
         val id=snapshot.roundId
         if(id==null || snapshot.remaining==null) { reset(); return null }
         val active=snapshot.phase==RoundPhase.ACTIVE
-        val latched=snapshot.phase==RoundPhase.SELF_FINISHED && version!=null && anchor!=null && votes>0 &&
+        if(departureStart>=0 && frame.timeMs-departureStart !in 0L..500L) departureStart=-1L
+        val continuationLive=continuationAt>=0 && frame.timeMs-continuationAt in 0L..2000L
+        if(continuationAt>=0 && !continuationLive) { reset(); return null }
+        val latched=snapshot.phase==RoundPhase.SELF_FINISHED && version!=null && anchor!=null && (votes>0 || continuationLive) &&
             version?.round==id && knownOwnHand.isEmpty() &&
             version?.ownEvents==snapshot.plays[Seat.SELF].orEmpty()
         if(!active && !latched) { reset(); return null }
@@ -47,34 +62,102 @@ class OwnExitPlayProof {
         lastObservationTime=frame.timeMs
         if(frame.captureGap || frame.incompleteReason!=null || frame.ambiguousPresentation ||
             frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE)) {
-            if(latched) reset() else { ownSeenAt=-1L; clearVotes() }
+            reset()
             return null
         }
         val frameHand=if(frame.scene==TableScene.TEAMMATE)
             frame.teammateHand.takeIf { frame.teammateHandConfidence>=.65f } else frame.hand
-        if(active && frame.scene==TableScene.TABLE && frameHand!=null && key(frameHand)==key(originalHand)) {
-            ownSeenAt=frame.timeMs; clearVotes(); return null
+        if(frameHand!=null && key(frameHand)==key(originalHand)) {
+            clearVotes(); clearTransition()
+            if(active && frame.scene==TableScene.TABLE) ownSeenAt=frame.timeMs else reset()
+            return null
         }
-        val rest=originalHand.toMutableList()
-        // Teammate cards can replace the lower hand before its scene label arrives.
-        // Null, a partial old hand, and a returned old hand cannot prove departure.
-        val departed=frameHand!=null && (frameHand.isEmpty() || !frameHand.all { rest.remove(it) })
         val play=frame.plays[Seat.SELF]
-        if(!departed || play==null || !strong(play) || key(play.cards)!=key(originalHand)) {
-            if(latched) reset() else clearVotes()
+        val wholeOwnPlay=play!=null && strong(play) && key(play.cards)==key(originalHand)
+        val foreignHand=frameHand!=null && frameHand.isNotEmpty() && !isSubset(frameHand,originalHand)
+        // A partial remnant of the old hand is not proof that the lower area
+        // has been replaced by another player's complete hand.
+        val departed=frameHand!=null && (frameHand.isEmpty() || foreignHand)
+
+        // First stage: an empty lower hand plus a directly observed strict
+        // subset can only mark the start of the departure animation. It cannot
+        // establish card identities, votes, or a certificate.
+        val partialOwnPlay=play!=null && strong(play) && strictSubset(play.cards,originalHand)
+        if(active && frame.scene==TableScene.TABLE && frameHand?.isEmpty()==true && partialOwnPlay &&
+            ownSeenAt>=0 && frame.timeMs-ownSeenAt in 0L..1000L) {
+            if(departureStart<0) departureStart=frame.timeMs
+            return null
+        }
+
+        val absentSelfPlay=play==null || play.cards.isEmpty()
+        if(anchor!=null && (active || latched) && absentSelfPlay) {
+            if(continuationAt<0 && foreignHand && votes>0 && frame.timeMs-lastTime in 0L..500L) {
+                // A complete non-own lower hand is positive replacement
+                // evidence; start the bounded authority window at the actual
+                // disappearance, not at the earlier own-hand witness.
+                continuationAt=frame.timeMs
+                foreignHandSeenAt=frame.timeMs
+                clearFreshVotes()
+                return null
+            }
+            val emptyOrUnobserved=frameHand==null || frameHand.isEmpty()
+            if(continuationLive && (emptyOrUnobserved || foreignHand)) {
+                clearFreshVotes()
+                return null
+            }
+            if((active || latched) && continuationAt<0 && emptyOrUnobserved && votes>0 && foreignHandSeenAt>=0 &&
+                frame.timeMs-foreignHandSeenAt in 0L..500L) {
+                continuationAt=frame.timeMs
+                clearFreshVotes()
+                return null
+            }
+        }
+
+        if(!departed || !wholeOwnPlay) {
+            if(latched || continuationLive) reset()
+            else {
+                clearVotes()
+                // The departure bridge is deliberately narrow: only the
+                // explicit empty+partial stage can keep it alive.
+                if(frameHand==null || frameHand.isNotEmpty() || !partialOwnPlay) departureStart=-1L
+                foreignHandSeenAt=-1L
+            }
             return null
         }
         val start=anchor
-        if(start==null || frame.timeMs-lastTime>500L || frame.timeMs-firstTime>1500L ||
-            !sameSlots(play,start) || !sameSlots(play,previous!!)) {
-            if(latched) { reset(); return null }
+        if(start==null) {
             clearVotes()
-            if(ownSeenAt<0 || frame.timeMs-ownSeenAt !in 0L..500L || frame.scene!=TableScene.TABLE) return null
+            val witnessedOwn=ownSeenAt>=0 && frame.timeMs-ownSeenAt in 0L..500L
+            val bridgedDeparture=departureStart>=0 && frame.timeMs-departureStart in 0L..500L
+            if((!witnessedOwn && !bridgedDeparture) || frame.scene!=TableScene.TABLE) {
+                departureStart=-1L
+                return null
+            }
             anchor=play.copy(cards=play.cards.toList(),glyphs=play.glyphs.toList())
             firstTime=frame.timeMs
+            departureStart=-1L
+        } else if(continuationLive && votes==0 && firstTime<0) {
+            // The old ACTIVE geometry remains an identity/slot authority only;
+            // every post-handoff vote must be fresh.
+            if(!sameSlots(play,start)) { reset(); return null }
+            firstTime=frame.timeMs
+        } else if(frame.timeMs-lastTime>500L || frame.timeMs-firstTime>1500L ||
+            !sameSlots(play,start) || previous==null || !sameSlots(play,previous!!)) {
+            if(latched || continuationLive) { reset(); return null }
+            clearVotes()
+            val witnessedOwn=ownSeenAt>=0 && frame.timeMs-ownSeenAt in 0L..500L
+            val bridgedDeparture=departureStart>=0 && frame.timeMs-departureStart in 0L..500L
+            if((!witnessedOwn && !bridgedDeparture) || frame.scene!=TableScene.TABLE) {
+                departureStart=-1L
+                return null
+            }
+            anchor=play.copy(cards=play.cards.toList(),glyphs=play.glyphs.toList())
+            firstTime=frame.timeMs
+            departureStart=-1L
         }
         previous=play.copy(cards=play.cards.toList(),glyphs=play.glyphs.toList())
         lastTime=frame.timeMs
+        if(foreignHand) foreignHandSeenAt=frame.timeMs
         // Each eligible frame is direct evidence, including a complete
         // terminal-frame display. The terminal cue still cannot supply cards.
         votes++
@@ -89,11 +172,19 @@ class OwnExitPlayProof {
         // The immutable initial hand already excludes these from outside remaining.
         val cards=version!!.hand.toList()
         val result=Certificate(version!!.round,cards,version!!.ownEvents.map { it.copy(cards=it.cards.toList()) },cards.toList())
-        clearVotes()
+        clearVotes(); clearTransition()
         return result
     }
 
     private fun key(cards: List<Card>)=cards.map { it.colorKey() }.sorted().joinToString(",")
+    private fun isSubset(cards: List<Card>,of: List<Card>): Boolean {
+        val remaining=of.toMutableList()
+        return cards.all { card ->
+            val at=remaining.indexOf(card)
+            if(at<0) false else { remaining.removeAt(at); true }
+        }
+    }
+    private fun strictSubset(cards: List<Card>,of: List<Card>)=cards.isNotEmpty() && cards.size<of.size && isSubset(cards,of)
     private fun valid(box: GlyphBox)=listOf(box.left,box.top,box.right,box.bottom).all { it.isFinite() && it in 0f..1f } &&
         box.width>0f && box.height>0f
     private fun strong(play: ObservedPlay)=play.regionObserved && play.confidence in .80f..1f && play.cards.isNotEmpty() &&

@@ -56,6 +56,8 @@ MediaProjection/ImageReader 在独立采集线程生成有界、可释放的 `Ca
 
 数量锚定、重复单牌和局部恢复各有窄证明类与配套测试；维护时不要扩大为“数量守恒就自动通过”。
 
+BETA C4.4 待验收改动：`CountAnchoredRepeatedSingleProof` 将同一座位的独立数量基线与清牌动画后的直接单牌绑定，仍要求四帧完整直接读数和两个出现后的新数量来源；区域未观测不等于空桌。`OwnExitPlayProof` 增加严格子集离手提示及固定 2 秒交接权限，空帧不计票，恢复后重新取得四次直接读数。两者的原图依据、负例和同源对照见 [C4.4 实战修复](beta-c4.4-live-fixes-20261024.md)，不视为已提升正式版。
+
 ## 显示不能回填证据
 
 `ConfirmedRoundPresentation` 同局暂留已确认剩余/历史；`GradeCounterPresentation` 将♥与普通级牌计数作为同一事务，临时花色分析不确定不闪问号。

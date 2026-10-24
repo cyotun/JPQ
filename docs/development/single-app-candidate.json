@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-24",
-  "status": "beta_c43_computer_update_ui_verified_phone_pending",
+  "status": "beta_c44_computer_fixed_verified_phone_retest_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -449,7 +449,7 @@
     "documentation": "docs/development/candidate-c4-optimization-20261023.md",
     "privateEvidenceRoot": "captures/emulator/candidate-c4-optimization-20261023"
   },
-  "currentCandidateRecord": "betaC43",
+  "currentCandidateRecord": "betaC44",
   "c4Review": {
     "date": "2026-10-23",
     "package": "com.cyotun.jpq.candidate",
@@ -843,7 +843,7 @@
   "betaC43": {
     "buildId": "C4.3",
     "date": "2026-10-24",
-    "status": "computer_update_ui_verified_phone_and_live_pending",
+    "status": "live_review_found_two_issues_not_accepted",
     "package": "com.cyotun.jpq.candidate",
     "label": "记牌器BETA",
     "versionCode": 28,
@@ -880,7 +880,7 @@
       }
     },
     "lintErrors": 0,
-    "phoneInstalled": false,
+    "phoneInstalled": true,
     "realGameEntered": false,
     "officialFeaturePromotion": false,
     "stableRollbackVerified": true,
@@ -900,6 +900,105 @@
       "emulatorBuild": "tmp/beta-inline-update-x86-final.log",
       "officialConfigurationBuild": "tmp/beta-inline-update-release-verified.log",
       "uiTests": "tmp/beta-inline-update-emulator-final.txt"
+    },
+    "phoneNonGame": {
+      "tests": 8,
+      "passed": 8,
+      "failures": 0,
+      "skipped": 0,
+      "installedApkSha256": "d0c870bd060a475627fe0ebbc0c32c5839c4e84771a5f57db39f95d46af3ada6"
+    },
+    "liveAudit": {
+      "sessionId": "1792839629600-52cd666e",
+      "rounds": 4,
+      "events": 151,
+      "physicalSamples": 125,
+      "sfRecords": 1169,
+      "adjacentSfSetComparisons": 1165,
+      "sfAddedRanks": 0,
+      "recoveringLedgerSnapshots": 0,
+      "unavailableLedgerSnapshots": 0,
+      "findings": [
+        "missed_second_black_six_in_round3",
+        "missing_last_five_self_history_in_round4"
+      ],
+      "accepted": false,
+      "allFourIndependentlyVerified": false,
+      "archiveSha256": "0c54ba3cae4073731528b443bd5324c92e5ce00c59644fafc9f3e7f6fdc7d6b5",
+      "normalUiStopVerifiedThisRun": false,
+      "projectionReleasedAfterExport": true,
+      "formalVersionAndUpdateTimeUnchanged": true,
+      "documentation": "docs/development/beta-c4.4-live-fixes-20261024.md"
     }
+  },
+  "betaC44": {
+    "buildId": "C4.4",
+    "date": "2026-10-24",
+    "package": "com.cyotun.jpq.candidate",
+    "label": "记牌器BETA",
+    "status": "computer_fixed_verified_phone_and_live_retest_pending",
+    "baseCommit": "ab2f7d8",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression-candidate",
+    "apk": "artifacts/beta-c4.4/记牌器BETA-c4.4.apk",
+    "apkSha256": "c0af594d0ade1fc5b9a70514290f2ea99972b4e5ffa4a2639fe1d54653eff30f",
+    "testApkSha256": "995c641e9b7ae679a230ef0f6666c7dc50e59d30661202b812584581b1a6f580",
+    "tests": {
+      "core": {
+        "tests": 684,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "betaHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "officialHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "lintErrors": 0,
+    "checkpointRegression": {
+      "round3Frames": 272,
+      "round3OpponentBefore": 26,
+      "round3OpponentAfter": 27,
+      "round4Frames": 89,
+      "round4SelfBefore": 22,
+      "round4SelfAfter": 27,
+      "teammatePoolHistoryUnchanged": true,
+      "scope": "recorded_ledger_prefix_plus_direct_frames_not_whole_round"
+    },
+    "currentSourceReplay": {
+      "frames": 4283,
+      "finishedRounds": 1,
+      "verifiedFinishedRounds": 1,
+      "unresolvedRounds": 0,
+      "failures": 0
+    },
+    "previousTwoRoundRegression": {
+      "frames": 4582,
+      "finishedRounds": 2,
+      "verifiedFinishedRounds": 2,
+      "unresolvedRounds": 0,
+      "failures": 0
+    },
+    "previousTwoRoundEventAndSeatTotalsUnchanged": true,
+    "phoneInstalled": false,
+    "liveAcceptancePassed": false,
+    "officialFeaturePromotion": false,
+    "stableServerChanged": false,
+    "sourceFingerprint": {
+      "sha256": "e38dcc02df4ffac37eaca1845e5de076988b4e56163b8b1295347244b3b5eb3d",
+      "files": 103,
+      "scope": "production Kotlin/XML only; excludes private assets"
+    },
+    "documentation": "docs/development/beta-c4.4-live-fixes-20261024.md",
+    "privateEvidence": "captures/phone/beta-c43-live-20261024/c43-live-20261024T185804"
   }
 }
