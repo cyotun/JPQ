@@ -27,7 +27,7 @@ class CandidateIsolationContractTest {
     @Test fun candidateHasAnIndependentPackageAndLabel() {
         val c=context()
         assertEquals("com.cyotun.jpq.candidate.tests",InstrumentationRegistry.getInstrumentation().context.packageName)
-        assertTrue(c.applicationInfo.loadLabel(c.packageManager).toString().contains("候选"))
+        assertEquals("记牌器BETA",c.applicationInfo.loadLabel(c.packageManager).toString())
         assertEquals(CaptureScope.APP_TASK,ProjectionConsentRequest.scope)
     }
 
@@ -57,7 +57,7 @@ class CandidateIsolationContractTest {
         UpdateManager.scheduleDownload(c)
         assertEquals(jobIds,jobs.allPendingJobs.map { it.id }.sorted())
         assertEquals(before,prefs.all)
-        assertTrue(manager.status().contains("候选"))
+        assertTrue(manager.status().contains("BETA"))
         assertFalse(AppState.running)
     }
 }

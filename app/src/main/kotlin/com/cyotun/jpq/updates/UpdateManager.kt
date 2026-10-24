@@ -39,7 +39,11 @@ class UpdateManager(private val context: Context) {
     }
     fun check(manual: Boolean=false): Boolean = synchronized(lock) {
         if(candidate) { status(CANDIDATE_STATUS); return@synchronized false }
-        if(!manual && System.currentTimeMillis()-prefs.getLong("checked",0)<86400000) return@synchronized false
+        when(UpdateCheckPolicy.next(manual,System.currentTimeMillis(),prefs.getLong("checked",0),hasPendingUpdate())) {
+            UpdateCheckPolicy.Action.RESUME_PENDING -> { scheduleDownload(context); return@synchronized false }
+            UpdateCheckPolicy.Action.THROTTLED -> return@synchronized false
+            UpdateCheckPolicy.Action.FETCH -> Unit
+        }
         status("正在检查更新")
         runCatching {
             val c=connection("/v1/releases/latest")
@@ -64,6 +68,9 @@ class UpdateManager(private val context: Context) {
         require(manifestFile.exists() && manifestFile.length()<=32768)
         val r=ReleaseManifest.parse(manifestFile.readText()); require(r.verify(publicKey)); require(r.packageName==context.packageName && r.versionCode>currentVersion() && r.minSdk<=Build.VERSION.SDK_INT)
         return r
+    }
+    fun hasPendingUpdate(): Boolean = synchronized(lock) {
+        !candidate && runCatching { release(); true }.getOrDefault(false)
     }
     fun download(manual: Boolean=false,shouldCancel: ()->Boolean = { false }): Boolean = synchronized(lock) {
         if(candidate) { status(CANDIDATE_STATUS); return@synchronized false }
@@ -182,7 +189,7 @@ class UpdateManager(private val context: Context) {
             .setContentText("$version · 点击查看并安装").setAutoCancel(true).setContentIntent(open).build())
     }
     companion object {
-        private const val CANDIDATE_STATUS="候选包独立验证中；稳定更新不可用"
+        private const val CANDIDATE_STATUS="记牌器BETA测试中；正式版更新独立管理"
         private const val BASE="https://jpq.240438457.workers.dev"
         private val lock=Any()
         private val installGate=AtomicBoolean(false)
@@ -197,7 +204,9 @@ class UpdateManager(private val context: Context) {
         fun scheduleDownload(context: Context) {
             if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE) return
             val jobs=context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler
-            jobs.schedule(JobInfo.Builder(402,ComponentName(context,UpdateJobService::class.java)).setRequiredNetworkType(JobInfo.NETWORK_TYPE_UNMETERED).setMinimumLatency(1000).build())
+            jobs.schedule(JobInfo.Builder(402,ComponentName(context,UpdateJobService::class.java))
+                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_UNMETERED).setMinimumLatency(1000)
+                .setBackoffCriteria(60_000,JobInfo.BACKOFF_POLICY_EXPONENTIAL).build())
         }
         private fun bounded(input: InputStream,max: Int): ByteArray {
             val out=ByteArrayOutputStream(); val block=ByteArray(4096)

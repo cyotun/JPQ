@@ -134,7 +134,7 @@ class MainActivity : ComponentActivity() {
             @Suppress("DEPRECATION") v.setPadding(dp(18),insets.systemWindowInsetTop+dp(8),dp(18),insets.systemWindowInsetBottom+dp(12)); insets
         }
         setContentView(root)
-        val title=when(page) { "settings" -> "设置"; "permissions" -> "权限设置"; "diagnostics" -> "牌局与诊断"; "size" -> "尺寸调整"; "order" -> "牌序调整"; "update" -> "应用更新"; "backup" -> "配置备份"; else -> "记牌器" }
+        val title=when(page) { "settings" -> "设置"; "permissions" -> "权限设置"; "diagnostics" -> "牌局与诊断"; "size" -> "尺寸调整"; "order" -> "牌序调整"; "update" -> "应用更新"; "backup" -> "配置备份"; else -> applicationInfo.loadLabel(packageManager).toString() }
         val head=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
         if(page !in listOf("home","settings")) head.addView(text("‹",32f,gold).apply { setOnClickListener { leave() } })
         head.addView(text(title,26f,gold).apply {
@@ -473,7 +473,7 @@ class MainActivity : ComponentActivity() {
     private fun startCapture() {
         if(AppState.running) { stopCapture(); return }
         if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && Build.VERSION.SDK_INT<37) {
-            Toast.makeText(this,"本轮单应用候选版需要 Android 17，请继续使用稳定版",Toast.LENGTH_LONG).show(); return
+            Toast.makeText(this,"本轮记牌器BETA需要 Android 17，请继续使用正式版",Toast.LENGTH_LONG).show(); return
         }
         if(selectedPlatform()?.profile==null) { chooseGame(); return }
         if(capturePending) return
@@ -491,7 +491,7 @@ class MainActivity : ComponentActivity() {
             capturePending=false; updateState()
             android.util.Log.w("JPQCapture","consent_unavailable",error)
             Toast.makeText(this,if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE)
-                "系统暂不支持本轮单应用授权，请继续使用稳定版" else "暂时无法打开屏幕共享授权",Toast.LENGTH_LONG).show()
+                "系统暂不支持本轮单应用授权，请继续使用正式版" else "暂时无法打开屏幕共享授权",Toast.LENGTH_LONG).show()
         }
     }
     private fun stopCapture() {

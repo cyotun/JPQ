@@ -50,8 +50,11 @@
   "distribution": {
     "github": "source-documents-and-tag",
     "apkUploadedToGitHub": false,
-    "cloudflareStableApkPublished": false,
-    "diagnosticUploads": false
+    "cloudflareStableApkPublished": true,
+    "diagnosticUploads": false,
+    "publicationDate": "2026-10-24",
+    "originalAcceptedBinaryUnchanged": true,
+    "verificationDocument": "docs/development/official-updates-20261024.md"
   },
   "nextMinimumVersionCode": 29
 }

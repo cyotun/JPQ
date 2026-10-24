@@ -4,6 +4,8 @@
 
 | 需要做什么 | 当前入口 |
 | --- | --- |
+| 确认 BETA 开发、验收、正式发布与回滚规则 | [根目录项目规则](../AGENTS.md)、[发布流程](development/beta-release-workflow.md) |
+| 查看最新 BETA 的六局核查和正式更新恢复 | [BETA C4.2](development/beta-c4.2-live-review-20261024.md)、[正式更新](development/official-updates-20261024.md) |
 | 看稳定版本、支持范围、验证结果和限制 | [版本说明](releases/0.2.26.md)、[JSON](releases/0.2.26.json) |
 | 修改首页、设置或悬浮窗 | [当前规格](design/current-spec.md) |
 | 理解识别、账本、复核和同花顺算法 | [架构说明](development/architecture.md) |
@@ -15,7 +17,7 @@
 | 看批准的视觉方案 | [首页和级牌](design/home-redesign/README.md)、[同花顺金字](design/straight-flush-ranks/README.md)、[遮挡提示](design/grade-occlusion/README.md) |
 | 维护更新服务器 | [接口与部署](../services/updates/README.md)、[更新契约](design/update-contract.md)、[部署记录](deployment/cloudflare-status.md) |
 | 查参考 APK 的研究依据 | [研究索引](research/apk-analysis.md)、[方法](research/method-analysis.md)、[遮挡调查](research/reference-capture-occlusion-review.md) |
-| 跟进独立单应用采集与降耗候选，不覆盖稳定版 | [候选验证与回滚](development/single-app-candidate.md)、[研究依据](research/single-app-capture-and-power-20261019.md) |
+| 跟进记牌器BETA 单应用采集与降耗，不覆盖正式版 | [BETA 验证与回滚](development/single-app-candidate.md)、[研究依据](research/single-app-capture-and-power-20261019.md) |
 
 ## 文档优先级与历史
 

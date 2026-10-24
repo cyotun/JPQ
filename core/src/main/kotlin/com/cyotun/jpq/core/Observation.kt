@@ -141,7 +141,8 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     /** A capture/ownership gap is not a ledger conflict and must remain recoverable. */
     fun incomplete(reason: String,timeMs: Long=lastTime,immediate: Boolean=false) {
         ownExitPlayProof.reset()
-        quantityProofs.values.forEach { it.clear() }
+        val preserveStrictSupersetQuantity=reason=="出牌变化待核对，正在重新识别"
+        if(!preserveStrictSupersetQuantity) quantityProofs.values.forEach { it.clear() }
         repeatedPlayProofs.values.forEach { it.clear() }
         repeatedSingleProofs.values.forEach { it.clear() }
         val snapshot=ledger.snapshot()
@@ -155,7 +156,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         }
         val knownTeammate=teammateHandProof.checkpointHand(snapshot)
         recovery=RoundRecovery(timeMs,ledger.currentHand(),snapshot.phase==RoundPhase.SELF_FINISHED,anchors,
-            snapshot.plays.values.all { it.isEmpty() },anchors.keys.associateWith { 27-snapshot.played(it) },knownTeammate)
+            snapshot.plays.values.all { it.isEmpty() },anchors.keys.associateWith { 27-snapshot.played(it) },knownTeammate,
+            quantityProofs,if(preserveStrictSupersetQuantity) anchors.keys.mapNotNull { seat ->
+                quantityPrior(seat)?.let { seat to it }
+            }.toMap() else emptyMap())
         teammateHandProof.reset()
         shortJokerAnimation=false; jokerTableReturnedAt=null; jokerTeammateVote.clear()
         recoveryStartedAt=timeMs; recoveryReason=reason
@@ -379,12 +383,12 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             else incomplete(it,frame.timeMs)
         }
         recovery?.let { checkpoint ->
-            val expansions=checkpoint.reconcile(frame) ?: run { publishRecoveryIfDue(frame.timeMs); return }
-            val recovered=checkpoint.recoveredTeammatePlay
+            val expansions=checkpoint.reconcile(frame,ledger.snapshot()) ?: run { publishRecoveryIfDue(frame.timeMs); return }
+            val recovered=checkpoint.recoveredQuantityPlay ?: checkpoint.recoveredTeammatePlay?.let { Seat.OPPOSITE to it }
             val recoveredEvent=if(recovered!=null) {
                 val id=ledger.snapshot().roundId ?: return
                 val nextSequence=sequence+1
-                PlayEvent(id,"$id:$nextSequence",nextSequence,Seat.OPPOSITE,recovered.cards)
+                PlayEvent(id,"$id:$nextSequence",nextSequence,recovered.first,recovered.second.cards)
             } else null
             if(!runCatching { ledger.resumeAfterRecovery(expansions,listOfNotNull(recoveredEvent)) }.isSuccess) {
                 // A contradictory recovery candidate cannot replace a valid
@@ -402,10 +406,11 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             }
             if(recovered!=null && recoveredEvent!=null) {
                 sequence=recoveredEvent.sequence
-                presentations[Seat.OPPOSITE]=Presentation(recovered.cards.toList(),recovered.glyphs.toList(),frame.timeMs,recoveredEvent.eventId)
-                visible[Seat.OPPOSITE]=key(recovered.cards)
-                previousGlyphs[Seat.OPPOSITE]=recovered.glyphs.toList()
-                playVotes.getValue(Seat.OPPOSITE).clear(); emptyVotes.getValue(Seat.OPPOSITE).clear(); empty[Seat.OPPOSITE]=0
+                val seat=recovered.first; val play=recovered.second
+                presentations[seat]=Presentation(play.cards.toList(),play.glyphs.toList(),frame.timeMs,recoveredEvent.eventId)
+                visible[seat]=key(play.cards)
+                previousGlyphs[seat]=play.glyphs.toList()
+                playVotes.getValue(seat).clear(); emptyVotes.getValue(seat).clear(); empty[seat]=0
             }
             recovery=null; recoveryStartedAt=-1L; recoveryReason=""; shortJokerAnimation=false; jokerTableReturnedAt=null; emit()
         }
@@ -462,6 +467,13 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         return true
     }
     private fun observedEmpty(play: ObservedPlay?)=play!=null && play.regionObserved && play.confidence>=.65f && play.cards.isEmpty()
+    private fun quantityPrior(seat: Seat): QuantityAnchoredPlayProof.PriorPresentation? = presentations[seat]
+        ?.takeIf { it.eventId!=null }?.let {
+            // An old blind row cannot justify expanding its event. Retain its
+            // last physical reference only for the independent full-count proof.
+            QuantityAnchoredPlayProof.PriorPresentation(it.eventId!!,it.cards.toList(),
+                it.glyphs.ifEmpty { it.colorReturnAnchor }.toList())
+        }
     private fun collectOthers(frame: TableFrame,commitNow: Boolean) {
         val confirmed=if(commitNow) ledger.snapshot() else null
         for(seat in listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT)) {
@@ -479,8 +491,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 continue
             }
             val p=frame.plays[seat]
+            val priorPresentation=quantityPrior(seat)
             val shortPlay=if(confirmed!=null) quantityProof.observe(frame,confirmed,seat,
-                countPlayBoundaryAt[seat].takeIf { presentations[seat]==null }) else { quantityProof.clear(); null }
+                countPlayBoundaryAt[seat].takeIf { presentations[seat]==null },priorPresentation)
+                else { quantityProof.clear(); null }
             if(shortPlay!=null) {
                 if(!commit(seat,shortPlay.cards)) return
                 val event=ledger.snapshot().plays.getValue(seat).last()

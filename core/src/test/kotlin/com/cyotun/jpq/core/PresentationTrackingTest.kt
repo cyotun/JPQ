@@ -12,6 +12,14 @@ class PresentationTrackingTest {
     }
     private fun glyph(card: Card,x: Float)=PlayGlyph(card,.99f,GlyphBox(x,.30f,x+.025f,.36f))
     private fun play(cards: List<Card>,x: Float=.75f)=ObservedPlay(cards,.99f,cards.mapIndexed { i,card -> glyph(card,x+i*.028f) })
+    private fun countedFrame(time: Long,play: ObservedPlay,nextCount: Int,source: Long=time)=TableFrame(time,
+        TableScene.TABLE,baseline,Seat.entries.associateWith { seat ->
+            if(seat==Seat.NEXT) play else ObservedPlay(emptyList(),1f)
+        },remainingHandCounts=mapOf(
+            Seat.PREVIOUS to RemainingHandCount(27,source),
+            Seat.OPPOSITE to RemainingHandCount(27,source),
+            Seat.NEXT to RemainingHandCount(nextCount,source)))
+    private fun uncountedFrame(time: Long,play: ObservedPlay)=countedFrame(time,play,26).copy(remainingHandCounts=emptyMap())
     private fun show(observer: RoundObserver,play: ObservedPlay,start: Long,end: Long) {
         for(time in start..end step 60) observer.observe(TableFrame(time,TableScene.TABLE,null,mapOf(Seat.NEXT to play)))
     }
@@ -75,6 +83,95 @@ class PresentationTrackingTest {
         show(observer,play(bomb,.68f),720,1740)
         assertEquals(1,ledger.snapshot().played(Seat.NEXT)); assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
         assertNull(ledger.snapshot().remaining)
+    }
+    @Test fun aPhysicallyNewStrictSupersetIsCommittedOnlyWithTheExactFreshFullPlayCount() {
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)
+        val old=Card(Rank.EIGHT,Suit.BLACK)
+        show(observer,play(listOf(old)),480,660)
+        val oldEvent=ledger.snapshot().plays.getValue(Seat.NEXT).single()
+        val flush=listOf(Rank.SEVEN,Rank.EIGHT,Rank.NINE,Rank.TEN,Rank.J).map { Card(it,Suit.BLACK) }
+        val moved=play(flush,.40f)
+        for(t in 720L..1620L step 60) observer.observe(countedFrame(t,moved,26))
+        assertEquals(1,ledger.snapshot().played(Seat.NEXT))
+        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
+        for(t in 1680L..1860L step 60) observer.observe(countedFrame(t,moved,21))
+        val events=ledger.snapshot().plays.getValue(Seat.NEXT)
+        assertEquals(RoundPhase.ACTIVE,ledger.snapshot().phase)
+        assertEquals(null,ledger.snapshot().reason)
+        assertEquals(2,events.size)
+        assertEquals(oldEvent,events.first())
+        assertEquals(flush,events.last().cards)
+        assertEquals(5,ledger.snapshot().played(Seat.NEXT)-oldEvent.cards.size)
+        assertEquals(75,ledger.snapshot().remaining!!.values.sum())
+        for(t in 1920L..2100L step 60) observer.observe(countedFrame(t,moved,21))
+        assertEquals(2,ledger.snapshot().plays.getValue(Seat.NEXT).size)
+    }
+    @Test fun anExpansionSizedCountDropCannotProveTheWholeStrictSupersetAsANewPlay() {
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)
+        val old=Card(Rank.EIGHT,Suit.BLACK)
+        show(observer,play(listOf(old)),480,660)
+        val flush=listOf(Rank.SEVEN,Rank.EIGHT,Rank.NINE,Rank.TEN,Rank.J).map { Card(it,Suit.BLACK) }
+        val moved=play(flush,.40f)
+        for(t in 720L..1440L step 60) observer.observe(countedFrame(t,moved,26))
+        for(t in 1500L..1680L step 60) observer.observe(countedFrame(t,moved,22))
+        assertEquals(1,ledger.snapshot().played(Seat.NEXT))
+        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
+        assertNull(ledger.snapshot().remaining)
+    }
+    @Test fun aBlindOldRowNeedsTheSameIndependentFullCountBeforeTheNewSupersetCanCommit() {
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)
+        val old=Card(Rank.EIGHT,Suit.BLACK)
+        show(observer,play(listOf(old)),480,660)
+        for(t in 720L..1320L step 60) observer.observe(TableFrame(t,TableScene.TABLE,baseline,
+            empty()+(Seat.NEXT to ObservedPlay(emptyList(),1f,regionObserved=false))))
+        val flush=listOf(Rank.SEVEN,Rank.EIGHT,Rank.NINE,Rank.TEN,Rank.J).map { Card(it,Suit.BLACK) }
+        for(t in 1380L..1560L step 60) observer.observe(countedFrame(t,play(flush,.40f),21))
+        assertEquals(RoundPhase.ACTIVE,ledger.snapshot().phase)
+        assertEquals(listOf(1,5),ledger.snapshot().plays.getValue(Seat.NEXT).map { it.cards.size })
+    }
+    @Test fun aStrictSupersetWithStaleCountsRemainsUnresolved() {
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)
+        val old=Card(Rank.EIGHT,Suit.BLACK)
+        show(observer,play(listOf(old)),480,660)
+        val flush=listOf(Rank.SEVEN,Rank.EIGHT,Rank.NINE,Rank.TEN,Rank.J).map { Card(it,Suit.BLACK) }
+        val moved=play(flush,.40f)
+        for(t in 720L..1740L step 60) {
+            val count=if(t<1500) 26 else 21
+            val source=if(t<1500) t else 1490L
+            observer.observe(countedFrame(t,moved,count,source))
+        }
+        assertEquals(1,ledger.snapshot().played(Seat.NEXT))
+        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
+        assertNull(ledger.snapshot().remaining)
+    }
+    @Test fun aDriftingStrictSupersetCannotReuseItsCountEvidence() {
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)
+        val old=Card(Rank.EIGHT,Suit.BLACK)
+        show(observer,play(listOf(old)),480,660)
+        val flush=listOf(Rank.SEVEN,Rank.EIGHT,Rank.NINE,Rank.TEN,Rank.J).map { Card(it,Suit.BLACK) }
+        for(t in 720L..1740L step 60) {
+            val nextCount=if(t<1500) 26 else 21
+            val position=if(t in 1560L..1620L) .44f else .40f
+            observer.observe(countedFrame(t,play(flush,position),nextCount))
+        }
+        assertEquals(1,ledger.snapshot().played(Seat.NEXT))
+        assertEquals(1,ledger.snapshot().plays.getValue(Seat.NEXT).size)
+        // Movement also resets ordinary presentation votes; it need not
+        // escalate the whole round merely to reject this unproven new event.
+    }
+    @Test fun recoveryAllowsABoundedFreshBaselineThenTheExactSupersetDrop() {
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)
+        val old=Card(Rank.EIGHT,Suit.BLACK)
+        show(observer,play(listOf(old)),480,660)
+        val flush=listOf(Rank.SEVEN,Rank.EIGHT,Rank.NINE,Rank.TEN,Rank.J).map { Card(it,Suit.BLACK) }
+        val moved=play(flush,.40f)
+        for(t in 720L..1620L step 60) observer.observe(uncountedFrame(t,moved))
+        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
+        for(t in 1680L..1800L step 60) observer.observe(countedFrame(t,moved,26))
+        for(t in 1860L..2040L step 60) observer.observe(countedFrame(t,moved,21))
+        assertEquals(RoundPhase.ACTIVE,ledger.snapshot().phase)
+        assertEquals(listOf(1,5),ledger.snapshot().plays.getValue(Seat.NEXT).map { it.cards.size })
+        assertEquals(21,27-ledger.snapshot().played(Seat.NEXT))
     }
     @Test fun cardsMovingIntoPlaceMustSettleBeforeConfirmation() {
         val ledger=RoundLedger(); val observer=RoundObserver(ledger); start(observer)

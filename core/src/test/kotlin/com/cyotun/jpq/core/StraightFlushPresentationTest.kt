@@ -84,4 +84,64 @@ class StraightFlushPresentationTest {
         ranks.clear()
         assertEquals(5,display.accept(snap,pending,true).result.candidateRanks.size)
     }
+
+    private fun uncertainLowRuns(): StraightFlushResult {
+        val low=setOf(Rank.A,Rank.TWO,Rank.THREE,Rank.FOUR,Rank.FIVE,Rank.SIX)
+        val consumed=Rank.entries.flatMap { rank ->
+            if(rank.isJoker) List(rank.capacity) { Card(rank,Suit.NONE) }
+            else {
+                // Both heart fours are consumed: no wildcard remains. Six black
+                // A..6 cards remain, each still uncertain between spades/clubs.
+                val red=if(rank==Rank.FOUR) List(2) { Card(rank,Suit.HEART) }+
+                    List(2) { Card(rank,Suit.DIAMOND) } else List(4) { Card(rank,Suit.RED) }
+                red+List(if(rank in low) 3 else 4) { Card(rank,Suit.BLACK) }
+            }
+        }
+        return StraightFlushEvaluator.evaluate(consumed,setOf(Rank.FOUR),true,
+            remainingHandSizes=listOf(6,0,0)).also {
+            assertEquals(StraightFlushState.UNKNOWN,it.state)
+            assertEquals("suit_uncertain",it.reason)
+            assertEquals(low,it.candidateRanks)
+        }
+    }
+
+    @Test fun uncertainSuitBoundsRemoveHighRanksBeforeExactSuitsAreKnown() {
+        val display=StraightFlushPresentation(); val snap=snapshot()
+        val rule=WildcardRuleEvidence(setOf(Rank.FOUR),true)
+        display.accept(snap,StraightFlushResult(StraightFlushState.POSSIBLE),true,true,rule)
+        val bounded=uncertainLowRuns()
+        val narrowed=display.accept(snap,bounded,true,true,rule)
+        assertEquals(bounded,narrowed.result)
+        assertTrue(setOf(Rank.TEN,Rank.J,Rank.Q,Rank.K).none { it in narrowed.result.candidateRanks })
+        assertEquals(narrowed,display.accept(snap,pending,true,true,rule))
+    }
+
+    @Test fun invalidOrUnboundedPendingCannotReplaceAnAcceptedCandidateSubset() {
+        val snap=snapshot(); val bounded=uncertainLowRuns()
+        for(reason in listOf("invalid_card_capacity","invalid_hand_capacity","awaiting_physical_evidence")) {
+            val display=StraightFlushPresentation()
+            val before=display.accept(snap,StraightFlushResult(StraightFlushState.POSSIBLE),true,true)
+            assertEquals(before,display.accept(snap,bounded.copy(reason=reason),true,true))
+        }
+        val display=StraightFlushPresentation()
+        val before=display.accept(snap,bounded.copy(state=StraightFlushState.POSSIBLE),true,true)
+        assertEquals(before,display.accept(snap,pending,true,true))
+        assertEquals(before,display.accept(snap,bounded.copy(candidateRanks=emptySet()),true,true))
+    }
+
+    @Test fun uncertainBoundsFromAnUnconfirmedTeammatePoolCannotNarrowTheOtherPool() {
+        val display=StraightFlushPresentation(); val snap=snapshot()
+        val before=display.accept(snap,StraightFlushResult(StraightFlushState.POSSIBLE),true,true)
+        assertEquals(before,display.accept(snap,uncertainLowRuns(),true,false))
+    }
+
+    @Test fun aChangedWildcardScopeDoesNotIntersectItsBoundWithThePreviousScope() {
+        val display=StraightFlushPresentation(); val snap=snapshot()
+        val low=uncertainLowRuns()
+        display.accept(snap,low.copy(state=StraightFlushState.POSSIBLE),true,true,
+            WildcardRuleEvidence(setOf(Rank.FOUR),true))
+        val high=pending.copy(candidateRanks=setOf(Rank.TEN,Rank.J,Rank.Q,Rank.K,Rank.A))
+        assertEquals(high,display.accept(snap,high,true,true,
+            WildcardRuleEvidence(setOf(Rank.TEN),true)).result)
+    }
 }

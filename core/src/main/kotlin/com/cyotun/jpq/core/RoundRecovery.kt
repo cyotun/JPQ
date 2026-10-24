@@ -9,6 +9,8 @@ internal class RoundRecovery(
     private val opening: Boolean,
     private val expectedHandCounts: Map<Seat,Int>,
     private val knownTeammateHand: List<Card>? = null,
+    private val quantityProofs: Map<Seat,QuantityAnchoredPlayProof> = emptyMap(),
+    private val quantityPriors: Map<Seat,QuantityAnchoredPlayProof.PriorPresentation> = emptyMap(),
 ) {
     data class Anchor(val cards: List<Card>,val glyphs: List<PlayGlyph>,val eventId: String?,val observedAt: Long)
     private val emptySeen=anchors.filterValues { it.cards.isEmpty() }.mapValues { it.value.observedAt }.toMutableMap()
@@ -30,6 +32,8 @@ internal class RoundRecovery(
     private var lastOpeningSource=-1L
     var recoveredTeammatePlay: ObservedPlay? = null
         private set
+    var recoveredQuantityPlay: Pair<Seat,ObservedPlay>? = null
+        private set
     private var teammateHandKey=""
     private var teammateDesk: ObservedPlay?=null
     private var teammateCountVotes=0
@@ -39,15 +43,18 @@ internal class RoundRecovery(
     fun observationInterrupted(timeMs: Long) {
         countSourceCutoff=maxOf(countSourceCutoff,timeMs)
         countVotes=0; firstCountSource=-1; lastCountSource=-1
+        recoveredQuantityPlay=null
+        quantityProofs.values.forEach { it.clear() }
         resetTeammateProof()
         resetOpeningProof(timeMs)
     }
 
     /** Null also means the old checkpoint cannot prove that no play was missed. */
-    fun reconcile(frame: TableFrame): Map<String,List<Card>>? {
+    fun reconcile(frame: TableFrame,snapshot: RoundSnapshot?=null): Map<String,List<Card>>? {
         // Visible pre-play choice controls can prove an opening after a longer
         // mask interruption. They cannot repair a round which already has plays.
         if(openingChoicesProven(frame)) return emptyMap()
+        if(snapshot!=null && reconcileStrictSuperset(frame,snapshot)) return emptyMap()
         // Fresh independent remaining-card badges can establish that no outside
         // player lost a card, even after the physical-presentation window expired.
         // A cached OCR result is one observation, regardless of frame rate.
@@ -96,6 +103,58 @@ internal class RoundRecovery(
         lastVote=frame.timeMs
         previousGlyphs=anchors.keys.associateWith { frame.plays.getValue(it)!!.glyphs.toList() }
         return if(votes>=4 && frame.timeMs-firstVote>=180) expansions else null
+    }
+
+    /**
+     * A separated, full new group may reconcile this one seat while a strict
+     * superset conflict is suspended. Keep every other outside hand/count on
+     * the checkpoint before accepting its fresh, exact quantity proof.
+     */
+    private fun reconcileStrictSuperset(frame: TableFrame,snapshot: RoundSnapshot): Boolean {
+        if(frame.timeMs-startedAt !in 0L..4000L ||
+            frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE) || frame.captureGap ||
+            frame.ambiguousPresentation || frame.incompleteReason!=null) return false
+        val ownValid=if(selfFinished) frame.scene==TableScene.TEAMMATE || frame.selfFinished
+            else frame.hand?.let { key(it)==key(ownHand) }==true
+        if(!ownValid) return false
+        for(seat in expectedHandCounts.keys) {
+            val anchor=anchors[seat] ?: continue
+            val eventId=anchor.eventId ?: continue
+            if(anchor.cards.isEmpty()) continue
+            val play=frame.plays[seat] ?: continue
+            val expected=expectedHandCounts.getValue(seat)
+            val proof=quantityProofs[seat] ?: continue
+            val prior=quantityPriors[seat] ?: QuantityAnchoredPlayProof.PriorPresentation(eventId,anchor.cards,anchor.glyphs)
+            val targetCount=expected-play.cards.size
+            if(targetCount !in 0..27) continue
+            val readings=expectedHandCounts.mapNotNull { (other,otherExpected) ->
+                frame.remainingHandCounts[other]?.let { other to (otherExpected to it) }
+            }.toMap()
+            if(readings.keys!=expectedHandCounts.keys) continue
+            val sources=readings.values.map { it.second.sourceTimeMs }
+            if(sources.any { it<=countSourceCutoff || frame.timeMs-it !in 0L..1000L } ||
+                sources.distinct().size!=1) continue
+            if(readings.any { (other,pair) ->
+                val (otherExpected,reading)=pair
+                if(other==seat) reading.count!=otherExpected && reading.count!=targetCount
+                else reading.count!=otherExpected
+            }) continue
+            val otherAnchorsStable=anchors.all { (other,old) ->
+                if(other==seat) true else {
+                    val observed=frame.plays[other]
+                    observed!=null && observed.regionObserved && observed.confidence>=.65f &&
+                        (if(old.cards.isEmpty()) observed.cards.isEmpty() else
+                            key(observed.cards)==key(old.cards) && old.glyphs.size==old.cards.size &&
+                                containsTracked(observed.glyphs,old.glyphs))
+                }
+            }
+            if(!otherAnchorsStable) continue
+            val recovered=proof.observeStrictSuperset(frame,snapshot,seat,prior,expected,
+                if(selfFinished) RoundPhase.SELF_FINISHED else RoundPhase.ACTIVE) ?: continue
+            recoveredQuantityPlay=seat to recovered
+            return true
+        }
+        return false
     }
     private fun unchangedCountsProven(frame: TableFrame): Boolean {
         val sceneValid=frame.scene in setOf(TableScene.TABLE,TableScene.TEAMMATE) &&

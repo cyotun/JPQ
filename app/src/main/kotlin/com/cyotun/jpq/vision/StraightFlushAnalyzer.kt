@@ -305,6 +305,7 @@ class StraightFlushAnalyzer(context: Context,private val sessionGuard: Any,
                         val displayed=publishResult(snapshot,result,rule.confirmed,poolForFrame!=null)
                         emitReport { JSONObject().put("type","straight_flush").put("elapsedMs",time)
                             .put("roundId",snapshot.roundId).put("state",result.state.name)
+                            .put("candidateRanks",JSONArray(result.candidateRanks.map { it.name }))
                             .put("reason",result.reason ?: JSONObject.NULL).put("ruleConfirmed",rule.confirmed)
                             .put("displayState",displayed.result.state.name)
                             .put("displayCandidateRanks",JSONArray(displayed.result.candidateRanks.map { it.name }))

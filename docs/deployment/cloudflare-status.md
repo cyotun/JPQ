@@ -1,5 +1,7 @@
 # JPQ Cloudflare 部署与验证记录
 
+2026-10-24 更新：`jpq-release-store` 已部署原已验收 v0.2.26 的签名清单和四个 Static Assets 分片。生产 latest 从 204 变为 200；整包、签名与跨片 Range 验证通过，未发布 BETA 功能。没有修改其他项目或启用 R2。详见 [本次更新服务记录](../development/official-updates-20261024.md)。以下为 2026-10-11 初次部署时的历史状态。
+
 日期：2026-10-11（Asia/Shanghai）。用户已明确授权查看配置并直接修正部署问题。
 
 ## 实际配置

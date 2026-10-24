@@ -16,11 +16,11 @@ internal object ProjectionConsentRequest {
             manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
         else manager.createScreenCaptureIntent()
         return if(Build.VERSION.SDK_INT>=37) manager.createScreenCaptureIntent(appOnlyConfig())
-            else error("本轮单应用候选版需要 Android 17，请继续使用稳定版")
+            else error("本轮记牌器BETA需要 Android 17，请继续使用正式版")
     }
 
     internal fun appOnlyConfig(): MediaProjectionConfig {
-        if(Build.VERSION.SDK_INT<37) error("本轮单应用候选版需要 Android 17，请继续使用稳定版")
+        if(Build.VERSION.SDK_INT<37) error("本轮记牌器BETA需要 Android 17，请继续使用正式版")
         // Public reflection avoids an unrelated AGP/Gradle migration. Missing vendor
         // APIs fail closed; never downgrade an app-only request into whole-screen capture.
         val configClass=MediaProjectionConfig::class.java

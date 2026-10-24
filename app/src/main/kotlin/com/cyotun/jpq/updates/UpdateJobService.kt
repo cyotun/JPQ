@@ -10,11 +10,18 @@ class UpdateJobService: JobService() {
         if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE) return false
         val canceled=java.util.concurrent.atomic.AtomicBoolean(false); cancellations[params.jobId]=canceled
         Thread {
+            var retry=false
             runCatching {
                 val updates=UpdateManager(applicationContext)
-                if(params.jobId==401) updates.check() else if(!AppState.running) updates.download(shouldCancel={ canceled.get() })
+                if(params.jobId==401) updates.check()
+                else if(params.jobId==402) {
+                    val done=!AppState.running && updates.download(shouldCancel={ canceled.get() })
+                    retry=!done && updates.hasPendingUpdate()
+                }
             }
-            if(!canceled.get()) jobFinished(params,false)
+            // A deferred/failed download remains a pending job. onStopJob owns
+            // system cancellation; a canceled worker must not finish its job.
+            if(!canceled.get()) jobFinished(params,retry)
             cancellations.remove(params.jobId,canceled)
         }.start(); return true
     }

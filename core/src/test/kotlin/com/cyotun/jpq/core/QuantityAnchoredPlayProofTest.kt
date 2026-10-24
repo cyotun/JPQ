@@ -147,4 +147,53 @@ class QuantityAnchoredPlayProofTest {
         val onlyOne=QuantityAnchoredPlayProof(); two(onlyOne,s)
         assertNull(onlyOne.observe(empty(1383,1168),s,Seat.NEXT,900))
     }
+
+    @Test fun aStrictSupersetCountCandidateCannotCrossAnUnrelatedLedgerEvent() {
+        val l=RoundLedger()
+        val initial=deck.take(27)
+        val outside=deck.drop(27)
+        val oldCard=outside.first()
+        val added=outside[1]
+        l.begin("strict-superset",initial)
+        l.commit(PlayEvent("strict-superset","strict-superset:1",1,Seat.NEXT,listOf(oldCard)))
+        val before=l.snapshot()
+        val oldGlyph=PlayGlyph(oldCard,.95f,GlyphBox(.70f,.28f,.74f,.34f))
+        val prior=QuantityAnchoredPlayProof.PriorPresentation("strict-superset:1",listOf(oldCard),listOf(oldGlyph))
+        val expanded=listOf(oldCard,added)
+        val group=ObservedPlay(expanded,.95f,expanded.mapIndexed { i,c ->
+            PlayGlyph(c,.95f,GlyphBox(.30f+i*.06f,.28f,.34f+i*.06f,.34f))
+        })
+        fun observe(proof: QuantityAnchoredPlayProof,s: RoundSnapshot,time: Long,count: Int)=proof.observeStrictSuperset(
+            TableFrame(time,TableScene.TABLE,null,Seat.entries.associateWith { if(it==Seat.NEXT) group else ObservedPlay(emptyList(),1f) },
+                remainingHandCounts=mapOf(Seat.NEXT to RemainingHandCount(count,time))),
+            s,Seat.NEXT,prior)
+        val proof=QuantityAnchoredPlayProof()
+        assertNull(observe(proof,before,1000,26)); assertNull(observe(proof,before,1100,26))
+        val otherCard=outside[2]
+        l.commit(PlayEvent("strict-superset","strict-superset:2",2,Seat.PREVIOUS,listOf(otherCard)))
+        val after=l.snapshot()
+        assertNull(observe(proof,after,1200,24)); assertNull(observe(proof,after,1300,24))
+        assertEquals(1,after.played(Seat.NEXT))
+    }
+
+    @Test fun anUnresolvedStrictSupersetCandidateExpiresOnceForItsLedgerVersion() {
+        val l=RoundLedger(); val initial=deck.take(27); val outside=deck.drop(27)
+        val oldCard=outside.first(); val added=outside[1]
+        l.begin("expiring-superset",initial)
+        l.commit(PlayEvent("expiring-superset","expiring-superset:1",1,Seat.NEXT,listOf(oldCard)))
+        val snapshot=l.snapshot()
+        val prior=QuantityAnchoredPlayProof.PriorPresentation("expiring-superset:1",listOf(oldCard),
+            listOf(PlayGlyph(oldCard,.95f,GlyphBox(.70f,.28f,.74f,.34f))))
+        val cards=listOf(oldCard,added)
+        val group=ObservedPlay(cards,.95f,cards.mapIndexed { i,c ->
+            PlayGlyph(c,.95f,GlyphBox(.30f+i*.06f,.28f,.34f+i*.06f,.34f))
+        })
+        val proof=QuantityAnchoredPlayProof()
+        fun offer(t: Long,count: Int) = proof.observeStrictSuperset(
+            TableFrame(t,TableScene.TABLE,null,mapOf(Seat.NEXT to group),
+                remainingHandCounts=mapOf(Seat.NEXT to RemainingHandCount(count,t))),
+            snapshot,Seat.NEXT,prior)
+        for(t in 1000L..3300L step 100) assertNull(offer(t,26))
+        for(t in 3400L..3800L step 100) assertNull(offer(t,24))
+    }
 }

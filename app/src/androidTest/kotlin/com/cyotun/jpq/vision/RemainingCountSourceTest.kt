@@ -34,6 +34,21 @@ class RemainingCountSourceTest {
             finally { bitmap.recycle() }
         }
     }
+    @Test fun aSingleLeadingBadgeBorderKeepsAllSourceAndMaskChecks() {
+        val bitmap=source(Color.rgb(255,218,125))
+        try {
+            for(value in listOf("|剩8张","丨剩8张")) {
+                val snapshot=text(bitmap).copy(lines=listOf(OcrLine(value,rect)))
+                assertEquals(8,TencentRemainingCountSource.read(bitmap,5100,snapshot,emptyList())[Seat.PREVIOUS]?.count)
+                assertTrue(TencentRemainingCountSource.read(bitmap,5100,snapshot,
+                    listOf(GlyphBox(.08f,.36f,.14f,.41f))).isEmpty())
+                assertTrue(TencentRemainingCountSource.read(bitmap,6101,snapshot,emptyList()).isEmpty())
+            }
+            for(value in listOf("1剩8张","||剩8张","|丨剩8张","|剩8张●100万","|剩8张|","剩|8张"))
+                assertTrue(TencentRemainingCountSource.read(bitmap,5100,
+                    text(bitmap).copy(lines=listOf(OcrLine(value,rect))),emptyList()).isEmpty())
+        } finally { bitmap.recycle() }
+    }
     @Test fun staleFutureMismatchedAndMaskedSnapshotsCannotProvideRecoveryEvidence() {
         val bitmap=source(Color.rgb(255,218,125))
         try {

@@ -13,7 +13,11 @@ object TencentRemainingCountSource {
             val rect=line.box ?: return@mapNotNull null
             val box=GlyphBox(rect.left.toFloat()/bitmap.width,rect.top.toFloat()/bitmap.height,
                 rect.right.toFloat()/bitmap.width,rect.bottom.toFloat()/bitmap.height)
-            val hint=SceneHint(line.text,box)
+            // The badge's left edge occasionally becomes a single OCR pipe.
+            // Remove only this border token; retain the exact source box and
+            // pixel/gold/mask checks, never extract digits from arbitrary text.
+            val countText=if(line.text.firstOrNull() in setOf('|','丨')) line.text.drop(1) else line.text
+            val hint=SceneHint(countText,box)
             if(tencentRemainingHandCounts(listOf(hint),text.timeMs,masks).isEmpty() ||
                 !text.remainingCountPixels.matches(bitmap,box) || !goldPlate(bitmap,box)) null else hint
         }
