@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-25",
-  "status": "beta_c46_computer_verified_phone_and_live_pending",
+  "status": "beta_c46_computer_and_phone_non_game_verified_live_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -1224,7 +1224,7 @@
     "date": "2026-10-25",
     "package": "com.cyotun.jpq.candidate",
     "label": "记牌器BETA",
-    "status": "computer_verified_phone_unavailable_live_pending",
+    "status": "computer_and_phone_non_game_verified_live_pending",
     "baseCommit": "5ef217e",
     "versionCode": 28,
     "versionName": "0.2.26-regression-candidate",
@@ -1259,6 +1259,38 @@
       "pythonSourceChecks": {
         "tests": 33,
         "failures": 0
+      },
+      "phone": {
+        "tests": 91,
+        "failures": 0,
+        "groups": [
+          {
+            "group": "pass-visibility-storage",
+            "tests": 25,
+            "passed": 25
+          },
+          {
+            "group": "component",
+            "tests": 50,
+            "passed": 50
+          },
+          {
+            "group": "home-isolation",
+            "tests": 8,
+            "passed": 8
+          },
+          {
+            "group": "overlay",
+            "tests": 7,
+            "passed": 7
+          },
+          {
+            "group": "actual_task_capture",
+            "tests": 1,
+            "passed": 1
+          }
+        ],
+        "scope": "Non-game component/UI plus dedicated fixture capture; excludes utility backup/restore runs"
       }
     },
     "lint": {
@@ -1344,14 +1376,40 @@
       "teammatePoolHistoryUnchanged": true,
       "scope": "Two historical replay regressions only. Own commits can be earlier and one previously incomplete own history is now complete."
     },
-    "phoneInstalled": false,
-    "phoneChecksCompleted": false,
-    "phoneBlocker": "ADB reported no connected devices after offline repair; no new phone or live test was run",
+    "phoneInstalled": true,
+    "phoneChecksCompleted": true,
     "liveAcceptancePassed": false,
     "officialFeaturePromotion": false,
     "stableServerChanged": false,
     "rollbackVerified": true,
     "documentation": "docs/development/beta-c4.6-live-audit-20261025.md",
-    "privateEvidence": "captures/phone/beta-c45-live-20261025/c45-live-20261025T155854"
+    "privateEvidence": "captures/phone/beta-c45-live-20261025/c45-live-20261025T155854",
+    "phoneVerification": {
+      "date": "2026-10-25",
+      "privateEvidence": "captures/phone/beta-c46-preflight-20261025/c46-20261025T194958",
+      "sourceCommit": "9154c7c4a463af18d0b9985bd7ef215a7029c97c",
+      "actualTaskCapture": {
+        "scope": "APP_TASK",
+        "pipeline": "FULL_CPU",
+        "fullCorrectFrames": 120,
+        "sameFrameProbes": 3,
+        "pixelMismatches": 0,
+        "liveGame": false
+      },
+      "normalHomeStartConsentStopVerified": true,
+      "noInstrumentationDuringNormalCapture": true,
+      "normalStopWithoutForceStop": true,
+      "configurationRestored": true,
+      "diagnosticSettingRestored": true,
+      "helperRestored": true,
+      "usbAwakeSettingUnchanged": true,
+      "formalApkAndUpdateTimeUnchanged": true,
+      "installedBetaHashMatched": true,
+      "projectionReleased": true,
+      "captureServiceAbsent": true,
+      "testProgramsClosed": true,
+      "returnedToDesktop": true,
+      "toolRetry": "Initial storage class path was incorrect; retained the failed tool invocation and reran the entire corrected group. No product code changed."
+    }
   }
 }
