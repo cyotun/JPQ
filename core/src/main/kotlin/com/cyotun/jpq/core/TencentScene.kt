@@ -30,6 +30,23 @@ private fun completionSeat(box: GlyphBox?): Seat? {
     return null
 }
 
+/** Exact positioned early-rank cues; these labels are metadata, never card evidence. */
+fun tencentEarlyFinishSeats(hints: List<SceneHint>): Map<Seat,String> {
+    val seatsByRank=mutableMapOf<String,MutableSet<Seat>>()
+    val ranksBySeat=mutableMapOf<Seat,MutableSet<String>>()
+    for(hint in hints) {
+        val rank=hint.text.filterNot(Char::isWhitespace)
+        if(rank !in setOf("头游","二游")) continue
+        val seat=completionSeat(hint.box) ?: continue
+        seatsByRank.getOrPut(rank) { linkedSetOf() }.add(seat)
+        ranksBySeat.getOrPut(seat) { linkedSetOf() }.add(rank)
+    }
+    // One rank appearing in multiple slots or conflicting ranks on one slot
+    // makes the placement ambiguous; neither direction can disambiguate it.
+    return seatsByRank.filter { (rank,seats) -> seats.size==1 &&
+        ranksBySeat[seats.single()]?.size==1 }.map { (rank,seats) -> seats.single() to rank }.toMap()
+}
+
 private fun threeCompletedFinishers(hints: List<SceneHint>): Boolean {
     val ranks=listOf("头游","二游","三游")
     val seatsByRank=ranks.associateWith { linkedSetOf<Seat>() }

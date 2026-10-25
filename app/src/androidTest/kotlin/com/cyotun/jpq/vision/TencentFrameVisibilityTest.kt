@@ -127,6 +127,32 @@ class TencentFrameVisibilityTest {
     private fun source(text: SceneText?,time: Long=1000L,masks: List<GlyphBox> = emptyList())=
         TencentFrameVisibility.openingChoiceSourceTimeMs(text,time,1280,588,3L,masks)
 
+    private fun earlyFinishText(time: Long=800L,rank: String="二游",box: Rect?=Rect(76,108,120,125),
+        masks: List<GlyphBox> = emptyList())=SceneText(listOf(OcrLine(rank,box)),time,1000,500,7,sourceMasks=masks)
+
+    private fun earlyFinishSource(text: SceneText?=earlyFinishText(),time: Long=1000L,
+        scene: TableScene=TableScene.TABLE,masks: List<GlyphBox> = emptyList())=
+        TencentFrameVisibility.observedEarlyFinishes(text,time,1000,500,7,scene,masks)
+
+    @Test fun earlyFinishSourcesNeedExactPositionedFirstOrSecondRankInFreshUnmaskedCapture() {
+        val text=earlyFinishText()
+        assertEquals(mapOf(Seat.PREVIOUS to 800L),earlyFinishSource())
+        assertEquals(mapOf(Seat.PREVIOUS to 800L),earlyFinishSource(text,time=1500L,scene=TableScene.TEAMMATE))
+        assertTrue(earlyFinishSource(text,time=1801L).isEmpty())
+        assertTrue(earlyFinishSource(text,time=799L).isEmpty())
+        assertTrue(earlyFinishSource(text.copy(width=999)).isEmpty())
+        assertTrue(earlyFinishSource(text.copy(visibilityEpoch=8)).isEmpty())
+        assertTrue(earlyFinishSource(text.copy(lines=listOf(OcrLine("二游头像",Rect(76,108,120,125))))).isEmpty())
+        assertTrue(earlyFinishSource(earlyFinishText(rank="三游")).isEmpty())
+        assertTrue(earlyFinishSource(earlyFinishText(rank="末游")).isEmpty())
+        assertTrue(earlyFinishSource(earlyFinishText(box=null)).isEmpty())
+        assertTrue(earlyFinishSource(text,scene=TableScene.RESULT).isEmpty())
+        val badgeMask=GlyphBox(.07f,.21f,.13f,.26f)
+        assertTrue(earlyFinishSource(text,masks=listOf(badgeMask)).isEmpty())
+        assertTrue(earlyFinishSource(text.copy(sourceMasks=listOf(badgeMask))).isEmpty())
+        assertTrue(earlyFinishSource(text.copy(sourceMasks=listOf(GlyphBox(Float.NaN,0f,.2f,.3f)))).isEmpty())
+    }
+
     @Test fun sourceIdentityRemainsOriginalCaptureTimeAcrossRepeatedCachedOcrDelivery() {
         val text=choices()
         assertEquals(800L,source(text))

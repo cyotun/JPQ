@@ -6,19 +6,32 @@ class QuantityAnchoredPlayProof {
     private data class SupersetKey(val round: String,val seat: Seat,val eventId: String)
     private data class Version(val round: String,val seat: Seat,val events: List<PlayEvent>,val remaining: Int,
         val phase: RoundPhase,val scene: TableScene,val supersededEventId: String?=null)
+    private data class PreCountSample(val source: Long,val count: Int)
     data class PriorPresentation(val eventId: String,val cards: List<Card>,val glyphs: List<PlayGlyph>)
     private data class Candidate(val version: Version,val first: Long,val anchor: ObservedPlay,
         var latest: ObservedPlay,var lastFrame: Long,var lastVisible: Long,
         var visibleVotes: Int=1,var emptyVotes: Int=0,var strong: Boolean=false,var firstCount: Long?=null,var lastCount: Long?=null,
-        var lastSource: Long?=null,var lastSourceCount: Int?=null)
+        var lastSource: Long?=null,var lastSourceCount: Int?=null,
+        val preCounts: List<PreCountSample> = emptyList(),var strongRun: Int=0,var shortEligible: Boolean=false,
+        var shortPostSource: Long?=null,val startedAt: Long=first)
     private var candidate: Candidate?=null
     private var lastTime=-1L
     private var delivered: Version?=null
+    private var preCountVersion: Version?=null
+    private val preCounts=mutableListOf<PreCountSample>()
+    private var lastPreSource: Long?=null
+    private var lastPreCount: Int?=null
     private var activeSuperset: SupersetKey?=null
     private var activeSupersetSince=-1L
     private var expiredSuperset: SupersetKey?=null
 
-    fun clear() { candidate=null }
+    fun clear() {
+        clearCandidate()
+        clearPreCounts()
+        preCountVersion=null
+    }
+
+    private fun clearCandidate() { candidate=null }
 
     fun observe(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat,clearBoundaryAt: Long?): ObservedPlay? =
         observe(frame,snapshot,seat,clearBoundaryAt,null,null)
@@ -39,7 +52,7 @@ class QuantityAnchoredPlayProof {
 
     private fun observe(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat,clearBoundaryAt: Long?,
         prior: PriorPresentation?,expectedOverride: Int?,phaseVersion: RoundPhase?=null): ObservedPlay? {
-        if(frame.timeMs<=lastTime) { clear(); return null }
+        if(frame.timeMs<=lastTime) { clear(); clearPreCounts(); return null }
         lastTime=frame.timeMs
         val id=snapshot.roundId
         val expectedRemaining=expectedOverride ?: snapshot.remaining?.let { 27-snapshot.played(seat) }
@@ -47,7 +60,9 @@ class QuantityAnchoredPlayProof {
             (expectedOverride!=null && snapshot.phase==RoundPhase.RECOVERING)
         if(id==null || seat==Seat.SELF || expectedRemaining==null || !phaseValid ||
             frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE) || frame.captureGap ||
-            frame.ambiguousPresentation || frame.incompleteReason!=null) { clear(); return null }
+            frame.ambiguousPresentation || frame.incompleteReason!=null || frame.localizedOverlaySeats.isNotEmpty()) {
+            clear(); return null
+        }
         val remaining=expectedRemaining
         if(remaining !in 1..27) { clear(); return null }
         val p=frame.plays[seat]
@@ -61,41 +76,62 @@ class QuantityAnchoredPlayProof {
             if(activeSuperset!=supersetKey) { activeSuperset=supersetKey; activeSupersetSince=frame.timeMs }
             if(expiredSuperset==supersetKey) return null
             if(frame.timeMs-activeSupersetSince>MAX_SUPERSET_LIFETIME_MS) {
-                expiredSuperset=supersetKey; clear(); return null
+                expiredSuperset=supersetKey; clearCandidate(); return null
             }
         }
-        val boundary=clearBoundaryAt!=null || supersetBoundary
-        if(!boundary) { clear(); return null }
         val versionEvents=if(supersetBoundary) snapshot.plays.values.flatten().sortedBy { it.sequence }
             else snapshot.plays[seat].orEmpty()
         val version=Version(id,seat,versionEvents.map { it.copy(cards=it.cards.toList()) },remaining,
             phaseVersion ?: snapshot.phase,frame.scene,if(supersetBoundary) prior.eventId else null)
+        if(preCountVersion!=version) resetPreCounts(version)
+        val boundary=clearBoundaryAt!=null || supersetBoundary
+        if(candidate==null && !supersetBoundary) rememberPreCount(frame,snapshot,seat,remaining,version)
+        if(!boundary) {
+            if(isUncommittedPresentation(frame.plays[seat],snapshot,seat)) clearPreCounts()
+            clearCandidate(); return null
+        }
         if(version==delivered) return null
-        if(candidate?.version!=version) clear()
-        if(p==null || !p.regionObserved || p.confidence !in .65f..1f) { clear(); return null }
+        if(candidate?.version!=version) clearCandidate()
+        if(p==null || !p.regionObserved || p.confidence !in .65f..1f) {
+            if(isUncommittedPresentation(p,snapshot,seat)) clearPreCounts()
+            clearCandidate(); return null
+        }
         val empty=p.cards.isEmpty() && p.glyphs.isEmpty()
         var current=candidate
-        if(current!=null && current.version.supersededEventId==null && frame.timeMs-current.first>1000L) { clear(); return null }
-        if(current!=null && frame.timeMs-current.lastFrame>500) { clear(); return null }
+        if(current!=null && current.version.supersededEventId==null && frame.timeMs-current.startedAt>1000L) { clearCandidate(); return null }
+        if(current!=null && frame.timeMs-current.lastFrame>500) { clearCandidate(); return null }
         if(!empty) {
-            if(!valid(p) || p.cards.size>=remaining) { clear(); return null }
+            if(!valid(p) || p.cards.size>=remaining) { clearCandidate(); return null }
             if(current==null) {
                 if(!supersetBoundary && (clearBoundaryAt==null || frame.timeMs-clearBoundaryAt !in 0L..1500L || clearBoundaryAt>=frame.timeMs)) return null
                 val copy=copy(p)
-                current=Candidate(version,frame.timeMs,copy,copy,frame.timeMs,frame.timeMs,strong=strong(p))
+                current=Candidate(version,frame.timeMs,copy,copy,frame.timeMs,frame.timeMs,strong=strong(p),
+                    preCounts=preCounts.takeLast(2),strongRun=if(strong(p)) 1 else 0,
+                    shortEligible=!supersetBoundary && strong(p))
                 candidate=current
             } else {
                 if(key(p.cards)!=key(current.anchor.cards) || !sameSlots(p,current.anchor) || !sameSlots(p,current.latest)) {
-                    clear(); return null
+                    val restartShortCandidate=current.shortEligible && current.version.supersededEventId==null &&
+                        !supersetBoundary && strong(p) && clearBoundaryAt!=null &&
+                        frame.timeMs-clearBoundaryAt in 0L..1500L && clearBoundaryAt<frame.timeMs
+                    val currentStartedAt=current.startedAt
+                    clearCandidate()
+                    if(!restartShortCandidate) { clearPreCounts(); return null }
+                    val copy=copy(p)
+                    current=Candidate(version,frame.timeMs,copy,copy,frame.timeMs,frame.timeMs,strong=true,
+                        preCounts=preCounts.takeLast(2),strongRun=1,shortEligible=true,startedAt=currentStartedAt)
+                    candidate=current
+                } else {
+                    current.latest=copy(p); current.lastVisible=frame.timeMs; current.visibleVotes++
+                    current.strong=current.strong || strong(p)
+                    if(strong(p)) current.strongRun++ else current.shortEligible=false
+                    current.emptyVotes=0
                 }
-                current.latest=copy(p); current.lastVisible=frame.timeMs; current.visibleVotes++
-                current.strong=current.strong || strong(p)
-                current.emptyVotes=0
             }
         }
         current ?: return null
         current.lastFrame=frame.timeMs
-        if(empty) current.emptyVotes++
+        if(empty) { current.emptyVotes++; current.shortEligible=false }
         val reading=frame.remainingHandCounts[seat]
         if(reading!=null) {
             if(reading.sourceTimeMs<0 ||
@@ -122,6 +158,7 @@ class QuantityAnchoredPlayProof {
                 // even when its value happens to equal the expected decrement.
                 if(reading.sourceTimeMs>=current.first) {
                     if(reading.count!=remaining-current.anchor.cards.size) { clear(); return null }
+                    if(frame.timeMs-reading.sourceTimeMs<=1000) current.shortPostSource=reading.sourceTimeMs
                     if(frame.timeMs-reading.sourceTimeMs<=500) {
                         if(current.firstCount==null) current.firstCount=reading.sourceTimeMs
                         current.lastCount=reading.sourceTimeMs
@@ -129,15 +166,72 @@ class QuantityAnchoredPlayProof {
                 }
             }
         }
+        val requiredVisibleVotes=if(current.version.supersededEventId!=null) 4 else 2
+        val preSamples=current.preCounts
+        val shortPreValid=current.shortEligible && current.version.supersededEventId==null && current.strongRun>=3 &&
+            current.lastVisible-current.first>=100 && preSamples.size>=2 &&
+            preSamples.last().source-preSamples.first().source>=100 &&
+            current.first-preSamples.last().source in 0L..1500L &&
+            preSamples.all { it.count==remaining && current.first-it.source in 0L..2200L } &&
+            current.shortPostSource?.let { it !in preSamples.map(PreCountSample::source) &&
+                it>=current.first && frame.timeMs-it<=1000 }==true
+        if(shortPreValid && current.lastVisible==frame.timeMs && current.lastSourceCount==remaining-current.anchor.cards.size) {
+            delivered=version
+            clearCandidate()
+            clearPreCounts()
+            return copy(current.latest)
+        }
         val firstCount=current.firstCount ?: return null
         val lastCount=current.lastCount ?: return null
-        val requiredVisibleVotes=if(current.version.supersededEventId!=null) 4 else 2
         if(current.visibleVotes<requiredVisibleVotes || !current.strong || current.lastVisible-current.first<100 ||
             (empty && current.emptyVotes<2) ||
             lastCount-firstCount<100 || frame.timeMs-lastCount>500) return null
         delivered=version
-        clear()
+        clearCandidate()
+        clearPreCounts()
         return copy(current.latest)
+    }
+
+    private fun rememberPreCount(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat,remaining: Int,version: Version) {
+        val reading=frame.remainingHandCounts[seat] ?: return
+        val p=frame.plays[seat]
+        val empty=p?.let { it.regionObserved && it.cards.isEmpty() && it.glyphs.isEmpty() }==true
+        val last=snapshot.plays[seat].orEmpty().lastOrNull()
+        val showsLast=last!=null && p?.let { it.regionObserved && valid(it) && key(it.cards)==key(last.cards) }==true
+        if(p==null || !p.regionObserved) { clearPreCounts(); preCountVersion=version; return }
+        if(!empty && !showsLast) return
+        if(reading.sourceTimeMs<0 || reading.sourceTimeMs>frame.timeMs || frame.timeMs-reading.sourceTimeMs>1500 || reading.count!=remaining) {
+            clearPreCounts()
+            preCountVersion=version
+            return
+        }
+        val previous=lastPreSource
+        if(previous!=null && reading.sourceTimeMs<previous) { clearPreCounts(); preCountVersion=version; return }
+        if(reading.sourceTimeMs==previous) {
+            if(lastPreCount!=reading.count) { clearPreCounts(); preCountVersion=version }
+            return
+        }
+        preCounts+=PreCountSample(reading.sourceTimeMs,reading.count)
+        while(preCounts.size>16) preCounts.removeAt(0)
+        lastPreSource=reading.sourceTimeMs
+        lastPreCount=reading.count
+    }
+
+    private fun resetPreCounts(version: Version) {
+        clearPreCounts()
+        preCountVersion=version
+    }
+
+    private fun clearPreCounts() {
+        preCounts.clear()
+        lastPreSource=null
+        lastPreCount=null
+    }
+
+    private fun isUncommittedPresentation(p: ObservedPlay?,snapshot: RoundSnapshot,seat: Seat): Boolean {
+        if(p==null || !p.regionObserved || p.cards.isEmpty()) return false
+        val last=snapshot.plays[seat].orEmpty().lastOrNull() ?: return true
+        return key(p.cards)!=key(last.cards)
     }
 
     private fun copy(p: ObservedPlay)=p.copy(cards=p.cards.toList(),glyphs=p.glyphs.toList())

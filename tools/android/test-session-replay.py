@@ -14,6 +14,19 @@ TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 class SessionReplayTests(unittest.TestCase):
+    def test_early_finish_replay_copies_original_positioned_source_not_rank_inference(self):
+        frame = self.frame(scene="TEAMMATE", elapsedMs=2000, sceneSourceAgeMs=300,
+                           sceneSourceMasks=[], overlayMasks=[], sceneSourceHints=[
+                               {"text": "二游", "box": [.0763, .2158, .1189, .25]},
+                               {"text": "三游", "box": [.88, .2, .92, .25]}])
+        columns = replay.frame_to_tape_row(frame)[0].split(";")
+        self.assertEqual(17, len(columns))
+        self.assertEqual("二游,1700,0.0763,0.2158,0.1189,0.25", columns[16])
+        for change in ({"sceneSourceAgeMs": 1001}, {"sceneSourceAgeMs": -1},
+                       {"sceneSourceMasks": None}, {"adjusting": True}, {"scene": "RESULT"}):
+            self.assertEqual("?", replay.encode_early_finish_hints(frame | change))
+        self.assertEqual("", replay.encode_early_finish_hints(frame | {"overlayMasks": [[.07, .2, .13, .26]]}))
+
     def test_rotated_sources_replay_oldest_first_and_bind_every_part(self):
         with self.temporary_directory() as folder:
             archive=Path(folder)/"parts.zip"

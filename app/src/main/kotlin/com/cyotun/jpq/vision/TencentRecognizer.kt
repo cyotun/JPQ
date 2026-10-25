@@ -243,7 +243,9 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 dealingChoicesObserved=detectedScene==TableScene.DEALING,remainingHandCounts=remainingHandCounts,
                 openingChoiceSourceTimeMs=openingChoiceSourceTimeMs,
                 observedPasses=if(captured.adjusting) emptyMap() else TencentFrameVisibility.observedPasses(
-                    text,start,captured.width,captured.height,activeVisibilityEpoch,scene,ownership.seats,normalizedMasks)),
+                    text,start,captured.width,captured.height,activeVisibilityEpoch,scene,ownership.seats,normalizedMasks),
+                observedEarlyFinishes=if(captured.adjusting) emptyMap() else TencentFrameVisibility.observedEarlyFinishes(
+                    text,start,captured.width,captured.height,activeVisibilityEpoch,scene,normalizedMasks)),
                 partition.hand,emptyEvidence,normalizedMasks)
             fun rounded(value: Float)=kotlin.math.round(value*10000f)/10000f
             trace.writeIfEnabled { JSONObject().put("type","frame").put("frame",frameNumber).put("imageTimestampNs",captured.imageTimestampNs).put("elapsedMs",start)
@@ -253,6 +255,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 .put("dealingChoicesObserved",detectedScene==TableScene.DEALING).put("adjusting",captured.adjusting)
                 .put("openingChoiceSourceTimeMs",openingChoiceSourceTimeMs ?: JSONObject.NULL)
                 .put("observedPasses",JSONObject(observation.observedPasses.mapKeys { it.key.name }))
+                .put("observedEarlyFinishes",JSONObject(observation.observedEarlyFinishes.mapKeys { it.key.name }))
                 .put("sceneSourceAgeMs",text?.let { start-it.timeMs } ?: JSONObject.NULL)
                 .put("sceneSourceHints",JSONArray(hints.map { hint ->
                     JSONObject().put("text",hint.text).put("box",hint.box?.let { box ->

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-25",
-  "status": "beta_c45_phone_non_game_verified_user_scheduled_live_pending",
+  "status": "beta_c46_computer_verified_phone_and_live_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -449,7 +449,7 @@
     "documentation": "docs/development/candidate-c4-optimization-20261023.md",
     "privateEvidenceRoot": "captures/emulator/candidate-c4-optimization-20261023"
   },
-  "currentCandidateRecord": "betaC45",
+  "currentCandidateRecord": "betaC46",
   "c4Review": {
     "date": "2026-10-23",
     "package": "com.cyotun.jpq.candidate",
@@ -1083,7 +1083,7 @@
     "date": "2026-10-25",
     "package": "com.cyotun.jpq.candidate",
     "label": "记牌器BETA",
-    "status": "phone_non_game_verified_user_scheduled_live_pending",
+    "status": "six_live_rounds_audited_confirmed_missed_plays_not_accepted",
     "baseCommit": "14b24a9",
     "versionCode": 28,
     "versionName": "0.2.26-regression-candidate",
@@ -1216,6 +1216,142 @@
     "officialFeaturePromotion": false,
     "stableServerChanged": false,
     "documentation": "docs/development/beta-c4.5-live-audit-20261025.md",
-    "privateEvidence": "captures/phone/beta-c45-preflight-20261025/c45-20261025T010450"
+    "privateEvidence": "captures/phone/beta-c45-preflight-20261025/c45-20261025T010450",
+    "liveReviewDocument": "docs/development/beta-c4.6-live-audit-20261025.md"
+  },
+  "betaC46": {
+    "buildId": "C4.6",
+    "date": "2026-10-25",
+    "package": "com.cyotun.jpq.candidate",
+    "label": "记牌器BETA",
+    "status": "computer_verified_phone_unavailable_live_pending",
+    "baseCommit": "5ef217e",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression-candidate",
+    "apk": "artifacts/beta-c4.6/记牌器BETA-c4.6.apk",
+    "apkSha256": "27f6bdf00c80175230be78a8b9b993b4dc998c24a6c305a9317ba6e1acc2c09d",
+    "testApkSha256": "980024d3d7cd21811de55fab2423197cdcf473cd6c4b266ad651d7d29112f83f",
+    "certificateSha256": "ebe83c802f083bdb1adafc6163744dfa2cbd30f5677c04ab5ff29356c5cff71f",
+    "productionSourceFingerprint": {
+      "sha256": "159ea425e86d768467643e524e8ef9676c6d189b3fc62cba014ebf803bcdad38",
+      "files": 106,
+      "scope": "Production Kotlin/XML only; excludes local model/font, tests, docs"
+    },
+    "tests": {
+      "core": {
+        "tests": 742,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "betaHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "officialHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "pythonSourceChecks": {
+        "tests": 33,
+        "failures": 0
+      }
+    },
+    "lint": {
+      "errors": 0,
+      "warnings": 59
+    },
+    "liveSourceAudit": {
+      "build": "C4.5",
+      "rounds": 6,
+      "frames": 7392,
+      "archiveSha256": "8c833018c74ca2bc8ebda82fdf06da1618049791982d92853e0e3ec52a59c7ce",
+      "scope": "Complete retained model/scene trace with independent count-source and available screenshot checks; not every card independently annotated",
+      "confirmedFindings": [
+        "repeated_big_joker_excluded",
+        "own_exit_handoff_anchor_lost",
+        "short_own_display_missed",
+        "unplayed_hand_color_flicker_blocks_exact_play",
+        "short_outside_display_missed",
+        "early_finish_last_group_missed",
+        "terminal_own_group_missed"
+      ]
+    },
+    "currentSourceReplay": {
+      "frames": 7392,
+      "baselines": 6,
+      "finishedRounds": 6,
+      "unresolvedRounds": 0,
+      "failures": 0,
+      "events": 209,
+      "sha256": "eb26cfc970e385a992cb0c84de329c3129538bed5ff83eca4a6fc193e034b0db",
+      "countsByRoundSelfPreviousOppositeNext": [
+        [
+          27,
+          27,
+          27,
+          26
+        ],
+        [
+          27,
+          24,
+          27,
+          27
+        ],
+        [
+          27,
+          21,
+          27,
+          27
+        ],
+        [
+          27,
+          27,
+          27,
+          22
+        ],
+        [
+          27,
+          26,
+          27,
+          24
+        ],
+        [
+          8,
+          27,
+          22,
+          27
+        ]
+      ],
+      "sourceManifestSha256": "5fd60d84476bce082b741c79f131fba2bf7d95f2bfa4ddc671180191d90479dc",
+      "badgeCheck": {
+        "independentSources": 1350,
+        "unmatched": 0,
+        "latencyWindowMs": [
+          -700,
+          1800
+        ],
+        "scope": "quantity consistency; not independent card truth"
+      }
+    },
+    "priorRegression": {
+      "frames": 8865,
+      "outsideCountTrajectoriesUnchanged": true,
+      "teammatePoolHistoryUnchanged": true,
+      "scope": "Two historical replay regressions only. Own commits can be earlier and one previously incomplete own history is now complete."
+    },
+    "phoneInstalled": false,
+    "phoneChecksCompleted": false,
+    "phoneBlocker": "ADB reported no connected devices after offline repair; no new phone or live test was run",
+    "liveAcceptancePassed": false,
+    "officialFeaturePromotion": false,
+    "stableServerChanged": false,
+    "rollbackVerified": true,
+    "documentation": "docs/development/beta-c4.6-live-audit-20261025.md",
+    "privateEvidence": "captures/phone/beta-c45-live-20261025/c45-live-20261025T155854"
   }
 }

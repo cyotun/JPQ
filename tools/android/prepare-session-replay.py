@@ -141,6 +141,36 @@ def encode_single_identities(frame: dict) -> str:
     return "|".join(encoded)
 
 
+def encode_early_finish_hints(frame: dict) -> str:
+    # These are the original, dimension/epoch-qualified OCR snapshot hints
+    # already emitted by TencentRecognizer, not inferred ranks or card truth.
+    elapsed, age = frame.get("elapsedMs"), frame.get("sceneSourceAgeMs")
+    hints, source_masks = frame.get("sceneSourceHints"), frame.get("sceneSourceMasks")
+    masks = frame.get("overlayMasks")
+    if (type(elapsed) is not int or type(age) is not int or not 0 <= age <= 1000 or
+            elapsed-age < 0 or not isinstance(hints, list) or not isinstance(masks, list) or
+            not isinstance(source_masks, list) or frame.get("adjusting") is True or
+            frame.get("scene") not in {"TABLE", "TEAMMATE"}):
+        return "?"
+    all_masks = source_masks + masks
+    def valid(box):
+        return (isinstance(box, list) and len(box) == 4 and
+                all(type(x) in (int, float) and math.isfinite(x) and 0 <= x <= 1 for x in box) and
+                box[0] < box[2] and box[1] < box[3])
+    if any(not valid(box) for box in all_masks):
+        return "?"
+    result = []
+    for hint in hints:
+        if not isinstance(hint, dict) or hint.get("text") not in {"头游", "二游"}:
+            continue
+        box = hint.get("box")
+        if not valid(box) or any(m[0] < box[2]+.0001 and box[0]-.0001 < m[2] and
+                                 m[1] < box[3]+.0001 and box[1]-.0001 < m[3] for m in all_masks):
+            continue
+        result.append(",".join((hint["text"], str(elapsed-age), *(str(x) for x in box))))
+    return "|".join(result)
+
+
 def frame_to_tape_row(frame: dict) -> tuple[str, int]:
     elapsed = frame.get("elapsedMs")
     if type(elapsed) is not int or elapsed < 0:
@@ -188,6 +218,11 @@ def frame_to_tape_row(frame: dict) -> tuple[str, int]:
         passes = frame["observedPasses"]
         row += ";" + "|".join(f"{seat},{source}" for seat, source in passes.items()
                                if seat in SEATS[1:] and type(source) is int and 0 <= elapsed-source <= 1000)
+    early_hints = encode_early_finish_hints(frame)
+    if early_hints != "?":
+        columns = row.split(";")
+        columns += [""] * (16-len(columns))
+        row = ";".join(columns + [early_hints])
     return row, omitted_counts
 
 

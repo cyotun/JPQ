@@ -15,7 +15,9 @@ data class TableFrame(val timeMs: Long,val scene: TableScene,val hand: List<Card
                       val localizedOverlaySeats: Set<Seat> = emptySet(),
                       // Qualified positioned pass bubbles, timestamped at OCR capture.
                       // They close an action; they never prove that its old pixels are empty.
-                      val observedPasses: Map<Seat,Long> = emptyMap())
+                      val observedPasses: Map<Seat,Long> = emptyMap(),
+                      // Only positioned first/second finish labels, never automatic third/last rankings.
+                      val observedEarlyFinishes: Map<Seat,Long> = emptyMap())
 
 internal fun TableFrame.onlyLocalizedOverlay(): Boolean = incompleteReason!=null &&
     localizedOverlaySeats.isNotEmpty() && !captureGap && !ambiguousPresentation &&
@@ -94,8 +96,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     private val teammateHandProof=TeammateHandPlayProofTracker()
     private val terminalOwnHandProof=TerminalOwnHandProof()
     private val ownExitPlayProof=OwnExitPlayProof()
+    private val ownHandDifferenceProof=OwnHandDifferenceProof()
     private val localizedPendingRecovery=LocalizedPendingPlayRecovery()
     private val quantityProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { QuantityAnchoredPlayProof() }
+    private val earlyFinishProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { EarlyFinishPlayProof() }
     private val repeatedPlayProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RepeatedPlayCountProof() }
     private val repeatedSingleProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RepeatedSingleCardProof() }
     private val countAnchoredRepeatedSingles=CountAnchoredRepeatedSingleProof()
@@ -113,8 +117,10 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         teammateHandProof.reset()
         terminalOwnHandProof.reset()
         ownExitPlayProof.reset()
+        ownHandDifferenceProof.clear()
         localizedPendingRecovery.reset()
         quantityProofs.values.forEach { it.clear() }
+        earlyFinishProofs.values.forEach { it.clear() }
         repeatedPlayProofs.values.forEach { it.clear() }
         repeatedSingleProofs.values.forEach { it.clear() }
         countAnchoredRepeatedSingles.clear()
@@ -148,6 +154,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     /** A capture/ownership gap is not a ledger conflict and must remain recoverable. */
     fun incomplete(reason: String,timeMs: Long=lastTime,immediate: Boolean=false) {
         ownExitPlayProof.reset()
+        ownHandDifferenceProof.clear()
         val preserveStrictSupersetQuantity=reason=="出牌变化待核对，正在重新识别"
         if(!preserveStrictSupersetQuantity) quantityProofs.values.forEach { it.clear() }
         repeatedPlayProofs.values.forEach { it.clear() }
@@ -285,6 +292,9 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 }
             } else if(!commit(Seat.SELF,ownExit.cards)) return
         }
+        val ownDifference=if(recovery==null) ownHandDifferenceProof.observe(frame,ledger.snapshot(),ledger.currentHand())
+            else { ownHandDifferenceProof.clear(); null }
+        if(ownDifference!=null && !commit(Seat.SELF,ownDifference.cards)) return
         val terminalOwn=terminalOwnHandProof.observe(frame,ledger.snapshot(),ledger.currentHand(),ledger.phaseBeforeRecovery())
         if(terminalOwn!=null && recovery!=null) {
             // Every unfinished outside region stayed directly empty across this
@@ -494,11 +504,13 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             val repeatedProof=repeatedPlayProofs.getValue(seat)
             val singleProof=repeatedSingleProofs.getValue(seat)
             val quantityProof=quantityProofs.getValue(seat)
+            val earlyFinishProof=earlyFinishProofs.getValue(seat)
             val passedSupersetProof=passedSupersetProofs.getValue(seat)
             if(confirmed?.played(seat)==27) {
                 repeatedProof.clear()
                 singleProof.clear()
                 quantityProof.clear()
+                earlyFinishProof.clear()
                 passedSupersetProof.clear()
                 // A finished player's last presentation can temporarily move away during
                 // an effect and return over real table pixels. It cannot be another play.
@@ -530,7 +542,9 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             val passedSuperset=if(confirmed!=null) passedSupersetProof.observe(frame,confirmed,seat,
                 priorPresentation,ledger.currentHand(),presentations[seat]?.lastSeen ?: -1L)
                 else { passedSupersetProof.clear(); null }
-            val shortPlay=passedSuperset ?: if(confirmed!=null) quantityProof.observe(frame,confirmed,seat,
+            val finishedPlay=if(confirmed!=null) earlyFinishProof.observe(frame,confirmed,seat,frame.observedEarlyFinishes[seat])
+                else { earlyFinishProof.clear(); null }
+            val shortPlay=finishedPlay ?: passedSuperset ?: if(confirmed!=null) quantityProof.observe(frame,confirmed,seat,
                 countPlayBoundaryAt[seat].takeIf { presentations[seat]==null },priorPresentation)
                 else { quantityProof.clear(); null }
             if(shortPlay!=null) {

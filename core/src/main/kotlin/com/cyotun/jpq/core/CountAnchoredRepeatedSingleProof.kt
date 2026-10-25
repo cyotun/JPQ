@@ -10,6 +10,10 @@ package com.cyotun.jpq.core
  * normal presentation deduplication path.
  */
 class CountAnchoredRepeatedSingleProof {
+    // Ordinary cards require the separate corner/suit reader. A joker has no
+    // suit: its current strong model glyph identifies BIG/SMALL directly. Do
+    // not manufacture a corner identity or a confidence margin for that path.
+    private data class DirectReading(val play: ObservedPlay,val card: Card,val sourceTimeMs: Long)
     private data class Version(
         val roundId: String,
         val seat: Seat,
@@ -95,11 +99,12 @@ class CountAnchoredRepeatedSingleProof {
         state.contextPhase = snapshot.phase
         val freshReading = countSample?.reading
         val play = frame.plays[seat]
-        val direct = play?.takeIf { isDirectSingle(it, frame.timeMs) }
+        val directReading = play?.let { directSingle(it, frame.timeMs) }
+        val direct = directReading?.play
 
         var candidate = state.candidate
         if (candidate != null) {
-            val directIdentity = direct?.singleCardIdentity
+            val directIdentity = directReading
             if (frame.scene != candidate.scene || snapshot.phase != candidate.phase || direct == null ||
                 directIdentity == null ||
                 !sameVersion(candidate.version, version) ||
@@ -121,11 +126,11 @@ class CountAnchoredRepeatedSingleProof {
 
         if (candidate != null) {
             val current = candidate!!
-            val identity = direct!!.singleCardIdentity!!
+            val identity = directReading!!
             current.frames++
             current.lastFrameTime = frame.timeMs
             current.lastIdentitySourceTime = identity.sourceTimeMs
-            current.geometry = direct.glyphs.single().box
+            current.geometry = identity.play.glyphs.single().box
 
             if (freshReading != null) {
                 if (freshReading.count !in setOf(version.expectedRemaining, version.expectedRemaining - 1)) {
@@ -184,7 +189,7 @@ class CountAnchoredRepeatedSingleProof {
             if (freshReading.count == version.expectedRemaining - 1 && readyBeforeThisFrame &&
                 direct != null && direct.cards.single().colorKey() == version.oldColorKey &&
                 state.blindGapSeen && freshReading.sourceTimeMs >= frame.timeMs) {
-                candidate = newCandidate(frame, snapshot, version, direct)
+                candidate = newCandidate(frame, snapshot, version, directReading!!)
                 state.candidate = candidate
                 candidate.targetSources = 1
                 candidate.lastTargetSourceTime = freshReading.sourceTimeMs
@@ -197,7 +202,7 @@ class CountAnchoredRepeatedSingleProof {
 
         if (direct == null || direct.cards.single().colorKey() != version.oldColorKey ||
             !state.blindGapSeen || !baselineReady(state, frame, version)) return null
-        candidate = newCandidate(frame, snapshot, version, direct)
+        candidate = newCandidate(frame, snapshot, version, directReading!!)
         state.candidate = candidate
         return null
     }
@@ -221,7 +226,7 @@ class CountAnchoredRepeatedSingleProof {
         val played = snapshot.played(seat)
         val expected = 27 - played
         if (last.roundId != snapshot.roundId || last.seat != seat || last.eventId != eventId ||
-            old.rank.isJoker || expected !in 2..27) return null
+            (old.rank.isJoker && old.suit!=Suit.NONE) || expected !in 2..27) return null
         return Version(snapshot.roundId, seat, eventId, expected, old.colorKey())
     }
 
@@ -230,20 +235,26 @@ class CountAnchoredRepeatedSingleProof {
             snapshot.phase in setOf(RoundPhase.ACTIVE, RoundPhase.SELF_FINISHED) &&
             !frame.captureGap && !frame.ambiguousPresentation && frame.incompleteReason == null
 
-    private fun isDirectSingle(play: ObservedPlay, time: Long): Boolean {
-        val card = play.cards.singleOrNull() ?: return false
-        val glyph = play.glyphs.singleOrNull() ?: return false
-        val identity = play.singleCardIdentity ?: return false
+    private fun directSingle(play: ObservedPlay, time: Long): DirectReading? {
+        val card = play.cards.singleOrNull() ?: return null
+        val glyph = play.glyphs.singleOrNull() ?: return null
         val box = glyph.box
+        if(!play.regionObserved || play.confidence !in MIN_PLAY_CONFIDENCE..1f ||
+            glyph.card.colorKey()!=card.colorKey() || glyph.confidence !in MIN_PLAY_CONFIDENCE..1f || !validBox(box)) return null
+        if(card.rank.isJoker) {
+            if(card.suit!=Suit.NONE || glyph.card!=card || play.confidence<MIN_JOKER_CONFIDENCE ||
+                glyph.confidence<MIN_JOKER_CONFIDENCE) return null
+            return DirectReading(play,card,time)
+        }
+        val identity = play.singleCardIdentity ?: return null
         val physicalSuits = setOf(Suit.SPADE, Suit.CLUB, Suit.HEART, Suit.DIAMOND)
-        return play.regionObserved && play.confidence in MIN_PLAY_CONFIDENCE..1f && !card.rank.isJoker &&
-            glyph.card.colorKey() == card.colorKey() && glyph.confidence in MIN_PLAY_CONFIDENCE..1f &&
-            identity.card.rank == card.rank && identity.card.suit in physicalSuits &&
+        val valid=identity.card.rank == card.rank && identity.card.suit in physicalSuits &&
             identity.card.colorKey() == card.colorKey() &&
             identity.confidence.isFinite() && identity.margin.isFinite() &&
             identity.confidence >= MIN_IDENTITY_CONFIDENCE && identity.margin >= MIN_IDENTITY_MARGIN &&
             identity.sourceTimeMs in 0L..time && time - identity.sourceTimeMs <= MAX_IDENTITY_AGE_MS &&
             validBox(box)
+        return if(valid) DirectReading(play,identity.card,identity.sourceTimeMs) else null
     }
 
     private fun consumeCountSource(state: SeatState, frame: TableFrame, seat: Seat): CountSample? {
@@ -288,14 +299,13 @@ class CountAnchoredRepeatedSingleProof {
             state.baselineLastSourceTime >= 0L && state.version == version
 
     private fun newCandidate(frame: TableFrame, snapshot: RoundSnapshot, version: Version,
-                             play: ObservedPlay): Candidate {
-        val identity = play.singleCardIdentity!!
+                             identity: DirectReading): Candidate {
         return Candidate(
             version = version,
             scene = frame.scene,
             phase = snapshot.phase,
             card = identity.card,
-            geometry = play.glyphs.single().box,
+            geometry = identity.play.glyphs.single().box,
             firstTime = frame.timeMs,
             lastFrameTime = frame.timeMs,
             lastIdentitySourceTime = identity.sourceTimeMs,
@@ -332,6 +342,7 @@ class CountAnchoredRepeatedSingleProof {
 
     private companion object {
         const val MIN_PLAY_CONFIDENCE = .80f
+        const val MIN_JOKER_CONFIDENCE = .85f
         const val MIN_IDENTITY_CONFIDENCE = .80f
         const val MIN_IDENTITY_MARGIN = .12f
         const val MAX_IDENTITY_AGE_MS = 500L

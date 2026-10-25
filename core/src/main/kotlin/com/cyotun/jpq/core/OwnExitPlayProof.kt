@@ -25,6 +25,7 @@ class OwnExitPlayProof {
     // for at most 2000ms across the empty/scene handoff. Votes restart after it.
     private var foreignHandSeenAt=-1L
     private var continuationAt=-1L
+    private val ambiguousOwnershipReason="出牌归属待核对，正在重新识别"
 
     fun reset() {
         version=null; ownSeenAt=-1L; lastObservationTime=-1L
@@ -60,13 +61,32 @@ class OwnExitPlayProof {
         }
         if(frame.timeMs<=lastObservationTime) return null
         lastObservationTime=frame.timeMs
+        val frameHand=if(frame.scene==TableScene.TEAMMATE)
+            frame.teammateHand.takeIf { frame.teammateHandConfidence>=.65f } else frame.hand
+        val foreignHand=frameHand!=null && frameHand.isNotEmpty() && !isSubset(frameHand,originalHand)
+        val handoffHasNoSelfPlay=frame.plays[Seat.SELF]?.cards.isNullOrEmpty()
+        val freshAnchoredHandoff=anchor!=null && votes>0 && frame.timeMs-lastTime in 0L..500L
+        val ongoingHandoff=anchor!=null && continuationAt>=0L && continuationLive
+        val ambiguousForeignHandoff = frame.scene==TableScene.TEAMMATE && frame.ambiguousPresentation &&
+            frame.incompleteReason==ambiguousOwnershipReason && !frame.captureGap &&
+            frame.localizedOverlaySeats.isEmpty() && !frame.dealingChoicesObserved &&
+            (freshAnchoredHandoff || ongoingHandoff) &&
+            foreignHand && handoffHasNoSelfPlay && (active || latched)
+        if(ambiguousForeignHandoff) {
+            // Keep only the already established exact-own-hand authority. The
+            // ambiguous frame supplies no card vote, and repeated ambiguous
+            // frames cannot restart or extend this handoff deadline.
+            if(continuationAt<0L) continuationAt=frame.timeMs
+            foreignHandSeenAt=frame.timeMs
+            clearFreshVotes()
+            return null
+        }
         if(frame.captureGap || frame.incompleteReason!=null || frame.ambiguousPresentation ||
+            frame.localizedOverlaySeats.isNotEmpty() ||
             frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE)) {
             reset()
             return null
         }
-        val frameHand=if(frame.scene==TableScene.TEAMMATE)
-            frame.teammateHand.takeIf { frame.teammateHandConfidence>=.65f } else frame.hand
         if(frameHand!=null && key(frameHand)==key(originalHand)) {
             clearVotes(); clearTransition()
             if(active && frame.scene==TableScene.TABLE) ownSeenAt=frame.timeMs else reset()
@@ -74,10 +94,20 @@ class OwnExitPlayProof {
         }
         val play=frame.plays[Seat.SELF]
         val wholeOwnPlay=play!=null && strong(play) && key(play.cards)==key(originalHand)
-        val foreignHand=frameHand!=null && frameHand.isNotEmpty() && !isSubset(frameHand,originalHand)
+        val absentSelfPlay=play==null || play.cards.isEmpty()
         // A partial remnant of the old hand is not proof that the lower area
         // has been replaced by another player's complete hand.
         val departed=frameHand!=null && (frameHand.isEmpty() || foreignHand)
+
+        // A terminal cue can close an already established full-hand proof,
+        // but cannot supply a missing card or start a candidate. This branch
+        // runs before absent-play handling clears the three direct votes.
+        val terminalWholeHandFromPriorReads = frame.selfFinished && frameHand?.isEmpty()==true &&
+            !frame.dealingChoicesObserved && absentSelfPlay && snapshot.played(Seat.OPPOSITE)==27 && anchor!=null && votes>=3 &&
+            previous!=null && (active || latched) && frame.timeMs-lastTime in 0L..500L &&
+            frame.timeMs-firstTime in 100L..1500L && key(anchor!!.cards)==key(originalHand) &&
+            sameSlots(previous!!,anchor!!)
+        if(terminalWholeHandFromPriorReads) return completeCertificate()
 
         // First stage: an empty lower hand plus a directly observed strict
         // subset can only mark the start of the departure animation. It cannot
@@ -89,8 +119,8 @@ class OwnExitPlayProof {
             return null
         }
 
-        val absentSelfPlay=play==null || play.cards.isEmpty()
-        if(anchor!=null && (active || latched) && absentSelfPlay) {
+        val noSelfPlay=play==null || play.cards.isEmpty()
+        if(anchor!=null && (active || latched) && noSelfPlay) {
             if(continuationAt<0 && foreignHand && votes>0 && frame.timeMs-lastTime in 0L..500L) {
                 // A complete non-own lower hand is positive replacement
                 // evidence; start the bounded authority window at the actual
@@ -163,11 +193,16 @@ class OwnExitPlayProof {
         votes++
         if(!frame.selfFinished && frame.scene!=TableScene.TEAMMATE) return null
         // With our teammate already independently out, a positive own-finish
-        // cue ends the round immediately. The single last owned card still
-        // needs three complete, strong, same-slot direct reads before that cue.
-        val terminalSingle=votes>=3 && originalHand.size==1 && snapshot.played(Seat.OPPOSITE)==27 && frame.selfFinished
-        if((votes<4 && !terminalSingle) || frame.timeMs-firstTime<100L ||
+        // cue permits three direct reads of any whole original hand, but only
+        // when the current lower hand is explicitly empty.
+        val terminalWholeHand = votes>=3 && snapshot.played(Seat.OPPOSITE)==27 &&
+            frame.selfFinished && !frame.dealingChoicesObserved && frameHand?.isEmpty()==true && wholeOwnPlay
+        if((votes<4 && !terminalWholeHand) || frame.timeMs-firstTime<100L ||
             (frame.scene!=TableScene.TEAMMATE && !frame.selfFinished)) return null
+        return completeCertificate()
+    }
+
+    private fun completeCertificate(): Certificate {
         // Return ledger-owned identities after matching every directly visible card.
         // The immutable initial hand already excludes these from outside remaining.
         val cards=version!!.hand.toList()

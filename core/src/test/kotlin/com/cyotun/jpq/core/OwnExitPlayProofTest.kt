@@ -26,6 +26,10 @@ class OwnExitPlayProofTest {
     private fun collect(proof: OwnExitPlayProof,l: RoundLedger,times: List<Long> = listOf(1120,1240,1360,1480)) {
         times.forEach { assertNull(proof.observe(frame(it,p=play(l.currentHand())),l.snapshot(),l.currentHand())) }
     }
+    private fun finishOpposite(l: RoundLedger) {
+        val outside=deck.toMutableList().apply { l.initialHand().forEach { remove(it) } }.take(27)
+        l.commit(PlayEvent(l.snapshot().roundId!!,"opposite-out",2,Seat.OPPOSITE,outside))
+    }
 
     @Test fun realLastJokerHandoffIsRecordedBeforeTheOwnHandIsClearedWithoutChangingOutsidePool() {
         val l=ledger(); val states=mutableListOf<RoundSnapshot>(); val observer=RoundObserver(l) { states+=it }
@@ -61,6 +65,94 @@ class OwnExitPlayProofTest {
         observer.observe(frame(1600,TableScene.TEAMMATE))
         assertEquals(27,l.snapshot().played(Seat.SELF))
         assertEquals(big,l.snapshot().plays.getValue(Seat.SELF).last().cards)
+    }
+
+    @Test fun aFreshAmbiguousForeignTeammateHandoffPreservesOnlyTheActiveAnchor() {
+        val own=listOf(Card(Rank.J,Suit.RED),Card(Rank.J,Suit.RED),
+            Card(Rank.J,Suit.RED),Card(Rank.J,Suit.BLACK))
+        val l=ledger(own); val proof=OwnExitPlayProof()
+        assertNull(proof.observe(frame(1000,hand=own,p=null),l.snapshot(),own))
+        assertNull(proof.observe(frame(1100,hand=foreign,p=play(own)),l.snapshot(),own))
+        assertNull(proof.observe(frame(1300,hand=foreign,p=play(own)),l.snapshot(),own))
+
+        val ambiguousHandoff=frame(1400,TableScene.TEAMMATE,foreign,p=null).copy(
+            ambiguousPresentation=true,
+            incompleteReason="出牌归属待核对，正在重新识别")
+        assertNull(proof.observe(ambiguousHandoff,l.snapshot(),own))
+        l.selfFinished()
+        // Further ownership ambiguity and an intervening empty lower hand may
+        // clear votes, but they preserve the original fixed deadline only.
+        assertNull(proof.observe(frame(1500,TableScene.TEAMMATE,foreign,p=null).copy(
+            ambiguousPresentation=true,incompleteReason="出牌归属待核对，正在重新识别"),l.snapshot(),l.currentHand()))
+        assertNull(proof.observe(frame(1600,TableScene.TEAMMATE,emptyList(),p=null),l.snapshot(),l.currentHand()))
+        assertNull(proof.observe(frame(1680,TableScene.TEAMMATE,foreign,p=null),l.snapshot(),l.currentHand()))
+        listOf(1760L,1880L,2000L).forEach {
+            assertNull(proof.observe(frame(it,TableScene.TEAMMATE,foreign,p=play(own)),l.snapshot(),l.currentHand()))
+        }
+        val certificate=proof.observeWithCertificate(
+            frame(2120,TableScene.TEAMMATE,foreign,p=play(own)),l.snapshot(),l.currentHand())
+        assertNotNull(certificate)
+        assertEquals(own,certificate.cards)
+    }
+
+    @Test fun ambiguousHandoffCannotExtendItsDeadlineOrSeedFromTheFinishBadge() {
+        val own=listOf(Card(Rank.J,Suit.RED),Card(Rank.J,Suit.RED),
+            Card(Rank.J,Suit.RED),Card(Rank.J,Suit.BLACK))
+        val l=ledger(own); val proof=OwnExitPlayProof()
+        assertNull(proof.observe(frame(1000,hand=own,p=null),l.snapshot(),own))
+        assertNull(proof.observe(frame(1100,hand=foreign,p=play(own)),l.snapshot(),own))
+        assertNull(proof.observe(frame(1300,hand=foreign,p=play(own)),l.snapshot(),own))
+        fun ambiguousAt(t: Long)=frame(t,TableScene.TEAMMATE,foreign,p=null).copy(
+            ambiguousPresentation=true,incompleteReason="出牌归属待核对，正在重新识别")
+        assertNull(proof.observe(ambiguousAt(1400),l.snapshot(),own))
+        l.selfFinished()
+        assertNull(proof.observe(ambiguousAt(2900),l.snapshot(),l.currentHand()))
+        // This frame is after the original 2 s boundary; another ambiguity
+        // cannot move that boundary forward.
+        assertNull(proof.observe(ambiguousAt(3401),l.snapshot(),l.currentHand()))
+        repeat(5) { index ->
+            assertNull(proof.observe(frame(3500L+index*120L,TableScene.TEAMMATE,foreign,p=play(own)),
+                l.snapshot(),l.currentHand()))
+        }
+
+        val noAnchor=OwnExitPlayProof(); val second=ledger(own)
+        assertNull(noAnchor.observe(ambiguousAt(1000),second.snapshot(),own))
+        second.selfFinished()
+        repeat(5) { index ->
+            assertNull(noAnchor.observe(frame(1120L+index*120L,TableScene.TEAMMATE,foreign,p=play(own)),
+                second.snapshot(),second.currentHand()))
+        }
+    }
+
+    @Test fun gapsMasksUnqualifiedForeignHandsAndWrongSceneStillDestroyHandoffAuthority() {
+        val own=listOf(Card(Rank.J,Suit.RED),Card(Rank.J,Suit.RED),
+            Card(Rank.J,Suit.RED),Card(Rank.J,Suit.BLACK))
+        val faultFrames=listOf(
+            frame(1400,TableScene.TEAMMATE,foreign,p=null).copy(ambiguousPresentation=true,
+                incompleteReason="出牌归属待核对，正在重新识别",captureGap=true),
+            frame(1400,TableScene.TEAMMATE,foreign,p=null).copy(ambiguousPresentation=true,
+                incompleteReason="悬浮条遮挡",localizedOverlaySeats=setOf(Seat.SELF)),
+            frame(1400,TableScene.TEAMMATE,foreign,p=null).copy(ambiguousPresentation=true,
+                incompleteReason="出牌归属待核对，正在重新识别",teammateHandConfidence=.64f),
+            frame(1400,TableScene.TEAMMATE,own.take(2),p=null).copy(ambiguousPresentation=true,
+                incompleteReason="出牌归属待核对，正在重新识别"),
+            frame(1400,TableScene.TABLE,foreign,p=null).copy(ambiguousPresentation=true,
+                incompleteReason="出牌归属待核对，正在重新识别"),
+            frame(1400,TableScene.TEAMMATE,foreign,p=null).copy(ambiguousPresentation=true,
+                incompleteReason="其他不完整原因")
+        )
+        for(fault in faultFrames) {
+            val l=ledger(own); val proof=OwnExitPlayProof()
+            assertNull(proof.observe(frame(1000,hand=own,p=null),l.snapshot(),own))
+            assertNull(proof.observe(frame(1100,hand=foreign,p=play(own)),l.snapshot(),own))
+            assertNull(proof.observe(frame(1300,hand=foreign,p=play(own)),l.snapshot(),own))
+            assertNull(proof.observe(fault,l.snapshot(),own))
+            l.selfFinished()
+            repeat(5) { index ->
+                assertNull(proof.observe(frame(1500L+index*120L,TableScene.TEAMMATE,foreign,p=play(own)),
+                    l.snapshot(),l.currentHand()))
+            }
+        }
     }
 
     @Test fun emptyPartialDepartureAndForeignHandoffRequireFourFreshWholeReadsWithoutOutsidePoolChange() {
@@ -209,7 +301,7 @@ class OwnExitPlayProofTest {
         val proof=OwnExitPlayProof(); seed(proof,l)
         assertNull(proof.observe(frame(1120),l.snapshot(),l.currentHand()))
         assertNull(proof.observe(frame(1240),l.snapshot(),l.currentHand()))
-        val result=proof.observe(frame(1360,finished=true),l.snapshot(),l.currentHand())
+        val result=proof.observe(frame(1360,hand=emptyList(),finished=true),l.snapshot(),l.currentHand())
         assertEquals(big,result)
         l.commit(PlayEvent("own-exit","last-own",3,Seat.SELF,result!!))
         assertEquals(27,l.snapshot().played(Seat.SELF))
@@ -228,6 +320,72 @@ class OwnExitPlayProofTest {
             for(t in listOf(1120L,1240L,1360L))
                 assertNull(proof.observe(frame(t,p=play(last),finished=t==1360L),l.snapshot(),last))
         }
+    }
+
+    @Test fun aTerminalEmptyHandClosesThreeFreshWholeFiveJokerReadsAfterTeammateFinishes() {
+        val last=listOf(Card(Rank.THREE,Suit.RED),Card(Rank.FOUR,Suit.RED),Card(Rank.FIVE,Suit.RED),
+            Card(Rank.SIX,Suit.BLACK),Card(Rank.SEVEN,Suit.BLACK))
+        val l=ledger(last); finishOpposite(l)
+        val proof=OwnExitPlayProof(); seed(proof,l)
+        listOf(1120L,1240L,1360L).forEach {
+            assertNull(proof.observe(frame(it,p=play(last)),l.snapshot(),last))
+        }
+        l.selfFinished()
+        val certificate=proof.observeWithCertificate(
+            frame(1480,TableScene.TEAMMATE,emptyList(),p=null,finished=true),l.snapshot(),l.currentHand())
+        assertNotNull(certificate)
+        assertEquals(last,certificate.cards)
+        assertEquals(22,l.snapshot().played(Seat.SELF))
+        assertEquals(27,l.snapshot().played(Seat.OPPOSITE))
+    }
+
+    @Test fun aThirdDirectWholeHandCanBeTerminalOnlyWithTheSameEmptyHandAndFinishProof() {
+        val last=listOf(Card(Rank.THREE,Suit.RED),Card(Rank.FOUR,Suit.RED),Card(Rank.FIVE,Suit.RED),
+            Card(Rank.SIX,Suit.BLACK),Card(Rank.SEVEN,Suit.BLACK))
+        val l=ledger(last); finishOpposite(l)
+        val proof=OwnExitPlayProof(); seed(proof,l)
+        assertNull(proof.observe(frame(1120,p=play(last)),l.snapshot(),last))
+        assertNull(proof.observe(frame(1240,p=play(last)),l.snapshot(),last))
+        l.selfFinished()
+        val certificate=proof.observeWithCertificate(
+            frame(1360,TableScene.TEAMMATE,emptyList(),p=play(last),finished=true),l.snapshot(),l.currentHand())
+        assertNotNull(certificate)
+        assertEquals(last,certificate.cards)
+    }
+
+    @Test fun terminalWholeHandNeedsThreeFreshReadsCurrentEmptyHandSelfFinishAndOppositeOut() {
+        val last=listOf(Card(Rank.THREE,Suit.RED),Card(Rank.FOUR,Suit.RED),Card(Rank.FIVE,Suit.RED),
+            Card(Rank.SIX,Suit.BLACK),Card(Rank.SEVEN,Suit.BLACK))
+        fun runCase(votes: Int=3,finishOpp: Boolean=true,terminalTime: Long=1480,
+                    finishCue: Boolean=true,terminalHand: List<Card>?=emptyList(),
+                    weakAt: Long?=null,shiftAt: Long?=null,fault: String?=null): OwnExitPlayProof.Certificate? {
+            val l=ledger(last)
+            if(finishOpp) finishOpposite(l)
+            val proof=OwnExitPlayProof(); seed(proof,l)
+            val directTimes=listOf(1120L,1240L,1360L).take(votes)
+            directTimes.forEach { time ->
+                val confidence=if(time==weakAt) .79f else .86f
+                val shift=if(time==shiftAt) .08f else 0f
+                assertNull(proof.observe(frame(time,p=play(last,confidence,shift)),l.snapshot(),last))
+            }
+            l.selfFinished()
+            val terminal=frame(terminalTime,TableScene.TEAMMATE,terminalHand,p=null,finished=finishCue).let {
+                if(fault=="gap") it.copy(captureGap=true)
+                else if(fault!=null) it.copy(incompleteReason=fault)
+                else it
+            }
+            return proof.observeWithCertificate(terminal,l.snapshot(),l.currentHand())
+        }
+        assertNull(runCase(votes=2))
+        assertNull(runCase(terminalTime=1881)) // Last strong read is older than 500 ms.
+        assertNull(runCase(terminalHand=foreign))
+        assertNull(runCase(finishOpp=false))
+        assertNull(runCase(finishCue=false))
+        assertNull(runCase(weakAt=1240))
+        assertNull(runCase(shiftAt=1360))
+        assertNull(runCase(fault="gap"))
+        assertNull(runCase(fault="masked"))
+        assertNull(runCase(terminalHand=null))
     }
 
     @Test fun observerUsesLateLedgerPathOnlyAfterProofCompletesInSelfFinishedPhase() {
