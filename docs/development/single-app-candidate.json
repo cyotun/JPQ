@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-25",
-  "status": "beta_c47_computer_verified_phone_and_live_pending",
+  "status": "beta_c47_computer_and_phone_non_game_verified_live_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -1418,7 +1418,7 @@
     "date": "2026-10-26",
     "package": "com.cyotun.jpq.candidate",
     "label": "记牌器BETA",
-    "status": "computer_verified_phone_unavailable_live_pending",
+    "status": "computer_and_phone_non_game_verified_live_pending",
     "baseCommit": "3d0d6151fb9ad233bff8c468f5a5c49cd3f06a00",
     "versionCode": 28,
     "versionName": "0.2.26-regression-candidate",
@@ -1457,6 +1457,38 @@
       "evidenceCleanup": {
         "tests": 10,
         "failures": 0
+      },
+      "phone": {
+        "tests": 91,
+        "failures": 0,
+        "groups": [
+          {
+            "group": "pass-visibility-storage",
+            "tests": 25,
+            "passed": 25
+          },
+          {
+            "group": "component",
+            "tests": 50,
+            "passed": 50
+          },
+          {
+            "group": "home-isolation",
+            "tests": 8,
+            "passed": 8
+          },
+          {
+            "group": "overlay",
+            "tests": 7,
+            "passed": 7
+          },
+          {
+            "group": "actual_task_capture",
+            "tests": 1,
+            "passed": 1
+          }
+        ],
+        "scope": "Non-game component/UI plus dedicated fixture capture; excludes utility backup/restore runs"
       }
     },
     "lint": {
@@ -1546,9 +1578,8 @@
       "exactTeammatePoolHistoryUnchanged": true,
       "sha256": "eb26cfc970e385a992cb0c84de329c3129538bed5ff83eca4a6fc193e034b0db"
     },
-    "phoneInstalled": false,
-    "phoneChecksCompleted": false,
-    "phoneBlocker": "ADB reported no connected devices; C4.7 phone and live checks have not run",
+    "phoneInstalled": true,
+    "phoneChecksCompleted": true,
     "liveAcceptancePassed": false,
     "officialFeaturePromotion": false,
     "stableServerChanged": false,
@@ -1562,6 +1593,76 @@
       "netBytesFreed": 4598922169,
       "latestLiveOriginalsRetained": true,
       "rollbackRetained": true
+    },
+    "phoneVerification": {
+      "date": "2026-10-26",
+      "privateEvidence": "captures/phone/beta-c47-preflight-20261026/c47-20261026T091042",
+      "sourceCommit": "3ef5d6845df0d6bcf63656214bb519a4979f92da",
+      "actualTaskCapture": {
+        "scope": "APP_TASK",
+        "pipeline": "FULL_CPU",
+        "fullCorrectFrames": 120,
+        "sameFrameProbes": 3,
+        "pixelMismatches": 0,
+        "liveGame": false
+      },
+      "normalHomeStartConsentStopVerified": true,
+      "noInstrumentationDuringNormalCapture": true,
+      "normalStopWithoutForceStop": true,
+      "configurationRestored": true,
+      "diagnosticSettingRestored": true,
+      "helperRestored": true,
+      "usbAwakeSettingUnchanged": true,
+      "formalApkAndUpdateTimeUnchanged": true,
+      "installedBetaHashMatched": true,
+      "projectionReleased": true,
+      "captureServiceAbsent": true,
+      "testProgramsClosed": true,
+      "returnedToDesktop": true,
+      "backgroundDynamicFixtureCapture": {
+        "verified": true,
+        "fixtureHandCountSequence": [
+          25,
+          27,
+          25
+        ],
+        "recognizedSamplesByFixture": {
+          "2": 5,
+          "1": 2
+        },
+        "healthRecords": 6,
+        "supplyOrConsumeGaps": 0,
+        "acquireFailures": 0,
+        "noInstrumentationDuringCapture": true,
+        "scope": "Dedicated test fixture, BETA background under actual APP_TASK projection; not a live game"
+      },
+      "retryRecords": [
+        {
+          "stage": "component",
+          "observed": "First background CPU fixture run timed out inside native inference; foregrounding allowed it to complete.",
+          "finalCheck": "Entire 50-test component group rerun foreground: passed in 4.7s. Actual background projection also passed dynamic fixture switching.",
+          "causeConfirmed": false,
+          "productCodeChanged": false
+        },
+        {
+          "stage": "overlay",
+          "observed": "Extra external MainActivity launch raced the landscape test host.",
+          "finalCheck": "Removed the external foreground launch and reran all seven tests using their own host: passed.",
+          "productCodeChanged": false
+        },
+        {
+          "stage": "normal_start",
+          "observed": "Expanded system notification panel obscured the Start page; no capture was started.",
+          "finalCheck": "Collapsed the panel and completed normal Start, consent, background fixture switches, Stop and release.",
+          "unrelatedNotificationUiXmlRemoved": 9,
+          "productCodeChanged": false
+        }
+      ],
+      "generatedPreviewCleanup": {
+        "filesRemoved": 1,
+        "bytesFreed": 3334198,
+        "rawProbeRetained": true
+      }
     }
   }
 }
