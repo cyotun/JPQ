@@ -13,7 +13,8 @@ class QuantityAnchoredPlayProof {
         var visibleVotes: Int=1,var emptyVotes: Int=0,var strong: Boolean=false,var firstCount: Long?=null,var lastCount: Long?=null,
         var lastSource: Long?=null,var lastSourceCount: Int?=null,
         val preCounts: List<PreCountSample> = emptyList(),var strongRun: Int=0,var shortEligible: Boolean=false,
-        var shortPostSource: Long?=null,val startedAt: Long=first)
+        var shortPostSource: Long?=null,val startedAt: Long=first,
+        var ambiguityStartedAt: Long?=null,var ambiguityRetained: Boolean=false)
     private var candidate: Candidate?=null
     private var lastTime=-1L
     private var delivered: Version?=null
@@ -50,6 +51,45 @@ class QuantityAnchoredPlayProof {
         prior: PriorPresentation,expectedRemaining: Int?=null,phaseVersion: RoundPhase?=null): ObservedPlay? =
         observe(frame,snapshot,seat,null,prior,expectedRemaining,phaseVersion)
 
+    /**
+     * Keep an already strong, directly observed ordinary group alive through
+     * a brief global ownership ambiguity, provided this seat's own region
+     * still positively shows that exact group or a clear empty surface.
+     * Ambiguous frames are continuity checks only: their counts and glyphs do
+     * not add votes or replace the last clean presentation.
+     */
+    fun retainAcrossOwnershipAmbiguity(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat): Boolean {
+        val current=candidate ?: return false
+        fun reject(): Boolean { clear(); return false }
+        if(frame.timeMs<=lastTime) return reject()
+        lastTime=frame.timeMs
+        val version=current.version
+        val remaining=snapshot.remaining?.let { 27-snapshot.played(seat) }
+        val sameVersion=version.supersededEventId==null && version.round==snapshot.roundId &&
+            version.seat==seat && version.phase==snapshot.phase &&
+            version.phase in setOf(RoundPhase.ACTIVE,RoundPhase.SELF_FINISHED) &&
+            version.remaining==remaining && version.events==snapshot.plays[seat].orEmpty()
+        if(!sameVersion || seat==Seat.SELF || !current.shortEligible || !current.strong || current.strongRun<3 ||
+            current.lastVisible-current.first<100 || frame.timeMs-current.lastFrame>500 ||
+            frame.timeMs-current.startedAt>MAX_RETAINED_CANDIDATE_LIFETIME_MS ||
+            frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE) || !frame.ambiguousPresentation ||
+            frame.incompleteReason!=OWNERSHIP_AMBIGUITY_REASON || frame.captureGap ||
+            frame.localizedOverlaySeats.isNotEmpty()) return reject()
+        val presentation=frame.plays[seat] ?: return reject()
+        if(!presentation.regionObserved || presentation.confidence !in .65f..1f) return reject()
+        val positiveEmpty=presentation.cards.isEmpty() && presentation.glyphs.isEmpty()
+        val exactFull=valid(presentation) && strong(presentation) &&
+            key(presentation.cards)==key(current.anchor.cards) &&
+            sameSlots(presentation,current.anchor) && sameSlots(presentation,current.latest)
+        if(!positiveEmpty && !exactFull) return reject()
+        val ambiguityStarted=current.ambiguityStartedAt
+        if(ambiguityStarted!=null && frame.timeMs-ambiguityStarted>MAX_OWNERSHIP_AMBIGUITY_MS) return reject()
+        if(ambiguityStarted==null) current.ambiguityStartedAt=frame.timeMs
+        current.ambiguityRetained=true
+        current.lastFrame=frame.timeMs
+        return true
+    }
+
     private fun observe(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat,clearBoundaryAt: Long?,
         prior: PriorPresentation?,expectedOverride: Int?,phaseVersion: RoundPhase?=null): ObservedPlay? {
         if(frame.timeMs<=lastTime) { clear(); clearPreCounts(); return null }
@@ -63,6 +103,7 @@ class QuantityAnchoredPlayProof {
             frame.ambiguousPresentation || frame.incompleteReason!=null || frame.localizedOverlaySeats.isNotEmpty()) {
             clear(); return null
         }
+        candidate?.ambiguityStartedAt=null
         val remaining=expectedRemaining
         if(remaining !in 1..27) { clear(); return null }
         val p=frame.plays[seat]
@@ -98,7 +139,8 @@ class QuantityAnchoredPlayProof {
         }
         val empty=p.cards.isEmpty() && p.glyphs.isEmpty()
         var current=candidate
-        if(current!=null && current.version.supersededEventId==null && frame.timeMs-current.startedAt>1000L) { clearCandidate(); return null }
+        val candidateLifetime=if(current?.ambiguityRetained==true) MAX_RETAINED_CANDIDATE_LIFETIME_MS else 1000L
+        if(current!=null && current.version.supersededEventId==null && frame.timeMs-current.startedAt>candidateLifetime) { clearCandidate(); return null }
         if(current!=null && frame.timeMs-current.lastFrame>500) { clearCandidate(); return null }
         if(!empty) {
             if(!valid(p) || p.cards.size>=remaining) { clearCandidate(); return null }
@@ -111,7 +153,7 @@ class QuantityAnchoredPlayProof {
                 candidate=current
             } else {
                 if(key(p.cards)!=key(current.anchor.cards) || !sameSlots(p,current.anchor) || !sameSlots(p,current.latest)) {
-                    val restartShortCandidate=current.shortEligible && current.version.supersededEventId==null &&
+                    val restartShortCandidate=!current.ambiguityRetained && current.shortEligible && current.version.supersededEventId==null &&
                         !supersetBoundary && strong(p) && clearBoundaryAt!=null &&
                         frame.timeMs-clearBoundaryAt in 0L..1500L && clearBoundaryAt<frame.timeMs
                     val currentStartedAt=current.startedAt
@@ -159,7 +201,8 @@ class QuantityAnchoredPlayProof {
                 if(reading.sourceTimeMs>=current.first) {
                     if(reading.count!=remaining-current.anchor.cards.size) { clear(); return null }
                     if(frame.timeMs-reading.sourceTimeMs<=1000) current.shortPostSource=reading.sourceTimeMs
-                    if(frame.timeMs-reading.sourceTimeMs<=500) {
+                    val sourceAgeLimit=if(current.ambiguityRetained) MAX_RETAINED_COUNT_SOURCE_AGE_MS else MAX_COUNT_SOURCE_AGE_MS
+                    if(frame.timeMs-reading.sourceTimeMs<=sourceAgeLimit) {
                         if(current.firstCount==null) current.firstCount=reading.sourceTimeMs
                         current.lastCount=reading.sourceTimeMs
                     }
@@ -183,9 +226,10 @@ class QuantityAnchoredPlayProof {
         }
         val firstCount=current.firstCount ?: return null
         val lastCount=current.lastCount ?: return null
+        val finalCountAgeLimit=if(current.ambiguityRetained) MAX_RETAINED_COUNT_SOURCE_AGE_MS else MAX_COUNT_SOURCE_AGE_MS
         if(current.visibleVotes<requiredVisibleVotes || !current.strong || current.lastVisible-current.first<100 ||
             (empty && current.emptyVotes<2) ||
-            lastCount-firstCount<100 || frame.timeMs-lastCount>500) return null
+            lastCount-firstCount<100 || frame.timeMs-lastCount>finalCountAgeLimit) return null
         delivered=version
         clearCandidate()
         clearPreCounts()
@@ -274,5 +318,12 @@ class QuantityAnchoredPlayProof {
         } && rest.isEmpty()
     }
 
-    private companion object { const val MAX_SUPERSET_LIFETIME_MS=2200L }
+    private companion object {
+        const val MAX_SUPERSET_LIFETIME_MS=2200L
+        const val MAX_OWNERSHIP_AMBIGUITY_MS=500L
+        const val MAX_RETAINED_CANDIDATE_LIFETIME_MS=2000L
+        const val MAX_COUNT_SOURCE_AGE_MS=500L
+        const val MAX_RETAINED_COUNT_SOURCE_AGE_MS=1000L
+        const val OWNERSHIP_AMBIGUITY_REASON="出牌归属待核对，正在重新识别"
+    }
 }

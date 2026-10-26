@@ -71,7 +71,7 @@ class CaptureService : Service() {
                     worker?.post {
                         synchronized(sessionGuard) {
                             if(generation==session && !closed && recognizer===currentRecognizer) {
-                                currentRecognizer.observationGap(lostAt,"正在重新核对牌面，恢复后继续记牌")
+                                currentRecognizer.observationGap(lostAt,"正在重新核对牌面，恢复后继续记牌",inputDiscontinuity=true)
                                 AppState.captureGapCheckpointed()
                             }
                         }
@@ -192,6 +192,15 @@ class CaptureService : Service() {
                                 if(generation==session && !closed && BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE &&
                                     captureScope==CaptureScope.APP_TASK && AppState.ledger.snapshot().roundId==null)
                                     refreshTaskSurface()
+                            }
+                        },{ request ->
+                            main.post resumeRepair@{
+                                synchronized(sessionGuard) {
+                                    if(generation!=session || closed || !BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE ||
+                                        captureScope!=CaptureScope.APP_TASK || !capturedVisible || !requestedVisible) return@resumeRepair
+                                    val current=recognizer as? TencentRecognizer ?: return@resumeRepair
+                                    if(current.takeResumeInputRecovery(request)) refreshTaskSurface(request.roundId)
+                                }
                             }
                         })
                     health.visionStage("recognizer_init_end")
@@ -358,7 +367,7 @@ class CaptureService : Service() {
                         worker?.post {
                             synchronized(sessionGuard) {
                                 if(resizeGeneration==session && !closed && recognizer===currentRecognizer) {
-                                    currentRecognizer.observationGap(lostAt,"共享游戏画面尺寸变化，恢复后继续记牌")
+                                    currentRecognizer.observationGap(lostAt,"共享游戏画面尺寸变化，恢复后继续记牌",inputDiscontinuity=true)
                                     AppState.captureGapCheckpointed()
                                 }
                             }
@@ -382,7 +391,7 @@ class CaptureService : Service() {
         }
     }
     /** Reattach a consumer to the existing projection; no token reuse or second display. */
-    private fun refreshTaskSurface() {
+    private fun refreshTaskSurface(resumeRoundId: String?=null) {
         if(!BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE || captureScope!=CaptureScope.APP_TASK) return
         val currentDisplay=display ?: return
         val old=reader ?: return
@@ -391,7 +400,9 @@ class CaptureService : Service() {
         val generation=session
         synchronized(sessionGuard) {
             val round=AppState.ledger.snapshot()
-            if(closed || round.roundId!=null || round.phase!=com.cyotun.jpq.core.RoundPhase.WAITING) return
+            val eligible=if(resumeRoundId==null) round.roundId==null && round.phase==com.cyotun.jpq.core.RoundPhase.WAITING
+                else round.roundId==resumeRoundId && round.phase==com.cyotun.jpq.core.RoundPhase.RECOVERING
+            if(closed || !eligible) return
             capturedVisible=false; visibilityEpoch++
         }
         val recoveryId=++taskSurfaceRecoveryId
@@ -399,7 +410,7 @@ class CaptureService : Service() {
         try {
             currentDisplay.surface=null
             recognizer.startupCaptureSurface("detached",generation,recoveryId,visibilityEpoch)
-            android.util.Log.i("JPQCapture","task_surface_detached generation=$generation")
+            android.util.Log.i("JPQCapture","task_surface_detached generation=$generation scope=${if(resumeRoundId==null) "startup" else "resume"}")
             val restore=Runnable {
                 taskSurfaceRefresh=null
                 if(generation!=session || closed || display!==currentDisplay || reader!==old) return@Runnable

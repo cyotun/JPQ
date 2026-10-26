@@ -5,8 +5,8 @@ import kotlin.test.*
 class DealingBoundaryRegressionTest {
     private val baseline=Rank.entries.filter { !it.isJoker }.flatMap { listOf(Card(it,Suit.RED),Card(it,Suit.BLACK)) }+Card(Rank.SMALL,Suit.NONE)
     private fun empty()=Seat.entries.associateWith { ObservedPlay(emptyList(),1f) }
-    private fun started(): Pair<RoundLedger,RoundObserver> {
-        val ledger=RoundLedger(); val observer=RoundObserver(ledger)
+    private fun started(changed: (RoundSnapshot)->Unit = {}): Pair<RoundLedger,RoundObserver> {
+        val ledger=RoundLedger(); val observer=RoundObserver(ledger,changed)
         observer.observe(TableFrame(0,TableScene.LOBBY,null))
         for(t in 60L..240L step 60) observer.observe(TableFrame(t,TableScene.TABLE,baseline,empty()))
         val play=ObservedPlay(listOf(Card(Rank.K,Suit.RED)),.9f)
@@ -68,5 +68,28 @@ class DealingBoundaryRegressionTest {
         for(t in 600L..1020L step 60) observer.observe(TableFrame(t,TableScene.DEALING,aliased,empty()))
         assertEquals(before,ledger.snapshot())
         assertEquals(baseline,ledger.initialHand())
+    }
+
+    @Test fun confirmedNewDealRearmsAfterAnUnrecoverableBackgroundGapWithoutInheritingOldEvents() {
+        val archived=mutableListOf<RoundSnapshot>()
+        val (ledger,observer)=started { archived+=it }
+        val old=ledger.snapshot()
+        observer.incomplete("background visibility lost",600,immediate=true)
+        observer.observe(TableFrame(6500,TableScene.UNKNOWN,null,captureGap=true))
+        assertEquals(old.plays,ledger.snapshot().plays)
+        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
+        val newHand=baseline.toMutableList().apply { remove(Card(Rank.SMALL,Suit.NONE)); add(Card(Rank.BIG,Suit.NONE)) }
+        for(t in 7000L..7480L step 120) observer.observe(TableFrame(t,TableScene.DEALING,newHand,empty(),dealingChoicesObserved=true))
+        val previous=archived.last { it.roundId==old.roundId && it.phase==RoundPhase.FINISHED }
+        assertNull(previous.remaining)
+        assertEquals(old.plays,previous.plays)
+        assertNotEquals(old.roundId,ledger.snapshot().roundId)
+        assertEquals(RoundPhase.ACTIVE,ledger.snapshot().phase)
+        assertTrue(ledger.snapshot().plays.values.all { it.isEmpty() })
+        assertEquals(newHand,ledger.initialHand())
+        val next=ObservedPlay(listOf(Card(Rank.SMALL,Suit.NONE)),.99f)
+        for(t in 7720L..8080L step 120) observer.observe(TableFrame(t,TableScene.TABLE,newHand,empty()+(Seat.NEXT to next)))
+        assertEquals(1,ledger.snapshot().played(Seat.NEXT))
+        assertFalse(observer.diagnosticStatus().recovering)
     }
 }

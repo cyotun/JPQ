@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-26",
-  "status": "beta_c49_computer_verified_phone_and_live_pending",
+  "status": "beta_c410_computer_regression_passed_c49_full_diagnostics_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -449,7 +449,7 @@
     "documentation": "docs/development/candidate-c4-optimization-20261023.md",
     "privateEvidenceRoot": "captures/emulator/candidate-c4-optimization-20261023"
   },
-  "currentCandidateRecord": "betaC49",
+  "currentCandidateRecord": "betaC410",
   "c4Review": {
     "date": "2026-10-23",
     "package": "com.cyotun.jpq.candidate",
@@ -1819,7 +1819,7 @@
     "label": "记牌器BETA",
     "versionCode": 28,
     "versionName": "0.2.26-regression-candidate",
-    "status": "computer_verified_phone_and_live_pending",
+    "status": "live_test_failed_requires_fix",
     "baseCommit": "a67a6ed80e27fa97a7acf3aa62b4c97c7a9edf78",
     "apk": "artifacts/beta-c4.9/记牌器BETA-c4.9.apk",
     "apkSha256": "a2f0060b06e27f6f7c3f7d82aa7a6fb45ba4eafb6b507e4f5266af32181c82bf",
@@ -1916,7 +1916,7 @@
       "newCoreChecks": 28,
       "scope": "Per-seat hold, independent other/self events, exact glyph/quantity recovery, cached/stale/noisy OCR, short ownership gap, unrelated localized mask, rejected capacity and expansion, atomic proposal retry and unverified terminal/reset"
     },
-    "phoneInstalled": false,
+    "phoneInstalled": true,
     "phoneChecksCompleted": false,
     "liveAcceptancePassed": false,
     "deviceTouchedThisReview": false,
@@ -1933,6 +1933,141 @@
       "allRawLiveEvidenceRetained": true,
       "rollbackRetained": true,
       "scope": "Exact old auxiliary test APKs C4.4/C4.5/C4.6 and regenerable intermediate C4.8 source replay reports; no raw evidence, app APKs or rollback deleted"
+    },
+    "inputReadinessVerified": true,
+    "fullNonGameSuiteSkippedByUser": true,
+    "liveEvidenceRunId": "c49-live-20261026T215832"
+  },
+  "betaC410": {
+    "buildId": "C4.10",
+    "date": "2026-10-26",
+    "package": "com.cyotun.jpq.candidate",
+    "label": "记牌器BETA",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression-candidate",
+    "baseCommit": "5b970a57fd55b454a4b46302520dc893b7ef6e00",
+    "status": "computer_regression_passed_current_live_full_source_audit_pending",
+    "apk": "artifacts/beta-c4.10/记牌器BETA-c4.10.apk",
+    "apkSha256": "596fc198c89d0363e5a2409990b9451d0fa270198bee935c1e8c96a2ccacc450",
+    "testApkSha256": "6621666bb2bce83b598993ee2d663e9828b6763f66125c967faaa92b58e79423",
+    "certificateSha256": "ebe83c802f083bdb1adafc6163744dfa2cbd30f5677c04ab5ff29356c5cff71f",
+    "productionSourceFingerprint": {
+      "sha256": "1d5f6d0f7576dbdf32ef8c6a3a5f8e4514e8dd813b43af1999f5b0a35dc76d49",
+      "files": 111,
+      "scope": "Production Kotlin/XML; excludes assets, tests and docs"
+    },
+    "tests": {
+      "core": {
+        "tests": 876,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "betaHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "officialHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "sourceTools": {
+        "tests": 41,
+        "failures": 0
+      },
+      "cleanupTools": {
+        "tests": 10,
+        "failures": 0
+      }
+    },
+    "lint": {
+      "errors": 0,
+      "warnings": 59
+    },
+    "continuousPriorSourceRegression": {
+      "sessions": [
+        {
+          "session": "1792995306616-18da0f18",
+          "rounds": 4,
+          "frames": 7365,
+          "events": 138,
+          "unresolvedRounds": 0,
+          "recoveringFrames": 0,
+          "exactSemanticFinalEventsUnchanged": true,
+          "exactTeammatePoolHistoryUnchanged": true,
+          "input": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\source-replay-c48\\1792995306616-18da0f18.tape",
+          "inputSha256": "c0c6a05c992ac1663b4d32d86da024ac1086c76349ffe4e3304e18381369b11b",
+          "output": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\source-replay-c410\\final.json",
+          "outputSha256": "656b8b6166bd2e7c87acfe48a25da289863d5a5a55361646553f0956b008f448"
+        },
+        {
+          "session": "1792930731670-a43fe9ec",
+          "rounds": 6,
+          "frames": 8562,
+          "events": 217,
+          "unresolvedRounds": 0,
+          "recoveringFrames": 0,
+          "exactSemanticFinalEventsUnchanged": true,
+          "exactTeammatePoolHistoryUnchanged": true,
+          "input": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c48-c46\\1792930731670-a43fe9ec.tape",
+          "inputSha256": "90d5e7d96a8c6ff264d5d4b90952eade4c90cd1964a1cddb53fda77b4d617f4f",
+          "output": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c410-c46\\final.json",
+          "outputSha256": "1e0d95d5c084e3bdb049af81ff94c114cc6ae2605ca567a8d391b2c1d6e23d5c"
+        },
+        {
+          "session": "1792915222399-c294ee24",
+          "rounds": 6,
+          "frames": 7392,
+          "events": 209,
+          "unresolvedRounds": 0,
+          "recoveringFrames": 0,
+          "exactSemanticFinalEventsUnchanged": true,
+          "exactTeammatePoolHistoryUnchanged": true,
+          "input": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c48-c45\\1792915222399-c294ee24.tape",
+          "inputSha256": "9bfd70436a19146b60e86d7989daf8c32f38d170af1e819d7e2bed4a81dfc155",
+          "output": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c410-c45\\final.json",
+          "outputSha256": "1fdf93f0b3b654a73cde3e2c21e2437f54f7b466a85879a6499bb27c715894ff"
+        }
+      ],
+      "rounds": 16,
+      "frames": 23319,
+      "events": 564,
+      "scope": "continuous recorded sources; not new live/device validation or independent per-card truth"
+    },
+    "currentLiveAudit": {
+      "build": "C4.9",
+      "sourceCommit": "5b970a57fd55b454a4b46302520dc893b7ef6e00",
+      "sessions": 2,
+      "ledgerRounds": 4,
+      "physicalImages": 64,
+      "uniqueRemainingCountSources": 340,
+      "sourceLogSha256": "37308c72d8c7bc7da22df334dd6e2e9384a4e3ea608ac16efe435b7e39a6aa48",
+      "counterAuditSha256": "55432892620ea465ca58352822e2cbb3abda3497b27e62556f5eebf80a5e2779",
+      "fullArchiveRetrieved": false,
+      "normalRoundFullReplayComplete": false,
+      "interruptedRoundInputRecoveredOnPhone": false,
+      "blockedReason": "USB disconnected during full diagnostic export; no completed archive result retrieved. Old diagnostics.zip belongs to C4.7 and must not be substituted."
+    },
+    "phoneInstalled": false,
+    "phoneChecksCompleted": false,
+    "liveAcceptancePassed": false,
+    "officialFeaturePromotion": false,
+    "stableServerChanged": false,
+    "rollbackVerified": true,
+    "documentation": "docs/development/beta-c4.10-live-audit-20261026.md",
+    "testDataCleanup": {
+      "finishedUtc": "2026-10-26T15:46:55.2939401Z",
+      "filesRemoved": 7,
+      "bytesFreed": 93710287,
+      "planSha256": "8656ed62d245edbda89795fdec16f7f70f4450086f0b9d3a87cfcc02e30cb484",
+      "protectedFilesChecked": 71,
+      "unresolvedLiveRawEvidenceRetained": true,
+      "rollbackRetained": true,
+      "scope": "Only verified duplicate C4.10 build-output APKs (identical retained artifact copies) and five obsolete intermediate build logs; all unresolved C4.9 raw images/logs retained"
     }
   }
 }

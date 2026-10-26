@@ -339,7 +339,9 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         }
         if(frame.captureGap || frame.ambiguousPresentation || frame.incompleteReason!=null ||
             frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE)) {
-            quantityProofs.values.forEach { it.clear() }
+            for((seat,proof) in quantityProofs) {
+                if(!proof.retainAcrossOwnershipAmbiguity(frame,ledger.snapshot(),seat)) proof.clear()
+            }
             countAnchoredRepeatedSingles.clear()
             for((seat,proof) in passedSupersetProofs) {
                 // A brief ownership animation may not erase an already proved
