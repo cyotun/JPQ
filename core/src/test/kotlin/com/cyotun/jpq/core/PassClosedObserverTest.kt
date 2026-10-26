@@ -36,13 +36,19 @@ class PassClosedObserverTest {
             assertEquals(4,ledger.snapshot().plays.values.sumOf { it.size })
             assertEquals(73,ledger.snapshot().remaining!!.values.sum())
         }
+        if(!passes) {
+            assertEquals(RoundPhase.ACTIVE,ledger.snapshot().phase)
+            assertTrue(observer.diagnosticStatus().pendingReviewSeats.contains(Seat.OPPOSITE))
+        }
         return ledger.snapshot()
     }
     @Test fun passedOldSingleDoesNotFreezeAllSeatsWhenALaterStraightContainsAnotherTwo() {
         assertEquals(RoundPhase.ACTIVE,run(true).phase)
     }
     @Test fun missingPassEvidenceRetainsTheExistingStrictSupersetSafetyCheck() {
-        assertEquals(RoundPhase.RECOVERING,run(false).phase)
+        val result=run(false)
+        assertEquals(RoundPhase.ACTIVE,result.phase)
+        assertEquals(1,result.played(Seat.OPPOSITE))
     }
     @Test fun passTextCannotTurnAnUnchangedOldPhysicalSlotIntoANewWholePlay() {
         val result=run(true,true)

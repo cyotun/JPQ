@@ -95,6 +95,8 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         trace.writeIfEnabled { JSONObject().put("type","observer").put("elapsedMs",frame.timeMs).put("frame",frameNumber)
             .put("armed",state.armed).put("locked",state.locked).put("baselineWindow",state.baselineWindow).put("tribute",state.tribute)
             .put("recovering",state.recovering)
+            .put("pendingReviewSeats",org.json.JSONArray(state.pendingReviewSeats.map { it.name }))
+            .put("rejectedPlayCandidates",state.rejectedPlayCandidates)
             .put("dealingChoicesObserved",frame.dealingChoicesObserved)
             .put("handVotes",state.handVotes).put("playVotes",JSONObject(state.playVotes.mapKeys { it.key.name }))
             .put("pendingPlays",state.pendingPlays).put("sequence",state.sequence) }

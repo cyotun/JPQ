@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "date": "2026-10-25",
-  "status": "beta_c48_computer_verified_phone_and_live_pending",
+  "date": "2026-10-26",
+  "status": "beta_c49_computer_verified_phone_and_live_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -449,7 +449,7 @@
     "documentation": "docs/development/candidate-c4-optimization-20261023.md",
     "privateEvidenceRoot": "captures/emulator/candidate-c4-optimization-20261023"
   },
-  "currentCandidateRecord": "betaC48",
+  "currentCandidateRecord": "betaC49",
   "c4Review": {
     "date": "2026-10-23",
     "package": "com.cyotun.jpq.candidate",
@@ -1810,6 +1810,129 @@
       "filesRemoved": 54,
       "rollbackRetained": true,
       "scope": "Aborted pre-game C4.7 preparation, zero rounds. Two TABLE classifications have empty hand/owned plays; physical frame21 visually confirms lobby cards poster, retained. Frame30 retains visible waiting overlay."
+    }
+  },
+  "betaC49": {
+    "buildId": "C4.9",
+    "date": "2026-10-26",
+    "package": "com.cyotun.jpq.candidate",
+    "label": "记牌器BETA",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression-candidate",
+    "status": "computer_verified_phone_and_live_pending",
+    "baseCommit": "a67a6ed80e27fa97a7acf3aa62b4c97c7a9edf78",
+    "apk": "artifacts/beta-c4.9/记牌器BETA-c4.9.apk",
+    "apkSha256": "a2f0060b06e27f6f7c3f7d82aa7a6fb45ba4eafb6b507e4f5266af32181c82bf",
+    "testApkSha256": "3eefa78ef83eaebec8cd61b637fbd7ca26a502f3d2cebef88c73bdc5a12f3a40",
+    "certificateSha256": "ebe83c802f083bdb1adafc6163744dfa2cbd30f5677c04ab5ff29356c5cff71f",
+    "productionSourceFingerprint": {
+      "sha256": "271c22376cc8afd1220230f545ac3db4b1b4d933627786ebac837a814ee6a495",
+      "files": 110,
+      "scope": "Production Kotlin/XML; excludes local assets, tests and docs"
+    },
+    "tests": {
+      "core": {
+        "tests": 848,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "betaHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "officialHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "sourceTools": {
+        "tests": 41,
+        "failures": 0
+      },
+      "cleanupTools": {
+        "tests": 10,
+        "failures": 0
+      }
+    },
+    "lint": {
+      "errors": 0,
+      "warnings": 59
+    },
+    "continuousSourceRegression": {
+      "sessions": [
+        {
+          "session": "1792995306616-18da0f18",
+          "rounds": 4,
+          "frames": 7365,
+          "events": 138,
+          "unresolvedRounds": 0,
+          "recoveringFrames": 0,
+          "exactSemanticFinalEventsUnchanged": true,
+          "exactTeammatePoolHistoryUnchanged": true,
+          "input": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\source-replay-c48\\1792995306616-18da0f18.tape",
+          "inputSha256": "c0c6a05c992ac1663b4d32d86da024ac1086c76349ffe4e3304e18381369b11b",
+          "output": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\source-replay-c49\\final.json",
+          "outputSha256": "656b8b6166bd2e7c87acfe48a25da289863d5a5a55361646553f0956b008f448"
+        },
+        {
+          "session": "1792930731670-a43fe9ec",
+          "rounds": 6,
+          "frames": 8562,
+          "events": 217,
+          "unresolvedRounds": 0,
+          "recoveringFrames": 0,
+          "exactSemanticFinalEventsUnchanged": true,
+          "exactTeammatePoolHistoryUnchanged": true,
+          "input": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c48-c46\\1792930731670-a43fe9ec.tape",
+          "inputSha256": "90d5e7d96a8c6ff264d5d4b90952eade4c90cd1964a1cddb53fda77b4d617f4f",
+          "output": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c49-c46\\final.json",
+          "outputSha256": "1e0d95d5c084e3bdb049af81ff94c114cc6ae2605ca567a8d391b2c1d6e23d5c"
+        },
+        {
+          "session": "1792915222399-c294ee24",
+          "rounds": 6,
+          "frames": 7392,
+          "events": 209,
+          "unresolvedRounds": 0,
+          "recoveringFrames": 0,
+          "exactSemanticFinalEventsUnchanged": true,
+          "exactTeammatePoolHistoryUnchanged": true,
+          "input": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c48-c45\\1792915222399-c294ee24.tape",
+          "inputSha256": "9bfd70436a19146b60e86d7989daf8c32f38d170af1e819d7e2bed4a81dfc155",
+          "output": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c49-c45\\final.json",
+          "outputSha256": "1fdf93f0b3b654a73cde3e2c21e2437f54f7b466a85879a6499bb27c715894ff"
+        }
+      ],
+      "rounds": 16,
+      "frames": 23319,
+      "events": 564,
+      "scope": "continuous recorded sources; not new live/device validation or independent per-card truth"
+    },
+    "faultInjection": {
+      "newCoreChecks": 28,
+      "scope": "Per-seat hold, independent other/self events, exact glyph/quantity recovery, cached/stale/noisy OCR, short ownership gap, unrelated localized mask, rejected capacity and expansion, atomic proposal retry and unverified terminal/reset"
+    },
+    "phoneInstalled": false,
+    "phoneChecksCompleted": false,
+    "liveAcceptancePassed": false,
+    "deviceTouchedThisReview": false,
+    "officialFeaturePromotion": false,
+    "stableServerChanged": false,
+    "rollbackVerified": true,
+    "documentation": "docs/development/beta-c4.9-systemic-review-20261026.md",
+    "recoveryInvariants": "docs/development/recognition-recovery-invariants.md",
+    "testDataCleanup": {
+      "finishedUtc": "2026-10-26T13:46:38.0962075Z",
+      "filesRemoved": 7,
+      "bytesFreed": 61124104,
+      "planSha256": "f165bbddd07cad7cb770fd712b8aa6cd2d56847dc1469a84f6ef4c757dd67433",
+      "allRawLiveEvidenceRetained": true,
+      "rollbackRetained": true,
+      "scope": "Exact old auxiliary test APKs C4.4/C4.5/C4.6 and regenerable intermediate C4.8 source replay reports; no raw evidence, app APKs or rollback deleted"
     }
   }
 }

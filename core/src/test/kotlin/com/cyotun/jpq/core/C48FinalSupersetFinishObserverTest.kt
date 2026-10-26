@@ -89,6 +89,7 @@ class C48FinalSupersetFinishObserverTest {
             observer.observe(frame(t,play(finalHand)))
             assertEquals(22,ledger.snapshot().played(Seat.OPPOSITE))
         }
-        assertEquals(RoundPhase.RECOVERING,ledger.snapshot().phase)
+        assertEquals(RoundPhase.ACTIVE,ledger.snapshot().phase)
+        assertTrue(observer.diagnosticStatus().pendingReviewSeats.contains(Seat.OPPOSITE))
     }
 }

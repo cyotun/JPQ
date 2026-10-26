@@ -71,8 +71,9 @@ class OpponentDoubleFinishTest {
         val overflow=ObservedPlay(listOf(Card(Rank.TWO,Suit.RED),Card(Rank.TWO,Suit.BLACK)),.99f)
         repeat(2) { fixture.tick(Seat.NEXT,ObservedPlay(emptyList(),1f)) }
         repeat(4) { fixture.tick(Seat.NEXT,overflow) }
-        assertEquals(RoundPhase.RECOVERING,fixture.ledger.snapshot().phase)
-        assertNull(fixture.ledger.snapshot().remaining)
+        assertEquals(RoundPhase.ACTIVE,fixture.ledger.snapshot().phase)
+        assertNotNull(fixture.ledger.snapshot().remaining)
+        assertTrue(fixture.observer.diagnosticStatus().rejectedPlayCandidates>0)
         assertEquals(26,fixture.ledger.snapshot().played(Seat.NEXT))
     }
     @Test fun finalOpponentPlayArchivesBothFinishersInTheFourthVoteFrame() {
