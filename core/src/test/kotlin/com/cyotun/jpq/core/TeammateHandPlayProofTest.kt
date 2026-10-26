@@ -42,6 +42,7 @@ class TeammateHandPlayProofTest {
         captureGap: Boolean = false,
         incompleteReason: String? = null,
         ambiguous: Boolean = false,
+        remainingHandCounts: Map<Seat,RemainingHandCount> = emptyMap(),
     ): ObservedPlay? = tracker.observe(
         TableFrame(
             timeMs = time,
@@ -53,6 +54,7 @@ class TeammateHandPlayProofTest {
             captureGap = captureGap,
             teammateHand = hand,
             teammateHandConfidence = handConfidence,
+            remainingHandCounts = remainingHandCounts,
         ),
         snapshot,
     )
@@ -351,6 +353,210 @@ class TeammateHandPlayProofTest {
             assertNull(observe(tracker,snapshot,time,emptyList(),play(finalFive.dropLast(1))))
         assertNull(observe(tracker,snapshot,5268,emptyList(),play(finalFive)))
         assertNull(observe(tracker,snapshot,5418,emptyList(),play(finalFive)))
+    }
+
+    private val shortHandoffSeed=listOf(
+        Card(Rank.TEN,Suit.BLACK),Card(Rank.TEN,Suit.BLACK),Card(Rank.SIX,Suit.RED),
+        Card(Rank.SEVEN,Suit.BLACK),Card(Rank.EIGHT,Suit.RED),Card(Rank.NINE,Suit.RED))
+
+    private val shortHandoffPlay=listOf(
+        Card(Rank.TEN,Suit.BLACK),Card(Rank.SIX,Suit.RED),Card(Rank.SEVEN,Suit.BLACK),
+        Card(Rank.EIGHT,Suit.RED),Card(Rank.NINE,Suit.RED))
+
+    private val shortHandoffPartial=shortHandoffPlay.drop(1)
+
+    private fun shortHandoffTracker(baseTime: Long=1000): Pair<TeammateHandPlayProofTracker,RoundSnapshot> {
+        val tracker=TeammateHandPlayProofTracker()
+        val snapshot=snapshot(shortHandoffSeed.size,oldOppCards=fullDeck.take(21))
+        assertNull(observe(tracker,snapshot,baseTime,shortHandoffSeed,play(emptyList())))
+        assertNull(observe(tracker,snapshot,baseTime+116,shortHandoffSeed,play(emptyList())))
+        assertNull(observe(tracker,snapshot,baseTime+249,listOf(shortHandoffSeed.first()),play(shortHandoffPartial,.709f,x=.445f)))
+        return tracker to snapshot
+    }
+
+    private fun oneOpponentBadge(count: Int,source: Long)=mapOf(Seat.OPPOSITE to RemainingHandCount(count,source))
+
+    private data class IssuedShortHandoff(val tracker: TeammateHandPlayProofTracker,val snapshot: RoundSnapshot,
+        val proof: ObservedPlay,val issuedAt: Long)
+
+    private fun issueShortHandoff(): IssuedShortHandoff {
+        val (tracker,snapshot)=shortHandoffTracker(644061295)
+        assertNull(observe(tracker,snapshot,644061827,listOf(shortHandoffSeed.first()),play(shortHandoffPlay,.632f),
+            remainingHandCounts=oneOpponentBadge(1,644061827)))
+        val strong=play(shortHandoffPlay,.836f)
+        assertNull(observe(tracker,snapshot,644062093,listOf(shortHandoffSeed.first()),strong))
+        assertNull(observe(tracker,snapshot,644062342,listOf(shortHandoffSeed.first()),play(emptyList())))
+        assertNull(observe(tracker,snapshot,644062700,listOf(shortHandoffSeed.first()),play(emptyList())))
+        val proof=assertNotNull(observe(tracker,snapshot,644062858,listOf(shortHandoffSeed.first()),play(emptyList()),
+            remainingHandCounts=oneOpponentBadge(1,644062342)))
+        assertEquals(shortHandoffPlay,proof.cards)
+        assertEquals(strong.glyphs,proof.glyphs)
+        return IssuedShortHandoff(tracker,snapshot,proof,644062858)
+    }
+
+    private fun committedEvent(snapshot: RoundSnapshot,cards: List<Card>,roundId: String=snapshot.roundId!!): RoundSnapshot {
+        val old=snapshot.plays[Seat.OPPOSITE].orEmpty()
+        val sequence=(old.maxOfOrNull { it.sequence } ?: -1L)+1L
+        val event=PlayEvent(roundId,"$roundId:$sequence",sequence,Seat.OPPOSITE,cards)
+        return snapshot.copy(plays=snapshot.plays+(Seat.OPPOSITE to old+event))
+    }
+
+    @Test fun oneStrongSameSlotFullWitnessSurvivesAnObservedBlankWhenFreshBadgesAndShrinkVotesAgree() {
+        val issued=issueShortHandoff()
+        assertNull(observe(issued.tracker,issued.snapshot,644063107,listOf(shortHandoffSeed.first()),play(emptyList()),
+            remainingHandCounts=oneOpponentBadge(1,644062900)))
+    }
+
+    @Test fun postCommitHandoffSeedsTheProvedOneCardHandForTheImmediatelyVisibleSameValuePlay() {
+        val issued=issueShortHandoff()
+        val committed=committedEvent(issued.snapshot,issued.proof.cards)
+        val ten=Card(Rank.TEN,Suit.BLACK)
+        assertNull(observe(issued.tracker,committed,644063107,emptyList(),play(listOf(ten),.91f)))
+        val next=observe(issued.tracker,committed,644063240,emptyList(),play(listOf(ten),.92f))
+        assertEquals(listOf(ten),next?.cards)
+        assertEquals(play(listOf(ten),.91f).glyphs,next?.glyphs)
+    }
+
+    @Test fun postCommitSeedCannotRebaseWithoutTheExactSingleAppendWrittenToTheLedger() {
+        val issued=issueShortHandoff()
+        val ten=Card(Rank.TEN,Suit.BLACK)
+        // A returned proof alone is not evidence that commit succeeded.
+        assertNull(observe(issued.tracker,issued.snapshot,644063107,emptyList(),play(listOf(ten))))
+        assertNull(observe(issued.tracker,issued.snapshot,644063240,emptyList(),play(listOf(ten))))
+        val laterCommit=committedEvent(issued.snapshot,issued.proof.cards)
+        assertNull(observe(issued.tracker,laterCommit,644063300,emptyList(),play(listOf(ten))))
+        assertNull(observe(issued.tracker,laterCommit,644063433,emptyList(),play(listOf(ten))))
+
+        val wrong=committedEvent(issued.snapshot,List(5) { Card(Rank.FOUR,Suit.RED) })
+        assertNull(observe(issued.tracker,wrong,644063107,emptyList(),play(listOf(ten))))
+        assertNull(observe(issued.tracker,wrong,644063240,emptyList(),play(listOf(ten))))
+    }
+
+    @Test fun postCommitSeedRejectsMultipleOrRewrittenEventHistoryAndAnotherRound() {
+        val ten=Card(Rank.TEN,Suit.BLACK)
+        run {
+            val issued=issueShortHandoff()
+            val first=committedEvent(issued.snapshot,issued.proof.cards)
+            val two=committedEvent(first,listOf(ten))
+            assertNull(observe(issued.tracker,two,644063107,emptyList(),play(listOf(ten))))
+            assertNull(observe(issued.tracker,two,644063240,emptyList(),play(listOf(ten))))
+        }
+        run {
+            val issued=issueShortHandoff()
+            val rewritten=issued.snapshot.copy(plays=issued.snapshot.plays+(Seat.OPPOSITE to
+                issued.snapshot.plays.getValue(Seat.OPPOSITE).mapIndexed { index,event ->
+                    if(index==0) event.copy(eventId="rewritten-prefix") else event
+                }))
+            val appended=committedEvent(rewritten,issued.proof.cards)
+            assertNull(observe(issued.tracker,appended,644063107,emptyList(),play(listOf(ten))))
+            assertNull(observe(issued.tracker,appended,644063240,emptyList(),play(listOf(ten))))
+        }
+        run {
+            val issued=issueShortHandoff()
+            val otherRound=snapshot(shortHandoffSeed.size,"round-2",fullDeck.take(21))
+            val appended=committedEvent(otherRound,issued.proof.cards)
+            assertNull(observe(issued.tracker,appended,644063107,emptyList(),play(listOf(ten))))
+            assertNull(observe(issued.tracker,appended,644063240,emptyList(),play(listOf(ten))))
+        }
+    }
+
+    @Test fun postCommitSeedRequiresAFreshUninterruptedQualifiedSourceWithin500Ms() {
+        val ten=Card(Rank.TEN,Suit.BLACK)
+        for(kind in listOf("late","capture gap","ambiguous","unqualified source")) {
+            val issued=issueShortHandoff()
+            val committed=committedEvent(issued.snapshot,issued.proof.cards)
+            val time=if(kind=="late") issued.issuedAt+501 else issued.issuedAt+249
+            assertNull(observe(issued.tracker,committed,time,emptyList(),play(listOf(ten)),
+                captureGap=kind=="capture gap",
+                incompleteReason=if(kind=="ambiguous") "出牌归属待核对，正在重新识别" else null,
+                ambiguous=kind=="ambiguous",
+                handConfidence=if(kind=="unqualified source") .79f else .90f))
+            assertNull(observe(issued.tracker,committed,time+133,emptyList(),play(listOf(ten))))
+        }
+    }
+
+    @Test fun sameHandRebaseFrameDoesNotRefreshTheInheritedObservationClock() {
+        val issued=issueShortHandoff()
+        val committed=committedEvent(issued.snapshot,issued.proof.cards)
+        val ten=Card(Rank.TEN,Suit.BLACK)
+        assertNull(observe(issued.tracker,committed,644063107,listOf(ten),play(emptyList())))
+        // This is 501ms after the last proved shrunken-hand observation at 644062858.
+        assertNull(observe(issued.tracker,committed,644063359,emptyList(),play(listOf(ten))))
+        assertNull(observe(issued.tracker,committed,644063492,emptyList(),play(listOf(ten))))
+    }
+
+    @Test fun shortHandoffNeedsTwoIndependentFreshExactBadgesAndNeverUsesCountsToSupplyCards() {
+        val cases=listOf(
+            "no badge" to emptyList<Long>(),
+            "one badge" to listOf(1300L),
+            "cached badge" to listOf(1300L,1300L),
+            "wrong count" to listOf(1300L,1450L),
+            "stale source" to listOf(1100L,1450L),
+            "one weak complete read" to listOf(1300L,1450L),
+        )
+        for((case,sources) in cases) {
+            val (tracker,snapshot)=shortHandoffTracker()
+            assertNull(observe(tracker,snapshot,1382,listOf(shortHandoffSeed.first()),play(shortHandoffPlay,
+                if(case=="one weak complete read") .632f else .836f),
+                remainingHandCounts=sources.getOrNull(0)?.let { oneOpponentBadge(if(case=="wrong count") 2 else 1,it) } ?: emptyMap()))
+            assertNull(observe(tracker,snapshot,1515,listOf(shortHandoffSeed.first()),play(emptyList()),
+                remainingHandCounts=sources.getOrNull(1)?.let { oneOpponentBadge(1,it) } ?: emptyMap()))
+            assertNull(observe(tracker,snapshot,1648,listOf(shortHandoffSeed.first()),play(emptyList())))
+        }
+    }
+
+    @Test fun shortHandoffNeedsAStrongFullWitnessEvenWithTwoFreshMatchingBadges() {
+        val (tracker,snapshot)=shortHandoffTracker()
+        assertNull(observe(tracker,snapshot,1382,listOf(shortHandoffSeed.first()),play(shortHandoffPlay,.632f),
+            remainingHandCounts=oneOpponentBadge(1,1300)))
+        assertNull(observe(tracker,snapshot,1515,listOf(shortHandoffSeed.first()),play(shortHandoffPlay,.632f),
+            remainingHandCounts=oneOpponentBadge(1,1450)))
+        assertNull(observe(tracker,snapshot,1648,listOf(shortHandoffSeed.first()),play(emptyList()),
+            remainingHandCounts=oneOpponentBadge(1,1600)))
+    }
+
+    @Test fun shortHandoffDoesNotCountABadgeOlderThanOneSecondAtObservation() {
+        val (tracker,snapshot)=shortHandoffTracker()
+        assertNull(observe(tracker,snapshot,1382,listOf(shortHandoffSeed.first()),play(shortHandoffPlay,.836f)))
+        assertNull(observe(tracker,snapshot,1515,listOf(shortHandoffSeed.first()),play(emptyList()),
+            remainingHandCounts=oneOpponentBadge(1,1300)))
+        assertNull(observe(tracker,snapshot,1900,listOf(shortHandoffSeed.first()),play(emptyList())))
+        assertNull(observe(tracker,snapshot,2300,listOf(shortHandoffSeed.first()),play(emptyList())))
+        assertNull(observe(tracker,snapshot,2700,listOf(shortHandoffSeed.first()),play(emptyList()),
+            remainingHandCounts=oneOpponentBadge(1,1600))) // Fresh source timestamp is already 1100ms old.
+    }
+
+    @Test fun oldBadgePairCannotCompleteWithAFreshFullWitness() {
+        val (tracker,snapshot)=shortHandoffTracker()
+        assertNull(observe(tracker,snapshot,1382,listOf(shortHandoffSeed.first()),play(shortHandoffPartial,.709f,x=.445f),
+            remainingHandCounts=oneOpponentBadge(1,1300)))
+        for(t in listOf(1782L,2182L)) assertNull(observe(tracker,snapshot,t,listOf(shortHandoffSeed.first()),play(emptyList())))
+        assertNull(observe(tracker,snapshot,2582,listOf(shortHandoffSeed.first()),play(shortHandoffPlay,.836f)))
+        assertNull(observe(tracker,snapshot,2982,listOf(shortHandoffSeed.first()),play(emptyList()),
+            remainingHandCounts=oneOpponentBadge(1,2300)))
+    }
+
+    @Test fun shortHandoffRejectsAmbiguityChangedHandOrChangedDisplayAfterTheWitness() {
+        for(kind in listOf("ambiguous","capture gap","changed hand","changed display")) {
+            val (tracker,snapshot)=shortHandoffTracker()
+            assertNull(observe(tracker,snapshot,1382,listOf(shortHandoffSeed.first()),play(shortHandoffPlay,.836f),
+                remainingHandCounts=oneOpponentBadge(1,1300)))
+            val changed=when(kind) {
+                "changed hand" -> shortHandoffSeed.take(2)
+                else -> listOf(shortHandoffSeed.first())
+            }
+            val display=when(kind) {
+                "changed display" -> play(shortHandoffPlay,.836f,x=.62f)
+                else -> play(emptyList())
+            }
+            assertNull(observe(tracker,snapshot,1515,changed,display,
+                captureGap=kind=="capture gap",
+                incompleteReason=if(kind=="ambiguous") "出牌归属待核对，正在重新识别" else null,
+                ambiguous=kind=="ambiguous",
+                remainingHandCounts=oneOpponentBadge(1,1500)))
+            assertNull(observe(tracker,snapshot,1648,listOf(shortHandoffSeed.first()),play(emptyList()),
+                remainingHandCounts=oneOpponentBadge(1,1600)))
+        }
     }
 
     @Test fun movedConflictingExpandedOrInvalidWholeGroupCannotInheritThePartialAnchor() {

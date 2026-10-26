@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-25",
-  "status": "beta_c46_computer_and_phone_non_game_verified_live_pending",
+  "status": "beta_c47_computer_verified_phone_and_live_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -449,7 +449,7 @@
     "documentation": "docs/development/candidate-c4-optimization-20261023.md",
     "privateEvidenceRoot": "captures/emulator/candidate-c4-optimization-20261023"
   },
-  "currentCandidateRecord": "betaC46",
+  "currentCandidateRecord": "betaC47",
   "c4Review": {
     "date": "2026-10-23",
     "package": "com.cyotun.jpq.candidate",
@@ -1224,7 +1224,7 @@
     "date": "2026-10-25",
     "package": "com.cyotun.jpq.candidate",
     "label": "记牌器BETA",
-    "status": "computer_and_phone_non_game_verified_live_pending",
+    "status": "six_live_rounds_audited_confirmed_freeze_and_own_tail_miss_not_accepted",
     "baseCommit": "5ef217e",
     "versionCode": 28,
     "versionName": "0.2.26-regression-candidate",
@@ -1410,6 +1410,158 @@
       "testProgramsClosed": true,
       "returnedToDesktop": true,
       "toolRetry": "Initial storage class path was incorrect; retained the failed tool invocation and reran the entire corrected group. No product code changed."
+    },
+    "liveReviewDocument": "docs/development/beta-c4.7-live-audit-20261025.md"
+  },
+  "betaC47": {
+    "buildId": "C4.7",
+    "date": "2026-10-26",
+    "package": "com.cyotun.jpq.candidate",
+    "label": "记牌器BETA",
+    "status": "computer_verified_phone_unavailable_live_pending",
+    "baseCommit": "3d0d6151fb9ad233bff8c468f5a5c49cd3f06a00",
+    "versionCode": 28,
+    "versionName": "0.2.26-regression-candidate",
+    "apk": "artifacts/beta-c4.7/记牌器BETA-c4.7.apk",
+    "apkSha256": "0dad4f885eba933030a9563a261b4f3f9e5f1dae2ecd11610ebf6ded17d7cf36",
+    "testApkSha256": "980024d3d7cd21811de55fab2423197cdcf473cd6c4b266ad651d7d29112f83f",
+    "certificateSha256": "ebe83c802f083bdb1adafc6163744dfa2cbd30f5677c04ab5ff29356c5cff71f",
+    "productionSourceFingerprint": {
+      "sha256": "e25bccef80be4172feace8c334879072d697889e7b8be7e6a5ae1868f5fa43b0",
+      "files": 106,
+      "scope": "Production Kotlin/XML; excludes local model/font, tests, docs"
+    },
+    "tests": {
+      "core": {
+        "tests": 773,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "betaHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "officialHost": {
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "pythonSourceChecks": {
+        "tests": 33,
+        "failures": 0
+      },
+      "evidenceCleanup": {
+        "tests": 10,
+        "failures": 0
+      }
+    },
+    "lint": {
+      "errors": 0,
+      "warnings": 59
+    },
+    "liveSourceAudit": {
+      "build": "C4.6",
+      "rounds": 6,
+      "frames": 8562,
+      "archiveSha256": "cfa32bb8072cf436509fc51c1cc5f9402d3528f5b597708bb695f332da7d8af4",
+      "confirmedFindings": [
+        "closed_pass_lost_on_other_seat_append_freezes_round",
+        "own_terminal_four_k_lost_during_table_ownership_animation",
+        "short_teammate_straight_missed_then_opponent_reveal_counted"
+      ],
+      "scope": "Complete retained model/scene traces, independent remaining-count sources and available physical screenshots; not all cards independently annotated"
+    },
+    "currentSourceReplay": {
+      "frames": 8562,
+      "baselines": 6,
+      "finishedRounds": 6,
+      "unresolvedRounds": 0,
+      "failures": 0,
+      "events": 217,
+      "sha256": "f487d1fb39cfb37ed2d5819d916c40991744a1975ea242d9712b054ae473a209",
+      "countsByRoundSelfPreviousOppositeNext": [
+        [
+          27,
+          20,
+          27,
+          25
+        ],
+        [
+          27,
+          26,
+          27,
+          27
+        ],
+        [
+          16,
+          27,
+          14,
+          27
+        ],
+        [
+          27,
+          25,
+          27,
+          27
+        ],
+        [
+          21,
+          27,
+          22,
+          27
+        ],
+        [
+          26,
+          27,
+          27,
+          27
+        ]
+      ],
+      "sourceManifestSha256": "62344bfa44eb7b50fc8300cbaafce87c0e560f0d128c150510828af447f11260",
+      "badgeCheck": {
+        "independentSources": 1900,
+        "strictWindowUnmatched": 4,
+        "unexplainedSources": 0,
+        "reviewedLateSources": 4,
+        "lateGroups": 1,
+        "maximumLateRevisionMs": 3059,
+        "latencyWindowMs": [
+          -700,
+          1800
+        ],
+        "explanation": "One already recorded PREVIOUS play first detected as five cards, later directly completed as six. Four count sources precede that revision outside strict latency tolerance; retained as a documented detection delay, not discarded.",
+        "scope": "quantity consistency; not independent per-card truth"
+      }
+    },
+    "priorRegression": {
+      "build": "C4.5",
+      "frames": 7392,
+      "rounds": 6,
+      "events": 209,
+      "exactFinalEventsUnchanged": true,
+      "exactTeammatePoolHistoryUnchanged": true,
+      "sha256": "eb26cfc970e385a992cb0c84de329c3129538bed5ff83eca4a6fc193e034b0db"
+    },
+    "phoneInstalled": false,
+    "phoneChecksCompleted": false,
+    "phoneBlocker": "ADB reported no connected devices; C4.7 phone and live checks have not run",
+    "liveAcceptancePassed": false,
+    "officialFeaturePromotion": false,
+    "stableServerChanged": false,
+    "rollbackVerified": true,
+    "documentation": "docs/development/beta-c4.7-live-audit-20261025.md",
+    "privateEvidence": "captures/phone/beta-c46-live-20261025/c46-live-20261025T201720",
+    "testDataCleanup": {
+      "compactedArchives": 15,
+      "duplicateArchivesRemoved": 1,
+      "retainedMembers": 7308,
+      "netBytesFreed": 4598922169,
+      "latestLiveOriginalsRetained": true,
+      "rollbackRetained": true
     }
   }
 }

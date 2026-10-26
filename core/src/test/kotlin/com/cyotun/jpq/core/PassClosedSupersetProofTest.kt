@@ -6,6 +6,14 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class PassClosedSupersetProofTest {
+    private data class R3Fixture(
+        val hand: List<Card>,
+        val oldSnapshot: RoundSnapshot,
+        val appendedSnapshot: RoundSnapshot,
+        val prior: QuantityAnchoredPlayProof.PriorPresentation,
+        val newGroup: List<Card>,
+    )
+
     private val old = Card(Rank.TWO, Suit.BLACK)
     private val added = listOf(
         Card(Rank.A, Suit.BLACK), Card(Rank.Q, Suit.RED),
@@ -187,5 +195,136 @@ class PassClosedSupersetProofTest {
         for(t in 1300L..1480L step 60) assertNull(proof.observe(group(time=t),noOther,Seat.OPPOSITE,prior,hand,900))
         val gap=PassClosedSupersetProof(); openBoundary(gap)
         for(t in 2000L..2180L step 60) assertNull(gap.observe(group(time=t),snapshot,Seat.OPPOSITE,prior,hand,900))
+    }
+
+    private fun r3Fixture(): R3Fixture {
+        val oldEight=Card(Rank.EIGHT,Suit.RED)
+        val earlierOwnTwo=Card(Rank.TWO,Suit.BLACK)
+        val ownNine=Card(Rank.NINE,Suit.BLACK)
+        val nextKing=Card(Rank.K,Suit.BLACK)
+        val straight=listOf(Card(Rank.TWO,Suit.RED),Card(Rank.THREE,Suit.RED),
+            Card(Rank.FOUR,Suit.BLACK),Card(Rank.FIVE,Suit.RED),Card(Rank.SIX,Suit.BLACK))
+        val newGroup=listOf(oldEight,Card(Rank.SEVEN,Suit.BLACK),Card(Rank.SIX,Suit.RED),
+            Card(Rank.FIVE,Suit.RED),Card(Rank.FOUR,Suit.RED))
+        val deck=Rank.entries.flatMap { rank ->
+            if(rank.isJoker) List(2) { Card(rank,Suit.NONE) }
+            else listOf(Suit.RED,Suit.BLACK).flatMap { suit -> List(4) { Card(rank,suit) } }
+        }.toMutableList()
+        (listOf(oldEight,nextKing)+straight+newGroup).forEach { check(deck.remove(it)) }
+        val initialHand=listOf(earlierOwnTwo,ownNine)+deck.filterNot { it==earlierOwnTwo || it==ownNine }.take(25)
+        val ledger=RoundLedger()
+        ledger.begin("r3-pass-append",initialHand)
+        ledger.commit(PlayEvent("r3-pass-append","self-two",1,Seat.SELF,listOf(earlierOwnTwo)))
+        ledger.commit(PlayEvent("r3-pass-append","opp-eight",3,Seat.OPPOSITE,listOf(oldEight)))
+        ledger.commit(PlayEvent("r3-pass-append","self-nine",4,Seat.SELF,listOf(ownNine)))
+        ledger.commit(PlayEvent("r3-pass-append","next-king",5,Seat.NEXT,listOf(nextKing)))
+        val ownHand=ledger.currentHand()
+        val oldSnapshot=ledger.snapshot()
+        val oldBox=GlyphBox(.4773f,.1588f,.4913f,.2035f)
+        val trackedPrior=QuantityAnchoredPlayProof.PriorPresentation("opp-eight",listOf(oldEight),
+            listOf(PlayGlyph(oldEight,.891f,oldBox)))
+        ledger.commit(PlayEvent("r3-pass-append","next-straight",6,Seat.NEXT,straight))
+        return R3Fixture(ownHand,oldSnapshot,ledger.snapshot(),trackedPrior,newGroup)
+    }
+
+    private fun r3EmptyFrame(f: R3Fixture,time: Long,source: Long?=null): TableFrame {
+        val seats=Seat.entries.associateWith { seat ->
+            ObservedPlay(emptyList(),1f,regionObserved=seat!=Seat.OPPOSITE)
+        }
+        return TableFrame(time,TableScene.TABLE,f.hand,seats,
+            observedPasses=source?.let { mapOf(Seat.OPPOSITE to it) }.orEmpty())
+    }
+
+    private fun r3GroupFrame(f: R3Fixture,time: Long,confidence: Float=.873f): TableFrame {
+        val glyphs=f.newGroup.map { card ->
+            val (left,right)=when(card.rank) {
+                Rank.EIGHT -> .529f to .5413f
+                Rank.SEVEN -> .505f to .5174f
+                Rank.SIX -> .4808f to .4924f
+                Rank.FIVE -> .4561f to .4678f
+                else -> .4309f to .4438f
+            }
+            PlayGlyph(card,confidence,GlyphBox(left,.1673f,right,.2076f))
+        }
+        val play=ObservedPlay(f.newGroup,confidence,glyphs)
+        return TableFrame(time,TableScene.TABLE,f.hand,
+            Seat.entries.associateWith { if(it==Seat.OPPOSITE) play else ObservedPlay(emptyList(),1f) })
+    }
+
+    private fun openR3Pass(proof: PassClosedSupersetProof,f: R3Fixture) {
+        assertNull(proof.observe(r3EmptyFrame(f,1000),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3EmptyFrame(f,1100,1100),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3EmptyFrame(f,1250,1250),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+    }
+
+    @Test fun r3PassWitnessSurvivesOnlyAnAppendAndCommitsTheDirectNewFiveCardGroupOnce() {
+        val f=r3Fixture(); val proof=PassClosedSupersetProof()
+        openR3Pass(proof,f)
+        assertNull(proof.observe(r3EmptyFrame(f,1500,1400),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3GroupFrame(f,1600),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3GroupFrame(f,1660,.805f),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3GroupFrame(f,1720),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        val committed=assertNotNull(proof.observe(r3GroupFrame(f,1780),f.appendedSnapshot,
+            Seat.OPPOSITE,f.prior,f.hand,900))
+        assertEquals(f.newGroup.map { it.colorKey() }.sorted(),committed.cards.map { it.colorKey() }.sorted())
+        assertNull(proof.observe(r3GroupFrame(f,1840),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+    }
+
+    @Test fun anAppendDuringAStableCandidateKeepsItsOriginalVotesAndDeliveryFence() {
+        val f=r3Fixture(); val proof=PassClosedSupersetProof(); openR3Pass(proof,f)
+        assertNull(proof.observe(r3GroupFrame(f,1600),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3GroupFrame(f,1660),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3GroupFrame(f,1720),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNotNull(proof.observe(r3GroupFrame(f,1780),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3GroupFrame(f,1840),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+    }
+
+    @Test fun rewritingRemovingOrReorderingAClosingEventInvalidatesTheOldPassWitness() {
+        val f=r3Fixture()
+        val self=f.oldSnapshot.plays.getValue(Seat.SELF).last()
+        val next=f.oldSnapshot.plays.getValue(Seat.NEXT).single()
+        val rewritten=f.oldSnapshot.copy(plays=f.oldSnapshot.plays+
+            (Seat.SELF to listOf(self.copy(eventId="rewritten-self-event"))))
+        val recarded=f.oldSnapshot.copy(plays=f.oldSnapshot.plays+
+            (Seat.SELF to listOf(self.copy(cards=listOf(Card(Rank.A,Suit.RED))))))
+        val reassigned=f.oldSnapshot.copy(plays=f.oldSnapshot.plays+
+            (Seat.SELF to listOf(self.copy(seat=Seat.PREVIOUS))))
+        val removed=f.oldSnapshot.copy(plays=f.oldSnapshot.plays+(Seat.SELF to emptyList()))
+        val reordered=f.oldSnapshot.copy(plays=f.oldSnapshot.plays+
+            (Seat.SELF to listOf(self.copy(sequence=5)))+
+            (Seat.NEXT to listOf(next.copy(sequence=4))))
+        for(changed in listOf(rewritten,recarded,reassigned,removed,reordered)) {
+            val proof=PassClosedSupersetProof(); openR3Pass(proof,f)
+            for(t in 1300L..1480L step 60)
+                assertNull(proof.observe(r3GroupFrame(f,t),changed,Seat.OPPOSITE,f.prior,f.hand,900))
+        }
+    }
+
+    @Test fun anAppendBeforeTwoPassSourcesRebasesTheFenceAndCannotBorrowAnOlderVote() {
+        val f=r3Fixture(); val proof=PassClosedSupersetProof()
+        assertNull(proof.observe(r3EmptyFrame(f,1000),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3EmptyFrame(f,1100,1100),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3EmptyFrame(f,1200,1150),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3EmptyFrame(f,1300,1300),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        for(t in 1360L..1600L step 60)
+            assertNull(proof.observe(r3GroupFrame(f,t),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+    }
+
+    @Test fun anAppendAfterCandidateFrameGapCannotReuseTheOldPassWitness() {
+        val f=r3Fixture(); val proof=PassClosedSupersetProof(); openR3Pass(proof,f)
+        assertNull(proof.observe(r3GroupFrame(f,1600),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3GroupFrame(f,3301),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        for(t in 3361L..3541L step 60)
+            assertNull(proof.observe(r3GroupFrame(f,t),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+    }
+
+    @Test fun futurePassSourceCannotContributeToAnAppendPreservedWitness() {
+        val f=r3Fixture(); val proof=PassClosedSupersetProof()
+        assertNull(proof.observe(r3EmptyFrame(f,1000),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3EmptyFrame(f,1100,1100),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3EmptyFrame(f,1250,1250),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        assertNull(proof.observe(r3EmptyFrame(f,1500,1600),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        for(t in 1600L..1780L step 60)
+            assertNull(proof.observe(r3GroupFrame(f,t),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
     }
 }

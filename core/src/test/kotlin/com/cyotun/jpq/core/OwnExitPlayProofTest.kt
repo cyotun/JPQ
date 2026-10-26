@@ -95,6 +95,144 @@ class OwnExitPlayProofTest {
         assertEquals(own,certificate.cards)
     }
 
+    @Test fun aQualifiedEmptyOwnHandDuringTableOwnershipAmbiguityKeepsOnlyTheFixedAnchorDeadline() {
+        val own=listOf(Card(Rank.K,Suit.BLACK),Card(Rank.K,Suit.BLACK),
+            Card(Rank.K,Suit.BLACK),Card(Rank.K,Suit.RED))
+        val l=ledger(own); val proof=OwnExitPlayProof()
+        assertNull(proof.observe(frame(1000,hand=own,p=null),l.snapshot(),own))
+        assertNull(proof.observe(frame(1100,hand=emptyList(),p=play(own)),l.snapshot(),own))
+        assertNull(proof.observe(frame(1240,hand=emptyList(),p=play(own)),l.snapshot(),own))
+        fun ambiguousAt(t: Long)=frame(t,TableScene.TABLE,emptyList(),p=play(emptyList())).copy(
+            ambiguousPresentation=true,incompleteReason="出牌归属待核对，正在重新识别")
+
+        assertNull(proof.observe(ambiguousAt(1300),l.snapshot(),own))
+        assertEquals(3300L,proof.pendingOwnCompletionDeadline(1300,l.snapshot()))
+        assertNull(proof.observe(ambiguousAt(1500),l.snapshot(),own))
+        assertEquals(3300L,proof.pendingOwnCompletionDeadline(1500,l.snapshot()))
+        assertEquals(3300L,proof.pendingOwnCompletionDeadline(3300,l.snapshot()))
+        assertNull(proof.pendingOwnCompletionDeadline(3301,l.snapshot()))
+
+        l.selfFinished()
+        assertNull(proof.observe(frame(1600,hand=emptyList(),p=null),l.snapshot(),l.currentHand()))
+        assertEquals(3300L,proof.pendingOwnCompletionDeadline(1600,l.snapshot().copy(phase=RoundPhase.ACTIVE)))
+        listOf(1700L,1820L,1940L).forEach {
+            assertNull(proof.observeWithCertificate(frame(it,hand=emptyList(),p=play(own)),l.snapshot(),l.currentHand()))
+        }
+        val certificate=proof.observeWithCertificate(
+            frame(2060,hand=emptyList(),p=play(own),finished=true),l.snapshot(),l.currentHand())
+        assertNotNull(certificate)
+        assertEquals(own,certificate.cards)
+
+        val expiredLedger=ledger(own); val expiredProof=OwnExitPlayProof()
+        assertNull(expiredProof.observe(frame(1000,hand=own,p=null),expiredLedger.snapshot(),own))
+        assertNull(expiredProof.observe(frame(1100,hand=emptyList(),p=play(own)),expiredLedger.snapshot(),own))
+        assertNull(expiredProof.observe(frame(1240,hand=emptyList(),p=play(own)),expiredLedger.snapshot(),own))
+        assertNull(expiredProof.observe(ambiguousAt(1300),expiredLedger.snapshot(),own))
+        expiredLedger.selfFinished()
+        assertNull(expiredProof.observe(frame(3301,hand=emptyList(),p=play(own),finished=true),
+            expiredLedger.snapshot(),expiredLedger.currentHand()))
+        repeat(5) { index -> assertNull(expiredProof.observe(frame(3421L+index*120,
+            hand=emptyList(),p=play(own),finished=true),expiredLedger.snapshot(),expiredLedger.currentHand())) }
+    }
+
+    @Test fun sameRankSlotColorOrConfidenceFlickerAbstainsWithoutSpendingTheAmbiguityWindow() {
+        val own=listOf(Card(Rank.K,Suit.BLACK),Card(Rank.K,Suit.BLACK),
+            Card(Rank.K,Suit.BLACK),Card(Rank.K,Suit.RED))
+        val allRed=List(4) { Card(Rank.K,Suit.RED) }
+        val l=ledger(own); val proof=OwnExitPlayProof()
+        assertNull(proof.observe(frame(1000,hand=own,p=null),l.snapshot(),own))
+        assertNull(proof.observe(frame(1100,hand=emptyList(),p=play(own)),l.snapshot(),own))
+        assertNull(proof.observe(frame(1240,hand=emptyList(),p=play(own)),l.snapshot(),own))
+        val ambiguous=frame(1300,hand=emptyList(),p=play(emptyList())).copy(
+            ambiguousPresentation=true,incompleteReason="出牌归属待核对，正在重新识别")
+        assertNull(proof.observe(ambiguous,l.snapshot(),own))
+        l.selfFinished()
+
+        assertNull(proof.observe(frame(1400,hand=emptyList(),p=play(allRed)),l.snapshot(),l.currentHand()))
+        assertNull(proof.observe(frame(1520,hand=emptyList(),p=play(own,confidence=.79f)),l.snapshot(),l.currentHand()))
+        assertEquals(3300L,proof.pendingOwnCompletionDeadline(1520,l.snapshot().copy(phase=RoundPhase.ACTIVE)))
+        listOf(1640L,1760L,1880L).forEach {
+            assertNull(proof.observe(frame(it,hand=emptyList(),p=play(own)),l.snapshot(),l.currentHand()))
+        }
+        val certificate=proof.observeWithCertificate(
+            frame(2000,hand=emptyList(),p=play(own),finished=true),l.snapshot(),l.currentHand())
+        assertNotNull(certificate)
+        assertEquals(own,certificate.cards)
+    }
+
+    @Test fun ambiguousOwnHandContinuationRejectsMissingAnchorBadHandFaultsRankAndMovedSlots() {
+        val own=listOf(Card(Rank.K,Suit.BLACK),Card(Rank.K,Suit.BLACK),
+            Card(Rank.K,Suit.BLACK),Card(Rank.K,Suit.RED))
+        fun proofWithAnchor(): Pair<RoundLedger,OwnExitPlayProof> {
+            val l=ledger(own); val proof=OwnExitPlayProof()
+            assertNull(proof.observe(frame(1000,hand=own,p=null),l.snapshot(),own))
+            assertNull(proof.observe(frame(1100,hand=emptyList(),p=play(own)),l.snapshot(),own))
+            assertNull(proof.observe(frame(1240,hand=emptyList(),p=play(own)),l.snapshot(),own))
+            return l to proof
+        }
+        fun ambiguous(t: Long,hand: List<Card>?=emptyList(),captureGap: Boolean=false,
+            localized: Set<Seat> = emptySet(),dealing: Boolean=false,reason: String="出牌归属待核对，正在重新识别",
+            scene: TableScene=TableScene.TABLE)=frame(t,scene,hand,p=play(emptyList())).copy(
+                ambiguousPresentation=true,incompleteReason=reason,captureGap=captureGap,
+                localizedOverlaySeats=localized,dealingChoicesObserved=dealing)
+
+        run {
+            val l=ledger(own); val proof=OwnExitPlayProof()
+            assertNull(proof.observe(ambiguous(1000),l.snapshot(),own))
+            assertNull(proof.pendingOwnCompletionDeadline(1000,l.snapshot()))
+        }
+        val invalidFrames=listOf(
+            ambiguous(1300,hand=null),
+            ambiguous(1300,hand=own.take(2)),
+            ambiguous(1300,captureGap=true),
+            ambiguous(1300,localized=setOf(Seat.SELF)),
+            ambiguous(1300,dealing=true),
+            ambiguous(1300,reason="其他不完整原因"),
+            ambiguous(1300,scene=TableScene.TEAMMATE),
+        )
+        for(bad in invalidFrames) {
+            val (l,proof)=proofWithAnchor()
+            assertNull(proof.observe(bad,l.snapshot(),own))
+            assertNull(proof.pendingOwnCompletionDeadline(bad.timeMs,l.snapshot()))
+            l.selfFinished()
+            repeat(5) { index -> assertNull(proof.observe(frame(1500L+index*120L,
+                TableScene.TEAMMATE,p=play(own)),l.snapshot(),l.currentHand())) }
+        }
+
+        for(changed in listOf(
+            play(listOf(Card(Rank.Q,Suit.BLACK),Card(Rank.Q,Suit.BLACK),Card(Rank.Q,Suit.BLACK),Card(Rank.Q,Suit.RED))),
+            play(own,shift=.08f))) {
+            val (l,proof)=proofWithAnchor()
+            assertNull(proof.observe(ambiguous(1300),l.snapshot(),own))
+            l.selfFinished()
+            assertNull(proof.observe(frame(1420,hand=emptyList(),p=changed),l.snapshot(),l.currentHand()))
+            repeat(5) { index -> assertNull(proof.observe(frame(1540L+index*120L,
+                hand=emptyList(),p=play(own)),l.snapshot(),l.currentHand())) }
+        }
+    }
+
+    @Test fun pendingOwnCompletionDeadlineRequiresTheOriginalActiveLedgerVersion() {
+        val own=listOf(Card(Rank.K,Suit.BLACK),Card(Rank.K,Suit.BLACK),
+            Card(Rank.K,Suit.BLACK),Card(Rank.K,Suit.RED))
+        val (l,proof)=run {
+            val ledger=ledger(own); val ownProof=OwnExitPlayProof()
+            assertNull(ownProof.observe(frame(1000,hand=own,p=null),ledger.snapshot(),own))
+            assertNull(ownProof.observe(frame(1100,hand=emptyList(),p=play(own)),ledger.snapshot(),own))
+            assertNull(ownProof.observe(frame(1240,hand=emptyList(),p=play(own)),ledger.snapshot(),own))
+            assertNull(ownProof.observe(frame(1300,hand=emptyList(),p=play(emptyList())).copy(
+                ambiguousPresentation=true,incompleteReason="出牌归属待核对，正在重新识别"),ledger.snapshot(),own))
+            ledger to ownProof
+        }
+        val snap=l.snapshot()
+        assertEquals(3300L,proof.pendingOwnCompletionDeadline(1400,snap))
+        assertNull(proof.pendingOwnCompletionDeadline(1400,snap.copy(roundId="other")))
+        assertNull(proof.pendingOwnCompletionDeadline(1400,snap.copy(phase=RoundPhase.SELF_FINISHED)))
+        assertNull(proof.pendingOwnCompletionDeadline(1400,snap.copy(remaining=null)))
+        val changedEvents=snap.plays.getValue(Seat.SELF).map { it.copy(eventId="changed") }
+        assertNull(proof.pendingOwnCompletionDeadline(1400,snap.copy(
+            plays=snap.plays+(Seat.SELF to changedEvents))))
+    }
+
     @Test fun ambiguousHandoffCannotExtendItsDeadlineOrSeedFromTheFinishBadge() {
         val own=listOf(Card(Rank.J,Suit.RED),Card(Rank.J,Suit.RED),
             Card(Rank.J,Suit.RED),Card(Rank.J,Suit.BLACK))

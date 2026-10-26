@@ -96,6 +96,9 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     private val teammateHandProof=TeammateHandPlayProofTracker()
     private val terminalOwnHandProof=TerminalOwnHandProof()
     private val ownExitPlayProof=OwnExitPlayProof()
+    private data class DeferredOwnCompletion(val roundId: String,val ownEvents: List<PlayEvent>,val ownHand: List<Card>,val deadline: Long)
+    private enum class TerminalCompletionDecision { CONTINUE, HOLD, DISPROVED }
+    private var deferredOwnCompletion: DeferredOwnCompletion?=null
     private val ownHandDifferenceProof=OwnHandDifferenceProof()
     private val localizedPendingRecovery=LocalizedPendingPlayRecovery()
     private val quantityProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { QuantityAnchoredPlayProof() }
@@ -117,6 +120,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         teammateHandProof.reset()
         terminalOwnHandProof.reset()
         ownExitPlayProof.reset()
+        deferredOwnCompletion=null
         ownHandDifferenceProof.clear()
         localizedPendingRecovery.reset()
         quantityProofs.values.forEach { it.clear() }
@@ -233,6 +237,51 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         ledger.finish(); emit(); ledger.waitForNext(); lastRound=null; emit()
         armed=false; baselineWindow=false; tribute=false; freshDeal=false; clearCandidates()
     }
+    /** A positively finished own hand may still be in its short departure
+     * animation. Retain ACTIVE ownership only while an existing direct anchor
+     * can earn fresh votes; no outside presentation is collected in this window. */
+    private fun holdTerminalOwnCompletion(frame: TableFrame): TerminalCompletionDecision {
+        val snapshot=ledger.snapshot()
+        val pending=deferredOwnCompletion
+        val clean=frame.scene in setOf(TableScene.TABLE,TableScene.TEAMMATE) && !frame.captureGap && !frame.ambiguousPresentation &&
+            frame.incompleteReason==null && frame.localizedOverlaySeats.isEmpty()
+        val lowerHand=if(frame.scene==TableScene.TEAMMATE) frame.teammateHand.takeIf { frame.teammateHandConfidence>=.65f } else frame.hand
+        if(clean && snapshot.phase==RoundPhase.ACTIVE && snapshot.played(Seat.OPPOSITE)==27 &&
+            lowerHand?.isNotEmpty()==true && lowerHand.map { it.rank }.sorted()==ledger.currentHand().map { it.rank }.sorted()) {
+            // Re-evaluate positive hand evidence on every frame: a cached finish
+            // label cannot win merely because the previous defer was canceled.
+            deferredOwnCompletion=null
+            return TerminalCompletionDecision.DISPROVED
+        }
+        if(pending!=null) {
+            val phaseValid=snapshot.phase==RoundPhase.ACTIVE ||
+                (snapshot.phase==RoundPhase.RECOVERING && ledger.phaseBeforeRecovery()==RoundPhase.ACTIVE)
+            val sameScope=snapshot.roundId==pending.roundId && phaseValid &&
+                snapshot.played(Seat.OPPOSITE)==27 && snapshot.plays[Seat.SELF].orEmpty()==pending.ownEvents
+            if(!sameScope) { deferredOwnCompletion=null; return TerminalCompletionDecision.CONTINUE }
+            if(clean && lowerHand?.map { it.rank }?.sorted()==pending.ownHand.map { it.rank }.sorted()) {
+                // A complete owned hand visibly returning disproves departure;
+                // the prior cue cannot override that positive contradiction.
+                deferredOwnCompletion=null
+                return TerminalCompletionDecision.DISPROVED
+            }
+            val authority=ownExitPlayProof.pendingOwnCompletionDeadline(frame.timeMs,snapshot)
+            if(authority==pending.deadline && frame.timeMs<=pending.deadline) return TerminalCompletionDecision.HOLD
+            deferredOwnCompletion=null
+            // The earlier positive completion cue remains real even if the
+            // bounded card proof cannot finish. It never supplies missing cards.
+            if(snapshot.phase==RoundPhase.ACTIVE) { ledger.selfFinished(); emit() }
+            else { finishConfirmedRound(); return TerminalCompletionDecision.HOLD }
+            return TerminalCompletionDecision.CONTINUE
+        }
+        if(recovery!=null || !clean || (!frame.selfFinished && frame.scene!=TableScene.TEAMMATE) || lowerHand?.isEmpty()!=true ||
+            snapshot.phase!=RoundPhase.ACTIVE || snapshot.played(Seat.OPPOSITE)!=27 ||
+            snapshot.played(Seat.SELF)>=27) return TerminalCompletionDecision.CONTINUE
+        val id=snapshot.roundId ?: return TerminalCompletionDecision.CONTINUE
+        val deadline=ownExitPlayProof.pendingOwnCompletionDeadline(frame.timeMs,snapshot) ?: return TerminalCompletionDecision.CONTINUE
+        deferredOwnCompletion=DeferredOwnCompletion(id,snapshot.plays[Seat.SELF].orEmpty().map { it.copy(cards=it.cards.toList()) },ledger.currentHand().toList(),deadline)
+        return TerminalCompletionDecision.HOLD
+    }
     fun observe(frame: TableFrame) {
         if(frame.timeMs<=lastTime) return
         var snap=ledger.snapshot()
@@ -277,7 +326,16 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         // Observe before the scene/hand-off branches clear currentHand. A full
         // last own display may precede the teammate label while its lower hand
         // has already replaced ours. Recovery is reconciled independently.
-        val ownExit=if(recovery==null) ownExitPlayProof.observeWithCertificate(frame,ledger.snapshot(),ledger.currentHand())
+        val ownExitSnapshot=ledger.snapshot()
+        val terminalHint=deferredOwnCompletion?.takeIf { pending ->
+            ownExitSnapshot.phase==RoundPhase.ACTIVE && ownExitSnapshot.roundId==pending.roundId &&
+                ownExitSnapshot.plays[Seat.SELF].orEmpty()==pending.ownEvents && frame.timeMs<=pending.deadline
+        }
+        // Own completion is latched for this exact event version; it cannot
+        // become false again while the already observed hand animation ends.
+        // Only this proof receives the hint: outside cards remain suspended.
+        val ownExitFrame=if(terminalHint!=null) frame.copy(selfFinished=true) else frame
+        val ownExit=if(recovery==null) ownExitPlayProof.observeWithCertificate(ownExitFrame,ownExitSnapshot,ledger.currentHand())
             else { ownExitPlayProof.reset(); null }
         if(ownExit!=null) {
             val current=ledger.snapshot()
@@ -295,6 +353,8 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         val ownDifference=if(recovery==null) ownHandDifferenceProof.observe(frame,ledger.snapshot(),ledger.currentHand())
             else { ownHandDifferenceProof.clear(); null }
         if(ownDifference!=null && !commit(Seat.SELF,ownDifference.cards)) return
+        val terminalCompletion=holdTerminalOwnCompletion(frame)
+        if(terminalCompletion==TerminalCompletionDecision.HOLD) return
         val terminalOwn=terminalOwnHandProof.observe(frame,ledger.snapshot(),ledger.currentHand(),ledger.phaseBeforeRecovery())
         if(terminalOwn!=null && recovery!=null) {
             // Every unfinished outside region stayed directly empty across this
@@ -437,7 +497,8 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             }
             recovery=null; recoveryStartedAt=-1L; recoveryReason=""; shortJokerAnimation=false; jokerTableReturnedAt=null; emit()
         }
-        if((frame.scene==TableScene.TEAMMATE || frame.selfFinished) && ledger.snapshot().phase==RoundPhase.ACTIVE) { ledger.selfFinished(); emit() }
+        if(terminalCompletion!=TerminalCompletionDecision.DISPROVED &&
+            (frame.scene==TableScene.TEAMMATE || frame.selfFinished) && ledger.snapshot().phase==RoundPhase.ACTIVE) { ledger.selfFinished(); emit() }
         if(confirmedRoundFinished(ledger.snapshot())) {
             // Either pair of teammates has finished, or three players have finished. The
             // remaining players' revealed cards are not new table presentations.

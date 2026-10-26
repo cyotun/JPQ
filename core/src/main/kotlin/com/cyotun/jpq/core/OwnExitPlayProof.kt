@@ -25,6 +25,9 @@ class OwnExitPlayProof {
     // for at most 2000ms across the empty/scene handoff. Votes restart after it.
     private var foreignHandSeenAt=-1L
     private var continuationAt=-1L
+    // A qualified empty own-hand during a narrowly defined TABLE ownership
+    // ambiguity may preserve the same anchored authority, without voting.
+    private var ownAmbiguousAt=-1L
     private val ambiguousOwnershipReason="出牌归属待核对，正在重新识别"
 
     fun reset() {
@@ -33,7 +36,19 @@ class OwnExitPlayProof {
     }
     private fun clearVotes() { anchor=null; previous=null; firstTime=-1L; lastTime=-1L; votes=0 }
     private fun clearFreshVotes() { previous=null; firstTime=-1L; lastTime=-1L; votes=0 }
-    private fun clearTransition() { departureStart=-1L; foreignHandSeenAt=-1L; continuationAt=-1L }
+    private fun clearTransition() { departureStart=-1L; foreignHandSeenAt=-1L; continuationAt=-1L; ownAmbiguousAt=-1L }
+
+    /** The fixed continuation deadline for a still-valid ACTIVE own-hand anchor. */
+    fun pendingOwnCompletionDeadline(frameTimeMs: Long,snapshot: RoundSnapshot): Long? {
+        val current=version ?: return null
+        val started=continuationAt
+        if(ownAmbiguousAt<0L || started<0L || frameTimeMs<started || frameTimeMs-started !in 0L..2000L ||
+            snapshot.phase!=RoundPhase.ACTIVE || snapshot.remaining==null || snapshot.roundId!=current.round ||
+            snapshot.plays[Seat.SELF].orEmpty()!=current.ownEvents ||
+            snapshot.played(Seat.SELF)+current.hand.size!=27 || current.hand.isEmpty() ||
+            anchor==null || key(anchor!!.cards)!=current.handKey) return null
+        return started+2000L
+    }
 
     fun observe(frame: TableFrame,snapshot: RoundSnapshot,knownOwnHand: List<Card>): List<Card>? =
         observeWithCertificate(frame,snapshot,knownOwnHand)?.cards
@@ -72,16 +87,28 @@ class OwnExitPlayProof {
             frame.localizedOverlaySeats.isEmpty() && !frame.dealingChoicesObserved &&
             (freshAnchoredHandoff || ongoingHandoff) &&
             foreignHand && handoffHasNoSelfPlay && (active || latched)
-        if(ambiguousForeignHandoff) {
+        val exactOwnAnchor=anchor?.let { strong(it) && key(it.cards)==key(originalHand) }==true
+        val ambiguousOwnHandoff=frame.scene==TableScene.TABLE && frame.ambiguousPresentation &&
+            frame.incompleteReason==ambiguousOwnershipReason && !frame.captureGap &&
+            frame.localizedOverlaySeats.isEmpty() && !frame.dealingChoicesObserved &&
+            frameHand?.isEmpty()==true && handoffHasNoSelfPlay && exactOwnAnchor &&
+            (freshAnchoredHandoff || ongoingHandoff) && (active || latched)
+        if(ambiguousForeignHandoff || ambiguousOwnHandoff) {
             // Keep only the already established exact-own-hand authority. The
             // ambiguous frame supplies no card vote, and repeated ambiguous
             // frames cannot restart or extend this handoff deadline.
             if(continuationAt<0L) continuationAt=frame.timeMs
+            if(ambiguousOwnHandoff && ownAmbiguousAt<0L) ownAmbiguousAt=continuationAt
             foreignHandSeenAt=frame.timeMs
             clearFreshVotes()
             return null
         }
-        if(frame.captureGap || frame.incompleteReason!=null || frame.ambiguousPresentation ||
+        val independentlyOwnedTail=ownAmbiguousAt>=0L && continuationLive && exactOwnAnchor &&
+            frame.scene in setOf(TableScene.TABLE,TableScene.TEAMMATE) && frameHand?.isEmpty()==true &&
+            frame.ambiguousPresentation && frame.incompleteReason==ambiguousOwnershipReason &&
+            !frame.captureGap && frame.localizedOverlaySeats.isEmpty() && !frame.dealingChoicesObserved &&
+            frame.plays[Seat.SELF]?.let { strong(it) && key(it.cards)==key(originalHand) && sameSlots(it,anchor!!) }==true
+        if(frame.captureGap || ((frame.incompleteReason!=null || frame.ambiguousPresentation) && !independentlyOwnedTail) ||
             frame.localizedOverlaySeats.isNotEmpty() ||
             frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE)) {
             reset()
@@ -106,7 +133,7 @@ class OwnExitPlayProof {
             !frame.dealingChoicesObserved && absentSelfPlay && snapshot.played(Seat.OPPOSITE)==27 && anchor!=null && votes>=3 &&
             previous!=null && (active || latched) && frame.timeMs-lastTime in 0L..500L &&
             frame.timeMs-firstTime in 100L..1500L && key(anchor!!.cards)==key(originalHand) &&
-            sameSlots(previous!!,anchor!!)
+            sameSlots(previous!!,anchor!!) && ownAmbiguousAt<0L
         if(terminalWholeHandFromPriorReads) return completeCertificate()
 
         // First stage: an empty lower hand plus a directly observed strict
@@ -141,6 +168,14 @@ class OwnExitPlayProof {
                 clearFreshVotes()
                 return null
             }
+        }
+
+        if(ownAmbiguousAt>=0L && continuationLive && departed && !wholeOwnPlay && play!=null && play.cards.isNotEmpty() &&
+            sameRankSlots(play,anchor!!)) {
+            // Color flicker or low-confidence reads at the established rank/slots
+            // clear fresh votes but retain the original fixed-window authority.
+            clearFreshVotes()
+            return null
         }
 
         if(!departed || !wholeOwnPlay) {
@@ -196,7 +231,8 @@ class OwnExitPlayProof {
         // cue permits three direct reads of any whole original hand, but only
         // when the current lower hand is explicitly empty.
         val terminalWholeHand = votes>=3 && snapshot.played(Seat.OPPOSITE)==27 &&
-            frame.selfFinished && !frame.dealingChoicesObserved && frameHand?.isEmpty()==true && wholeOwnPlay
+            frame.selfFinished && !frame.dealingChoicesObserved && frameHand?.isEmpty()==true && wholeOwnPlay &&
+            ownAmbiguousAt<0L
         if((votes<4 && !terminalWholeHand) || frame.timeMs-firstTime<100L ||
             (frame.scene!=TableScene.TEAMMATE && !frame.selfFinished)) return null
         return completeCertificate()
@@ -236,6 +272,24 @@ class OwnExitPlayProof {
         val remaining=old.glyphs.toMutableList()
         return current.glyphs.all { glyph ->
             val index=remaining.indexOfFirst { tracked -> glyph.card.colorKey()==tracked.card.colorKey() &&
+                kotlin.math.abs(glyph.box.cx-tracked.box.cx)<=minOf(glyph.box.width,tracked.box.width)*.35f &&
+                kotlin.math.abs(glyph.box.cy-tracked.box.cy)<=minOf(glyph.box.height,tracked.box.height)*.35f &&
+                maxOf(glyph.box.width,tracked.box.width)<=minOf(glyph.box.width,tracked.box.width)*1.4f &&
+                maxOf(glyph.box.height,tracked.box.height)<=minOf(glyph.box.height,tracked.box.height)*1.4f }
+            if(index<0) false else { remaining.removeAt(index); true }
+        } && remaining.isEmpty()
+    }
+    private fun sameRankSlots(current: ObservedPlay,old: ObservedPlay): Boolean {
+        fun ranks(cards: List<Card>)=cards.map { it.rank.name }.sorted()
+        if(!current.regionObserved || current.confidence !in .65f..1f ||
+            current.glyphs.any { it.confidence !in .65f..1f } ||
+            current.cards.size!=old.cards.size || current.glyphs.size!=old.glyphs.size ||
+            current.cards.size!=current.glyphs.size || ranks(current.cards)!=ranks(old.cards) ||
+            ranks(current.cards)!=ranks(current.glyphs.map { it.card }) ||
+            current.glyphs.any { !valid(it.box) }) return false
+        val remaining=old.glyphs.toMutableList()
+        return current.glyphs.all { glyph ->
+            val index=remaining.indexOfFirst { tracked -> glyph.card.rank==tracked.card.rank &&
                 kotlin.math.abs(glyph.box.cx-tracked.box.cx)<=minOf(glyph.box.width,tracked.box.width)*.35f &&
                 kotlin.math.abs(glyph.box.cy-tracked.box.cy)<=minOf(glyph.box.height,tracked.box.height)*.35f &&
                 maxOf(glyph.box.width,tracked.box.width)<=minOf(glyph.box.width,tracked.box.width)*1.4f &&

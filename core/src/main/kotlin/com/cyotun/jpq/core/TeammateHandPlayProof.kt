@@ -9,8 +9,13 @@ class TeammateHandPlayProofTracker {
     private data class Version(val roundId: String, val events: List<String>)
     private data class DeskEvidence(val play: ObservedPlay, val time: Long)
     private data class Hand(val cards: List<Card>, val key: String)
+    private data class IssuedHandoff(val version: Version,val cards: List<Card>,val hand: Hand,
+        val votes: Int,val firstSeen: Long,val lastSeen: Long,val issuedAt: Long)
     private data class PartialHandoff(val hand: Hand,val removed: List<Card>,val glyphs: List<PlayGlyph>,
-        val startedAt: Long,var fullEvidence: DeskEvidence? = null)
+        val startedAt: Long,var fullEvidence: DeskEvidence? = null,var fullWitness: DeskEvidence? = null,
+        var handVotes: Int = 1,var firstHandVote: Long? = startedAt,
+        var lastHandVote: Long? = startedAt,
+        var firstBadgeSource: Long? = null,var lastBadgeSource: Long = -1L,var badgeVotes: Int = 0)
 
     private var version: Version? = null
     private var lastTime: Long? = null
@@ -26,11 +31,13 @@ class TeammateHandPlayProofTracker {
     private var deskEvidence: DeskEvidence? = null
     private var partialHandoff: PartialHandoff? = null
     private var delivered = false
+    private var issuedHandoff: IssuedHandoff? = null
 
     fun reset() {
         version = null
         lastTime = null
         clearProofState()
+        issuedHandoff=null
     }
 
     /** Read-only checkpoint of the last independently confirmed complete hand.
@@ -55,10 +62,25 @@ class TeammateHandPlayProofTracker {
         val nextVersion = Version(roundId, snapshot.plays[Seat.OPPOSITE].orEmpty().map {
             it.eventId + ":" + it.sequence + ":" + cardsKey(it.cards)
         })
+        var rebasedSeed=false
         if (version != nextVersion) {
+            val inherited=issuedHandoff?.takeIf { canRebase(it,version,nextVersion,frame,snapshot) }
             clearProofState()
             lastTime = null
             version = nextVersion
+            issuedHandoff=null
+            if(inherited!=null) {
+                seed=inherited.hand.copy(cards=inherited.hand.cards.toList())
+                seedVotes=inherited.votes
+                seedFirstSeen=inherited.firstSeen
+                seedLastSeen=inherited.lastSeen
+                rebasedSeed=true
+            }
+        } else if(issuedHandoff!=null) {
+            // The observer commits synchronously after consuming a proof. If
+            // the next observation still has the old history, that write did
+            // not happen and its one-shot seed candidate is no longer valid.
+            issuedHandoff=null
         }
 
         val priorTime = lastTime
@@ -125,6 +147,7 @@ class TeammateHandPlayProofTracker {
                 clearProofState()
                 return null
             }
+            if(rebasedSeed) return null
             resetShrink()
             partialHandoff = null
             seedVotes++
@@ -161,7 +184,7 @@ class TeammateHandPlayProofTracker {
                 clearProofState()
                 return null
             }
-            return observePartialHandoff(pending,frame.timeMs,visiblePlay)
+            return observePartialHandoff(pending,frame,visiblePlay)
         }
         // A directly visible prefix can reserve a fresh hand difference while
         // its other cards arrive. The reservation cannot supply missing cards.
@@ -169,7 +192,10 @@ class TeammateHandPlayProofTracker {
             validHand(baseline.cards,snapshot.remaining!!) && visiblePlay!=null &&
             directlyRead(visiblePlay,PARTIAL_MIN_CONFIDENCE) && visiblePlay.cards.size<removed.size &&
             multisetDifference(removed,visiblePlay.cards)!=null) {
-            partialHandoff=PartialHandoff(current,removed.toList(),visiblePlay.glyphs.toList(),frame.timeMs)
+            val clean=frame.incompleteReason==null && !frame.ambiguousPresentation && frame.localizedOverlaySeats.isEmpty()
+            partialHandoff=PartialHandoff(current,removed.toList(),visiblePlay.glyphs.toList(),frame.timeMs,
+                handVotes=if(clean) 1 else 0,firstHandVote=frame.timeMs.takeIf { clean },
+                lastHandVote=frame.timeMs.takeIf { clean })
             resetShrink()
             deskEvidence=null
             return null
@@ -230,45 +256,131 @@ class TeammateHandPlayProofTracker {
             frame.timeMs - (shrinkFirstSeen ?: frame.timeMs) < MIN_VOTE_SPAN_MS) return null
 
         delivered = true
-        return anchoredDesk.play.copy(
+        val proof=anchoredDesk.play.copy(
             cards = anchoredDesk.play.cards.toList(),
             glyphs = anchoredDesk.play.glyphs.toList(),
         )
+        issuePostCommitHandoff(proof,current,shrinkVotes,shrinkFirstSeen,shrinkLastSeen,frame.timeMs)
+        return proof
     }
 
-    private fun observePartialHandoff(pending: PartialHandoff,timeMs: Long,play: ObservedPlay?): ObservedPlay? {
-        if (play==null || !play.regionObserved || play.cards.isEmpty()) {
+    private fun observePartialHandoff(pending: PartialHandoff,frame: TableFrame,play: ObservedPlay?): ObservedPlay? {
+        val timeMs=frame.timeMs
+        val clean=frame.incompleteReason==null && !frame.ambiguousPresentation && frame.localizedOverlaySeats.isEmpty()
+        if(!clean) resetShortProof(pending)
+
+        if(play==null || !play.regionObserved) {
             pending.fullEvidence=null
+            if(clean) resetShortProof(pending)
             return null
         }
-        if (play.glyphs.size!=play.cards.size || !sameCards(play.cards,play.glyphs.map { it.card }) ||
-            play.glyphs.any { !validBox(it.box) } || multisetDifference(pending.removed,play.cards)==null) {
-            // An observed conflicting group is not the reserved hand transfer.
-            clearProofState()
-            return null
-        }
-        if (play.cards.size<pending.removed.size) {
+        if(play.cards.isEmpty()) {
+            if(play.glyphs.isNotEmpty()) { clearProofState(); return null }
             pending.fullEvidence=null
-            return null
+        } else {
+            if(play.glyphs.size!=play.cards.size || !sameCards(play.cards,play.glyphs.map { it.card }) ||
+                play.glyphs.any { !validBox(it.box) } || multisetDifference(pending.removed,play.cards)==null) {
+                // An observed conflicting group is not the reserved hand transfer.
+                clearProofState()
+                return null
+            }
+            if(play.cards.size==pending.removed.size && !containsGeometry(play.glyphs,pending.glyphs)) {
+                clearProofState()
+                return null
+            }
         }
-        if (!containsGeometry(play.glyphs,pending.glyphs)) {
-            clearProofState()
-            return null
-        }
-        if (!isStrongCompletePlay(play)) {
+
+        if(play.cards.size<pending.removed.size) pending.fullEvidence=null
+
+        // Preserve the established path: two strong complete reads of the same
+        // slots prove the handoff without requiring count badges.
+        if(play.cards.size==pending.removed.size && isStrongCompletePlay(play)) {
+            val previous=pending.fullEvidence
+            if(previous==null || timeMs-previous.time !in 1L..MAX_GAP_MS ||
+                !sameGeometry(play.glyphs,previous.play.glyphs)) {
+                pending.fullEvidence=DeskEvidence(play,timeMs)
+            } else if(!delivered && timeMs-previous.time>=MIN_VOTE_SPAN_MS) {
+                delivered=true
+                partialHandoff=null
+                val proof=previous.play.copy(cards=previous.play.cards.toList(),glyphs=previous.play.glyphs.toList())
+                issuePostCommitHandoff(proof,pending.hand,pending.handVotes,pending.firstHandVote,
+                    pending.lastHandVote,timeMs)
+                return proof
+            }
+        } else if(play.cards.isNotEmpty()) {
             pending.fullEvidence=null
-            return null
         }
-        val previous=pending.fullEvidence
-        if (previous==null || timeMs-previous.time !in 1L..MAX_GAP_MS ||
-            !sameGeometry(play.glyphs,previous.play.glyphs)) {
-            pending.fullEvidence=DeskEvidence(play,timeMs)
-            return null
+
+        if(!clean) return null
+
+        val witness=pending.fullWitness
+        if(witness!=null) {
+            // Once frozen, the witness can survive a positively observed empty
+            // region or the exact same complete group only. Never refresh it.
+            if(timeMs-witness.time !in 0L..MAX_PARTIAL_WITNESS_AGE_MS ||
+                (play.cards.isNotEmpty() && (play.cards.size!=pending.removed.size ||
+                    !sameCards(play.cards,pending.removed) || !sameGeometry(play.glyphs,witness.play.glyphs)))) {
+                resetShortProof(pending)
+                return null
+            }
+        } else if(play.cards.size==pending.removed.size && isStrongCompletePlay(play)) {
+            // One independently strong complete read freezes the direct card
+            // identities and slots. Later blank frames cannot erase it.
+            pending.fullWitness=DeskEvidence(play.copy(cards=play.cards.toList(),glyphs=play.glyphs.toList()),timeMs)
         }
-        if (delivered || timeMs-previous.time<MIN_VOTE_SPAN_MS) return null
+
+        if(pending.handVotes==0) pending.firstHandVote=timeMs
+        pending.handVotes++
+        pending.lastHandVote=timeMs
+
+        val badge=frame.remainingHandCounts[Seat.OPPOSITE]
+        if(badge!=null) {
+            val source=badge.sourceTimeMs
+            if(source<pending.startedAt || source>timeMs || timeMs-source>MAX_BADGE_AGE_MS) {
+                // A stale/out-of-order badge cannot contribute to this handoff.
+            } else if(badge.count!=pending.hand.cards.size) {
+                resetShortProof(pending)
+                return null
+            } else if(source==pending.lastBadgeSource) {
+                // Re-reading one OCR result is one source, never another vote.
+            } else if(source<pending.lastBadgeSource) {
+                resetShortProof(pending)
+                return null
+            } else {
+                if(pending.firstBadgeSource==null || source-pending.firstBadgeSource!!>MAX_BADGE_AGE_MS) {
+                    pending.firstBadgeSource=source
+                    pending.badgeVotes=1
+                } else {
+                    pending.badgeVotes++
+                }
+                pending.lastBadgeSource=source
+            }
+        }
+
+        val confirmedWitness=pending.fullWitness ?: return null
+        val firstBadge=pending.firstBadgeSource ?: return null
+        if(delivered || pending.handVotes<REQUIRED_VOTES || timeMs-pending.startedAt<MIN_VOTE_SPAN_MS ||
+            pending.badgeVotes<REQUIRED_VOTES || pending.lastBadgeSource-firstBadge<MIN_VOTE_SPAN_MS ||
+            timeMs-(pending.firstHandVote ?: timeMs)<MIN_VOTE_SPAN_MS ||
+            timeMs-firstBadge>MAX_BADGE_PAIR_AGE_MS ||
+            timeMs-pending.lastBadgeSource>MAX_BADGE_AGE_MS ||
+            timeMs-confirmedWitness.time>MAX_PARTIAL_WITNESS_AGE_MS) return null
+
         delivered=true
         partialHandoff=null
-        return previous.play.copy(cards=previous.play.cards.toList(),glyphs=previous.play.glyphs.toList())
+        val proof=confirmedWitness.play.copy(cards=confirmedWitness.play.cards.toList(),glyphs=confirmedWitness.play.glyphs.toList())
+        issuePostCommitHandoff(proof,pending.hand,pending.handVotes,pending.firstHandVote,pending.lastHandVote,timeMs)
+        return proof
+    }
+
+    private fun resetShortProof(pending: PartialHandoff) {
+        pending.fullWitness=null
+        pending.handVotes=0
+        pending.firstHandVote=null
+        pending.lastHandVote=null
+        pending.firstBadgeSource=null
+        pending.lastBadgeSource=-1L
+        pending.badgeVotes=0
     }
 
     private fun beginShrink(hand: Hand, timeMs: Long, evidence: DeskEvidence) {
@@ -290,6 +402,40 @@ class TeammateHandPlayProofTracker {
         delivered = false
     }
 
+    private fun issuePostCommitHandoff(proof: ObservedPlay,hand: Hand,votes: Int,firstSeen: Long?,
+        lastSeen: Long?,issuedAt: Long) {
+        val sourceVersion=version ?: return
+        val first=firstSeen ?: return
+        val last=lastSeen ?: return
+        if(hand.cards.isEmpty() || votes<REQUIRED_VOTES || last-first<MIN_VOTE_SPAN_MS ||
+            last>issuedAt || issuedAt-last>MAX_GAP_MS) return
+        issuedHandoff=IssuedHandoff(sourceVersion,proof.cards.toList(),hand.copy(cards=hand.cards.toList()),
+            votes,first,last,issuedAt)
+    }
+
+    private fun canRebase(issued: IssuedHandoff,oldVersion: Version?,nextVersion: Version,
+        frame: TableFrame,snapshot: RoundSnapshot): Boolean {
+        val old=oldVersion ?: return false
+        if(old!=issued.version || nextVersion.roundId!=old.roundId ||
+            nextVersion.events.size!=old.events.size+1 ||
+            nextVersion.events.take(old.events.size)!=old.events) return false
+        val appended=snapshot.plays[Seat.OPPOSITE].orEmpty().lastOrNull() ?: return false
+        if(appended.roundId!=old.roundId || appended.seat!=Seat.OPPOSITE ||
+            !sameCards(appended.cards,issued.cards)) return false
+        if(frame.timeMs-issued.issuedAt !in 1L..MAX_GAP_MS ||
+            frame.timeMs-issued.lastSeen !in 0L..MAX_GAP_MS ||
+            issued.votes<REQUIRED_VOTES || issued.lastSeen-issued.firstSeen<MIN_VOTE_SPAN_MS) return false
+        val remaining=snapshot.remaining ?: return false
+        val currentHand=frame.teammateHand ?: return false
+        if(snapshot.phase!=RoundPhase.SELF_FINISHED ||
+            snapshot.played(Seat.OPPOSITE)!=27-issued.hand.cards.size ||
+            frame.scene!=TableScene.TEAMMATE || frame.captureGap || frame.incompleteReason!=null ||
+            frame.ambiguousPresentation || frame.localizedOverlaySeats.isNotEmpty() ||
+            frame.teammateHandConfidence<MIN_CONFIDENCE || !validHand(issued.hand.cards,remaining) ||
+            !validHand(currentHand,remaining)) return false
+        return true
+    }
+
     private fun resetShrink() {
         shrink = null
         shrinkVotes = 0
@@ -307,6 +453,7 @@ class TeammateHandPlayProofTracker {
         partialHandoff = null
         deskEvidence = null
         delivered = false
+        issuedHandoff = null
     }
 
     private fun isStrongCompletePlay(play: ObservedPlay): Boolean = directlyRead(play,MIN_CONFIDENCE)
@@ -374,5 +521,8 @@ class TeammateHandPlayProofTracker {
         const val MAX_GAP_MS = 500L
         const val PARTIAL_MIN_CONFIDENCE = .65f
         const val PARTIAL_HANDOFF_MS = 4000L
+        const val MAX_PARTIAL_WITNESS_AGE_MS = 1500L
+        const val MAX_BADGE_AGE_MS = 1000L
+        const val MAX_BADGE_PAIR_AGE_MS = 1500L
     }
 }

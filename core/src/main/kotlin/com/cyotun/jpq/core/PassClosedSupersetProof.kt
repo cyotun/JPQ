@@ -19,7 +19,14 @@ class PassClosedSupersetProof {
         val ownHand: List<String>,
     )
 
-    private data class ClosingVersion(val events: List<String>)
+    private data class ClosingEvent(
+        val sequence: Long,
+        val seat: Seat,
+        val eventId: String,
+        val cards: List<String>,
+    )
+
+    private data class ClosingVersion(val events: List<ClosingEvent>)
 
     private data class Candidate(
         val identity: List<String>,
@@ -31,7 +38,10 @@ class PassClosedSupersetProof {
     )
 
     private var scope: Scope? = null
+    // closingVersion is the immutable closure prefix which authorized the
+    // witness. observedClosingVersion advances only across verified appends.
     private var closingVersion: ClosingVersion? = null
+    private var observedClosingVersion: ClosingVersion? = null
     private var closingFenceAt = -1L
     private var lastFrameTime = -1L
     private var lastPriorObservedAt = -1L
@@ -105,16 +115,44 @@ class PassClosedSupersetProof {
         if(newerOtherEvents.isEmpty()) {
             clearPassAndCandidate()
             closingVersion=null
+            observedClosingVersion=null
             closingFenceAt=-1L
             return null
         }
         val nextClosing=ClosingVersion(newerOtherEvents.map { event ->
-            "${event.sequence}:${event.seat.name}:${event.eventId}:${cardKeys(event.cards).joinToString(",")}"
+            ClosingEvent(event.sequence,event.seat,event.eventId,cardKeys(event.cards))
         })
-        if(closingVersion!=nextClosing) {
+        if(!validClosingChain(nextClosing.events)) {
+            clearPassAndCandidate()
             closingVersion=nextClosing
+            observedClosingVersion=nextClosing
+            closingFenceAt=frame.timeMs
+            return null
+        }
+        if(closingVersion==null) {
+            closingVersion=nextClosing
+            observedClosingVersion=nextClosing
             closingFenceAt=frame.timeMs
             clearPassAndCandidate()
+        } else if(observedClosingVersion!=nextClosing) {
+            val previous=observedClosingVersion
+            val appendOnly=previous!=null && isPrefix(previous.events,nextClosing.events)
+            val passAlreadyClosed=passVotes>=REQUIRED_PASS_VOTES &&
+                lastPassSource-firstPassSource>=PASS_MIN_SPAN_MS &&
+                lastPassSource>=0 && frame.timeMs-lastPassSource in 0L..MAX_PASS_AGE_MS
+            if(appendOnly && passAlreadyClosed) {
+                // Later other-seat events cannot reopen this seat's passed
+                // presentation. Keep the first closure fence and witness;
+                // candidate clocks also remain anchored to their first vote.
+                observedClosingVersion=nextClosing
+            } else {
+                // If a pass was not already proved, restart its source fence at
+                // the new version so pre-append OCR cannot complete it later.
+                closingVersion=nextClosing
+                observedClosingVersion=nextClosing
+                closingFenceAt=frame.timeMs
+                clearPassAndCandidate()
+            }
         }
 
         val current=frame.plays[seat]
@@ -213,6 +251,7 @@ class PassClosedSupersetProof {
     private fun clearProof() {
         scope=null
         closingVersion=null
+        observedClosingVersion=null
         closingFenceAt=-1L
         lastPriorObservedAt=-1L
         clearPassAndCandidate()
@@ -225,6 +264,14 @@ class PassClosedSupersetProof {
 
     private fun sameCards(left: List<Card>,right: List<Card>): Boolean = cardKeys(left)==cardKeys(right)
     private fun cardKeys(cards: List<Card>)=cards.map { it.colorKey() }.sorted()
+    private fun validClosingChain(events: List<ClosingEvent>): Boolean = events.isNotEmpty() &&
+        events.all { it.sequence>=0 && it.eventId.isNotBlank() && it.cards.isNotEmpty() } &&
+        events.map { it.eventId }.distinct().size==events.size &&
+        events.zipWithNext().all { (a,b) -> a.sequence<b.sequence }
+    private fun isPrefix(prefix: List<ClosingEvent>,all: List<ClosingEvent>): Boolean =
+        prefix.size < all.size && all.take(prefix.size)==prefix &&
+            all.drop(prefix.size).zipWithNext().all { (a,b) -> a.sequence<b.sequence } &&
+            all[prefix.size].sequence>prefix.last().sequence
     private fun glyphKeys(glyphs: List<PlayGlyph>)=glyphs.map { glyph ->
         "${glyph.card.colorKey()}:${glyph.box.left}:${glyph.box.top}:${glyph.box.right}:${glyph.box.bottom}"
     }.sorted()
