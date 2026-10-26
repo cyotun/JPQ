@@ -8,14 +8,58 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TaskResumeRecoveryPolicyTest {
+    private val noOwnership=OwnedPlays(Seat.entries.associateWith { emptyList<PlayGlyph>() },emptyList())
+    private val strongHand=listOf(PlayGlyph(Card(Rank.THREE,Suit.BLACK),.86f,GlyphBox(.22f,.70f,.24f,.76f)))
     @Test fun emptyTableIsNotHealthyMerelyBecauseAnOldTeammatePhaseIsLatched() {
-        assertEquals(TaskResumeRecoveryPolicy.Content.TABLE_EMPTY,TaskResumeRecoveryPolicy.contentFor(TableScene.TABLE,false))
-        assertEquals(TaskResumeRecoveryPolicy.Content.UNKNOWN_EMPTY,TaskResumeRecoveryPolicy.contentFor(TableScene.UNKNOWN,false))
+        assertEquals(TaskResumeRecoveryPolicy.Content.TABLE_EMPTY,TaskResumeRecoveryPolicy.contentFor(TableScene.TABLE,emptyList(),noOwnership))
+        assertEquals(TaskResumeRecoveryPolicy.Content.UNKNOWN_EMPTY,TaskResumeRecoveryPolicy.contentFor(TableScene.UNKNOWN,emptyList(),noOwnership))
         for(scene in TableScene.entries) assertEquals(TaskResumeRecoveryPolicy.Content.GAME_CONTENT,
-            TaskResumeRecoveryPolicy.contentFor(scene,true))
-        assertEquals(TaskResumeRecoveryPolicy.Content.GAME_CONTENT,TaskResumeRecoveryPolicy.contentFor(TableScene.TEAMMATE,false))
+            TaskResumeRecoveryPolicy.contentFor(scene,strongHand,noOwnership))
+        assertEquals(TaskResumeRecoveryPolicy.Content.GAME_CONTENT,TaskResumeRecoveryPolicy.contentFor(TableScene.TEAMMATE,emptyList(),noOwnership))
         for(scene in listOf(TableScene.LOBBY,TableScene.RESULT,TableScene.DEALING,TableScene.TRIBUTE))
-            assertEquals(TaskResumeRecoveryPolicy.Content.GAME_CONTENT,TaskResumeRecoveryPolicy.contentFor(scene,false))
+            assertEquals(TaskResumeRecoveryPolicy.Content.GAME_CONTENT,TaskResumeRecoveryPolicy.contentFor(scene,emptyList(),noOwnership))
+    }
+
+    @Test fun actualReturnedBottomSpecksCannotCancelPersistentInputRepair() {
+        // C4.9 returned epoch 18: confident tiny glyphs only below the hand region.
+        val specks=listOf(PlayGlyph(Card(Rank.THREE,Suit.BLACK),.8612f,
+            GlyphBox(.2191f,.9272f,.2301f,.9512f)))
+        val partition=partitionGuandanHand(specks)
+        val ownership=assignPlayGroups(partition.table.filter { it.box.cy<.55f },emptySet(),emptyList())
+        assertTrue(partition.hand.isEmpty())
+        assertTrue(ownership.seats.values.all { it.isEmpty() })
+        val content=TaskResumeRecoveryPolicy.contentFor(TableScene.TABLE,partition.hand,ownership)
+        assertEquals(TaskResumeRecoveryPolicy.Content.TABLE_EMPTY,content)
+        val policy=TaskResumeRecoveryPolicy()
+        assertTrue(policy.arm())
+        assertNull(policy.frame(0L,content))
+        val request=assertNotNull(policy.frame(8_000L,content))
+        assertTrue(policy.take(request))
+    }
+
+    @Test fun unownedCentralGlyphsDoNotProveHealthyInput() {
+        val glyphs=listOf(PlayGlyph(Card(Rank.THREE,Suit.BLACK),.9f,GlyphBox(.48f,.34f,.50f,.39f)))
+        val partition=partitionGuandanHand(glyphs)
+        val ownership=assignPlayGroups(partition.table,emptySet(),emptyList(),teammateView=true)
+        assertEquals(glyphs,ownership.ambiguous)
+        assertEquals(TaskResumeRecoveryPolicy.Content.TABLE_EMPTY,
+            TaskResumeRecoveryPolicy.contentFor(TableScene.TABLE,partition.hand,ownership))
+    }
+
+    @Test fun realCanonicalHandOrOwnedPlayCancelsQueuedRepair() {
+        val owned=assignPlayGroups(listOf(PlayGlyph(Card(Rank.A,Suit.RED),.9f,
+            GlyphBox(.15f,.30f,.17f,.35f))),emptySet(),emptyList())
+        assertEquals(1,owned.seats.getValue(Seat.PREVIOUS).size)
+        for((hand,ownership) in listOf(strongHand to noOwnership,emptyList<PlayGlyph>() to owned)) {
+            val policy=TaskResumeRecoveryPolicy()
+            assertTrue(policy.arm())
+            policy.frame(0L)
+            val request=assertNotNull(policy.frame(8_000L))
+            val content=TaskResumeRecoveryPolicy.contentFor(TableScene.TABLE,hand,ownership)
+            assertEquals(TaskResumeRecoveryPolicy.Content.GAME_CONTENT,content)
+            policy.frame(8_001L,content)
+            assertFalse(policy.take(request,8_002L))
+        }
     }
     private val oldRound = "old-round"
     private val empty = TaskResumeRecoveryPolicy.Content.UNKNOWN_EMPTY

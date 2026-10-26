@@ -190,9 +190,14 @@ class TaskResumeRecoveryPolicy {
     }
 
     companion object {
-        /** Use the actually detected scene, never a latched teammate phase. */
-        fun contentFor(detectedScene: TableScene,hasDirectCards: Boolean): Content = when {
-            hasDirectCards || detectedScene in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.DEALING,
+        /**
+         * Use the detected scene and canonical hand/owned groups, never raw model specks
+         * or the latched teammate phase. Unowned detections do not prove usable input.
+         */
+        fun contentFor(detectedScene: TableScene, hand: List<PlayGlyph>, ownership: OwnedPlays): Content = when {
+            hand.any { it.confidence >= .65f } || ownership.seats.values.any { cards ->
+                cards.any { it.confidence >= .65f }
+            } || detectedScene in setOf(TableScene.LOBBY,TableScene.RESULT,TableScene.DEALING,
                 TableScene.TRIBUTE,TableScene.TEAMMATE) -> Content.GAME_CONTENT
             detectedScene==TableScene.TABLE -> Content.TABLE_EMPTY
             detectedScene==TableScene.UNKNOWN -> Content.UNKNOWN_EMPTY

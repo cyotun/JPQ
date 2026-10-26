@@ -226,20 +226,159 @@ def frame_to_tape_row(frame: dict) -> tuple[str, int]:
     return row, omitted_counts
 
 
-def parse_trace(zipped: zipfile.ZipFile, member: str | list[str], session: str):
+def truncated_frame_prefix(raw: bytes, session: str) -> bool:
+    """Accept only a JSON object prefix that can be completed by appending bytes.
+
+    JSONDecodeError alone cannot distinguish a torn write from malformed JSON
+    (for example a bad delimiter before EOF). Validate the prefix grammar before
+    omitting anything, and require its completed type/session identity fields.
+    """
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeError:
+        return False
+    length = len(text)
+    root_fields, root_keys = {}, set()
+    non_scalar = object()
+
+    class Incomplete(Exception):
+        pass
+
+    def whitespace(index):
+        while index < length and text[index] in " \t\r\n":
+            index += 1
+        return index
+
+    def require(index):
+        index = whitespace(index)
+        if index == length:
+            raise Incomplete
+        return index
+
+    def string(index):
+        start = index
+        index += 1
+        while index < length:
+            char = text[index]
+            if char == '"':
+                return json.loads(text[start:index+1]), index+1
+            if ord(char) < 0x20:
+                raise ValueError("Control character in string")
+            if char == "\\":
+                index += 1
+                if index == length:
+                    raise Incomplete
+                if text[index] == "u":
+                    for _ in range(4):
+                        index += 1
+                        if index == length:
+                            raise Incomplete
+                        if text[index] not in "0123456789abcdefABCDEF":
+                            raise ValueError("Invalid Unicode escape")
+                elif text[index] not in '"\\/bfnrt':
+                    raise ValueError("Invalid escape")
+            index += 1
+        raise Incomplete
+
+    def value(index, root=False):
+        index = require(index)
+        char = text[index]
+        if char == '"':
+            return string(index)
+        if char in "[{":
+            is_object = char == "{"
+            closing = "}" if is_object else "]"
+            index = require(index+1)
+            if text[index] == closing:
+                return non_scalar, index+1
+            while True:
+                if is_object:
+                    if text[index] != '"':
+                        raise ValueError("Expected object key")
+                    key, index = string(index)
+                    if root:
+                        if key in root_keys:
+                            raise ValueError("Ambiguous frame identity")
+                        root_keys.add(key)
+                    index = require(index)
+                    if text[index] != ":":
+                        raise ValueError("Expected colon")
+                    index += 1
+                item, index = value(index)
+                if root:
+                    root_fields[key] = item
+                index = require(index)
+                if text[index] == closing:
+                    return non_scalar, index+1
+                if text[index] != ",":
+                    raise ValueError("Expected delimiter")
+                index = require(index+1)
+        for literal, parsed in (("true", True), ("false", False), ("null", None)):
+            if char == literal[0]:
+                end = index + len(literal)
+                if text[index:] != literal and literal.startswith(text[index:]):
+                    raise Incomplete
+                if text[index:end] != literal:
+                    raise ValueError("Invalid literal")
+                return parsed, end
+        # A number may end at EOF, or be torn after a sign, decimal point or
+        # exponent. Its following delimiter is checked by the enclosing value.
+        match = re.match(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", text[index:])
+        if match:
+            end = index + match.end()
+            if end < length and re.fullmatch(
+                    r"-?(?:0|[1-9][0-9]*)(?:\.|(?:\.[0-9]+)?[eE][+-]?)", text[index:]):
+                raise Incomplete
+            return json.loads(match.group()), end
+        if text[index:] == "-":
+            raise Incomplete
+        raise ValueError("Invalid value")
+
+    try:
+        start = require(0)
+        if text[start] != "{":
+            return False
+        value(start, root=True)
+    except Incomplete:
+        return (root_fields.get("type") == "frame" and
+                ("sessionId" not in root_keys or
+                 ("sessionId" in root_fields and root_fields["sessionId"] in (None, session))))
+    except (ValueError, RecursionError):
+        return False
+    return False
+
+
+def parse_trace(zipped: zipfile.ZipFile, member: str | list[str], session: str, *,
+                allow_truncated_final_record: bool = False, omitted_records: list | None = None):
     digest = hashlib.sha256()
     header_seen = False
     rows, omitted_counts = [], 0
     probe_timestamps = set()
     members = [member] if isinstance(member, str) else member
-    for part in members:
+    for part_index, part in enumerate(members):
+        offset = 0
         with zipped.open(part) as stream:
-            for raw in stream:
+            for line_number, raw in enumerate(stream, 1):
                 digest.update(raw)
                 try:
                     record = json.loads(raw)
                 except (ValueError, UnicodeError):
+                    if (allow_truncated_final_record and part_index == len(members)-1 and
+                            part == f"sessions/{session}/trace.jsonl" and
+                            not raw.endswith((b"\n", b"\r")) and
+                            stream.tell() == zipped.getinfo(part).file_size and
+                            truncated_frame_prefix(raw, session)):
+                        if omitted_records is not None:
+                            omitted_records.append({
+                                "member": part, "lineNumber": line_number,
+                                "byteOffset": offset, "byteLength": len(raw),
+                                "sha256": sha256_bytes(raw),
+                                "reason": "truncated_final_frame_record_at_eof",
+                            })
+                        continue
                     raise ValueError("Malformed JSON in selected trace")
+                finally:
+                    offset += len(raw)
                 if not isinstance(record, dict):
                     continue
                 record_session = record.get("sessionId")
@@ -298,7 +437,8 @@ def archive_images(zipped: zipfile.ZipFile) -> list[dict]:
             if Path(name).suffix.lower() in image_suffixes]
 
 
-def prepare(archive: Path, sessions: list[str], output: Path, manifest_path: Path) -> dict:
+def prepare(archive: Path, sessions: list[str], output: Path, manifest_path: Path, *,
+            allow_truncated_final_record: bool = False) -> dict:
     archive = Path(archive).resolve(strict=True)
     if not archive.is_file():
         raise ValueError("Archive is not a file")
@@ -314,6 +454,7 @@ def prepare(archive: Path, sessions: list[str], output: Path, manifest_path: Pat
     archive_hash = sha256_file(archive)
     result = {"schemaVersion": 2, "kind": "phone_logged_session_replay_tapes",
               "archiveSha256": archive_hash,
+              "allowTruncatedFinalRecord": allow_truncated_final_record,
               "scope": "source_trace_replay_only_no_image_or_card_inference_empty_reason_tokens",
               "archiveImages": [], "sources": []}
     output.mkdir(parents=True, exist_ok=False)
@@ -332,7 +473,10 @@ def prepare(archive: Path, sessions: list[str], output: Path, manifest_path: Pat
                 parts = [name for _, name in sorted(rotated, reverse=True)] + [member]
                 if len(parts) != len(set(parts)):
                     raise ValueError("Selected session trace part is ambiguous")
-                tape_text, trace_hash, omitted_counts, probe_times = parse_trace(zipped, parts, session)
+                omitted_records = []
+                tape_text, trace_hash, omitted_counts, probe_times = parse_trace(
+                    zipped, parts, session, allow_truncated_final_record=allow_truncated_final_record,
+                    omitted_records=omitted_records)
                 tape_bytes = tape_text.encode("utf-8")
                 tape_path = output / f"{session}.tape"
                 tape_path.write_bytes(tape_bytes)
@@ -347,6 +491,7 @@ def prepare(archive: Path, sessions: list[str], output: Path, manifest_path: Pat
                     "frameCount": len(tape_text.splitlines()),
                     "sourceImageSha256s": image_sources,
                     "omittedMalformedCountEntries": omitted_counts,
+                    "omittedTruncatedFinalRecords": omitted_records,
                 })
         data = json.dumps(result, indent=2, ensure_ascii=False).encode("utf-8")
         pending = manifest_path.with_name(manifest_path.name + ".pending")
@@ -365,9 +510,12 @@ def main() -> int:
     parser.add_argument("--session", action="append", required=True, help="Session ID; repeat to select more sessions")
     parser.add_argument("--output", type=Path, required=True, help="A new private directory for the tape files")
     parser.add_argument("--manifest", type=Path, required=True, help="New provenance JSON inside --output")
+    parser.add_argument("--allow-truncated-final-record", action="store_true",
+                        help="Explicitly omit a torn final frame JSON record at EOF of trace.jsonl; record its bytes in the manifest")
     args = parser.parse_args()
     try:
-        result = prepare(args.archive, args.session, args.output, args.manifest)
+        result = prepare(args.archive, args.session, args.output, args.manifest,
+                         allow_truncated_final_record=args.allow_truncated_final_record)
     except Exception as error:
         reason = str(error) if isinstance(error, ValueError) else type(error).__name__
         print(json.dumps({"preparationError": reason}), file=sys.stderr)

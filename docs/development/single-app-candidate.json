@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "date": "2026-10-26",
-  "status": "beta_c410_computer_regression_passed_c49_full_diagnostics_pending",
+  "date": "2026-10-27",
+  "status": "beta_c410_computer_regression_passed_current_normal_source_verified_device_resume_pending",
   "branch": "codex/single-app-capture-power",
   "stable": {
     "tag": "v0.2.26",
@@ -1940,25 +1940,25 @@
   },
   "betaC410": {
     "buildId": "C4.10",
-    "date": "2026-10-26",
+    "date": "2026-10-27",
     "package": "com.cyotun.jpq.candidate",
     "label": "记牌器BETA",
     "versionCode": 28,
     "versionName": "0.2.26-regression-candidate",
     "baseCommit": "5b970a57fd55b454a4b46302520dc893b7ef6e00",
-    "status": "computer_regression_passed_current_live_full_source_audit_pending",
+    "status": "computer_regression_passed_full_current_normal_source_verified_device_resume_pending",
     "apk": "artifacts/beta-c4.10/记牌器BETA-c4.10.apk",
-    "apkSha256": "596fc198c89d0363e5a2409990b9451d0fa270198bee935c1e8c96a2ccacc450",
+    "apkSha256": "d8ce28820ebd39e978bcc09f82368b3f38f28c2b687382b85c37dc3c4a558d03",
     "testApkSha256": "6621666bb2bce83b598993ee2d663e9828b6763f66125c967faaa92b58e79423",
     "certificateSha256": "ebe83c802f083bdb1adafc6163744dfa2cbd30f5677c04ab5ff29356c5cff71f",
     "productionSourceFingerprint": {
-      "sha256": "1d5f6d0f7576dbdf32ef8c6a3a5f8e4514e8dd813b43af1999f5b0a35dc76d49",
+      "sha256": "1ed4e074ad44feb6d9253ef07a7c85a251f1d17cdcff71b84b2f08274dbff9d2",
       "files": 111,
       "scope": "Production Kotlin/XML; excludes assets, tests and docs"
     },
     "tests": {
       "core": {
-        "tests": 876,
+        "tests": 879,
         "failures": 0,
         "errors": 0,
         "skipped": 0
@@ -1976,7 +1976,7 @@
         "skipped": 0
       },
       "sourceTools": {
-        "tests": 41,
+        "tests": 50,
         "failures": 0
       },
       "cleanupTools": {
@@ -1989,68 +1989,37 @@
       "warnings": 59
     },
     "continuousPriorSourceRegression": {
-      "sessions": [
-        {
-          "session": "1792995306616-18da0f18",
-          "rounds": 4,
-          "frames": 7365,
-          "events": 138,
-          "unresolvedRounds": 0,
-          "recoveringFrames": 0,
-          "exactSemanticFinalEventsUnchanged": true,
-          "exactTeammatePoolHistoryUnchanged": true,
-          "input": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\source-replay-c48\\1792995306616-18da0f18.tape",
-          "inputSha256": "c0c6a05c992ac1663b4d32d86da024ac1086c76349ffe4e3304e18381369b11b",
-          "output": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\source-replay-c410\\final.json",
-          "outputSha256": "656b8b6166bd2e7c87acfe48a25da289863d5a5a55361646553f0956b008f448"
-        },
-        {
-          "session": "1792930731670-a43fe9ec",
-          "rounds": 6,
-          "frames": 8562,
-          "events": 217,
-          "unresolvedRounds": 0,
-          "recoveringFrames": 0,
-          "exactSemanticFinalEventsUnchanged": true,
-          "exactTeammatePoolHistoryUnchanged": true,
-          "input": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c48-c46\\1792930731670-a43fe9ec.tape",
-          "inputSha256": "90d5e7d96a8c6ff264d5d4b90952eade4c90cd1964a1cddb53fda77b4d617f4f",
-          "output": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c410-c46\\final.json",
-          "outputSha256": "1e0d95d5c084e3bdb049af81ff94c114cc6ae2605ca567a8d391b2c1d6e23d5c"
-        },
-        {
-          "session": "1792915222399-c294ee24",
-          "rounds": 6,
-          "frames": 7392,
-          "events": 209,
-          "unresolvedRounds": 0,
-          "recoveringFrames": 0,
-          "exactSemanticFinalEventsUnchanged": true,
-          "exactTeammatePoolHistoryUnchanged": true,
-          "input": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c48-c45\\1792915222399-c294ee24.tape",
-          "inputSha256": "9bfd70436a19146b60e86d7989daf8c32f38d170af1e819d7e2bed4a81dfc155",
-          "output": "captures\\phone\\beta-c47-live-20261026\\c47-live-20261026T141312\\live-review\\regression-c410-c45\\final.json",
-          "outputSha256": "1fdf93f0b3b654a73cde3e2c21e2437f54f7b466a85879a6499bb27c715894ff"
-        }
-      ],
       "rounds": 16,
       "frames": 23319,
       "events": 564,
-      "scope": "continuous recorded sources; not new live/device validation or independent per-card truth"
+      "sessions": 3,
+      "exactSemanticFinalEventsUnchanged": true,
+      "exactTeammatePoolHistoryUnchanged": true,
+      "scope": "Recorded-source regression only; not current Android capture or live acceptance."
     },
     "currentLiveAudit": {
       "build": "C4.9",
       "sourceCommit": "5b970a57fd55b454a4b46302520dc893b7ef6e00",
       "sessions": 2,
       "ledgerRounds": 4,
-      "physicalImages": 64,
-      "uniqueRemainingCountSources": 340,
-      "sourceLogSha256": "37308c72d8c7bc7da22df334dd6e2e9384a4e3ea608ac16efe435b7e39a6aa48",
-      "counterAuditSha256": "55432892620ea465ca58352822e2cbb3abda3497b27e62556f5eebf80a5e2779",
-      "fullArchiveRetrieved": false,
-      "normalRoundFullReplayComplete": false,
+      "fullArchiveRetrieved": true,
+      "archiveDeviceLocalHashesMatch": true,
+      "archiveCrcVerified": true,
+      "normalRoundFullReplayComplete": true,
+      "normalRounds": 3,
+      "normalFrames": 5123,
+      "normalSemanticEvents": 117,
+      "unresolvedNormalRounds": 0,
+      "independentRemainingCountSources": 601,
+      "matchedAtOriginalSourceTime": 571,
+      "matchedAfterBoundedCommitDelay": 30,
+      "maximumBadgeToCommitDelayMs": 1564,
+      "unexplainedSemanticEventDifferences": 0,
+      "interruptedSourceFrames": 3521,
+      "interruptedSourceRemainsUnverified": true,
       "interruptedRoundInputRecoveredOnPhone": false,
-      "blockedReason": "USB disconnected during full diagnostic export; no completed archive result retrieved. Old diagnostics.zip belongs to C4.7 and must not be substituted."
+      "pendingReason": "Actual task-resume surface repair must be checked on the C4.10 phone build; old interrupted input contains no canonical hand/owned plays and cannot reconstruct missing history.",
+      "diagnosticTailHandling": "Explicit opt-in omitted only one incomplete final diagnostic frame after the games ended. Original archive and exact provenance remain private locally."
     },
     "phoneInstalled": false,
     "phoneChecksCompleted": false,
@@ -2059,15 +2028,20 @@
     "stableServerChanged": false,
     "rollbackVerified": true,
     "documentation": "docs/development/beta-c4.10-live-audit-20261026.md",
+    "postFullArchiveCleanup": {
+      "removedFiles": 4,
+      "freedBytes": 173652390,
+      "protectedFiles": 82,
+      "scope": "Verified generated APK/tape duplicates and redundant interrupted export only. Current full archive and all unresolved raw evidence retained."
+    },
     "testDataCleanup": {
-      "finishedUtc": "2026-10-26T15:46:55.2939401Z",
       "filesRemoved": 7,
       "bytesFreed": 93710287,
-      "planSha256": "8656ed62d245edbda89795fdec16f7f70f4450086f0b9d3a87cfcc02e30cb484",
       "protectedFilesChecked": 71,
       "unresolvedLiveRawEvidenceRetained": true,
       "rollbackRetained": true,
       "scope": "Only verified duplicate C4.10 build-output APKs (identical retained artifact copies) and five obsolete intermediate build logs; all unresolved C4.9 raw images/logs retained"
-    }
+    },
+    "privateAuditDetails": "Full diagnostic identifiers, original hashes and evidence paths are retained locally and excluded from the public summary."
   }
 }

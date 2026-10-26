@@ -184,8 +184,6 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             val glyphs=detections.map { p -> PlayGlyph(p.card,p.confidence,GlyphBox(p.box.left,p.box.top,p.box.right,p.box.bottom)) }
             val partition=partitionGuandanHand(glyphs)
             val hand=partition.hand.map { it.card }
-            observeResumeInput(captured,if(captured.adjusting) TaskResumeRecoveryPolicy.Content.OTHER
-                else TaskResumeRecoveryPolicy.contentFor(detectedScene,glyphs.any { it.confidence>=.65f }))
             val startupRecoveryEligible=BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE &&
                 sessionCaptureScope==CaptureScope.APP_TASK && round.phase==RoundPhase.WAITING &&
                 round.roundId==null && scene==TableScene.UNKNOWN && hand.isEmpty() && frameCurrent()
@@ -232,6 +230,8 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             val ownership=synchronized(sessionGuard) {
                 if(frameCurrent() && !captured.adjusting) observer.reassociatePresentationFragments(assignedOwnership,start) else assignedOwnership
             }
+            observeResumeInput(captured,if(captured.adjusting) TaskResumeRecoveryPolicy.Content.OTHER
+                else TaskResumeRecoveryPolicy.contentFor(detectedScene,partition.hand,ownership))
             val selfGlyphs=ownership.seats.getValue(Seat.SELF)
             val evidenceStart=SystemClock.elapsedRealtime()
             val emptyEvidence=emptyGuard.evaluate(bitmap,scene,hand.size,ownership.seats,AppState.ledger.snapshot().roundId,normalizedMasks,
