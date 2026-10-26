@@ -95,6 +95,55 @@ class OwnExitPlayProofTest {
         assertEquals(own,certificate.cards)
     }
 
+    @Test fun aTrackedStrictSubsetBridgesForeignHandoffButRequiresFourFreshFullReads() {
+        val own=listOf(Card(Rank.Q,Suit.RED),
+            Card(Rank.A,Suit.RED),Card(Rank.A,Suit.RED),Card(Rank.A,Suit.RED),
+            Card(Rank.A,Suit.BLACK),Card(Rank.A,Suit.BLACK),Card(Rank.A,Suit.BLACK))
+        val partialCards=listOf(own[0],own[4],own[5],own[6])
+        val full=ObservedPlay(own,.88f,own.mapIndexed { i,card ->
+            val left=.45f+i*.025f
+            PlayGlyph(card,.88f,GlyphBox(left,.32f,left+.02f,.37f))
+        })
+        val partial=ObservedPlay(partialCards,.88f,listOf(0,4,5,6).map { full.glyphs[it] })
+        val l=ledger(own); val proof=OwnExitPlayProof()
+        assertNull(seed(proof,l))
+        assertNull(proof.observe(frame(1100,hand=emptyList(),p=full),l.snapshot(),own))
+        assertNull(proof.observe(frame(1300,hand=foreign,p=full),l.snapshot(),own))
+
+        // This observed strict subset retains the previously exact direct
+        // anchor, but contributes no vote toward a completion.
+        assertNull(proof.observe(frame(1400,hand=foreign,p=partial),l.snapshot(),own))
+        assertNull(proof.observe(frame(1500,TableScene.TEAMMATE,foreign,partial).copy(
+            ambiguousPresentation=true,incompleteReason="出牌归属待核对，正在重新识别"),l.snapshot(),own))
+        for(t in listOf(1600L,1720L,1840L))
+            assertNull(proof.observe(frame(t,hand=foreign,p=full),l.snapshot(),own))
+
+        l.selfFinished()
+        val certificate=proof.observeWithCertificate(
+            frame(1960,TableScene.TEAMMATE,foreign,full),l.snapshot(),l.currentHand())
+        assertNotNull(certificate)
+        assertEquals(own,certificate.cards)
+    }
+
+    @Test fun aForeignHandAndTrackedPartialCannotStartOwnExitAuthorityWithoutAFullAnchor() {
+        val own=listOf(Card(Rank.Q,Suit.RED),
+            Card(Rank.A,Suit.RED),Card(Rank.A,Suit.RED),Card(Rank.A,Suit.RED),
+            Card(Rank.A,Suit.BLACK),Card(Rank.A,Suit.BLACK),Card(Rank.A,Suit.BLACK))
+        val partialCards=listOf(own[0],own[4],own[5],own[6])
+        val full=ObservedPlay(own,.88f,own.mapIndexed { i,card ->
+            val left=.45f+i*.025f
+            PlayGlyph(card,.88f,GlyphBox(left,.32f,left+.02f,.37f))
+        })
+        val partial=ObservedPlay(partialCards,.88f,listOf(0,4,5,6).map { full.glyphs[it] })
+        val l=ledger(own); val proof=OwnExitPlayProof()
+        assertNull(seed(proof,l))
+        assertNull(proof.observe(frame(1100,hand=foreign,p=partial),l.snapshot(),own))
+        assertNull(proof.observe(frame(1700,hand=foreign,p=full),l.snapshot(),own))
+        assertNull(proof.observe(frame(1820,hand=foreign,p=full),l.snapshot(),own))
+        assertNull(proof.observe(frame(1940,hand=foreign,p=full),l.snapshot(),own))
+        assertNull(proof.observe(frame(2060,hand=foreign,p=full),l.snapshot(),own))
+    }
+
     @Test fun aQualifiedEmptyOwnHandDuringTableOwnershipAmbiguityKeepsOnlyTheFixedAnchorDeadline() {
         val own=listOf(Card(Rank.K,Suit.BLACK),Card(Rank.K,Suit.BLACK),
             Card(Rank.K,Suit.BLACK),Card(Rank.K,Suit.RED))

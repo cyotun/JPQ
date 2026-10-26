@@ -86,4 +86,44 @@ class EarlyFinishPlayProofTest {
         assertEquals(cards,proof.observe(frame(1100,scene=TableScene.TABLE),active,Seat.PREVIOUS,950)?.cards)
         assertNull(proof.observe(frame(1200,scene=TableScene.TEAMMATE),snapshot,Seat.PREVIOUS,950))
     }
+
+    @Test fun recentExactFullHandCanBeConfirmedByFreshCueOnSameSlotPartialRead() {
+        val proof=EarlyFinishPlayProof()
+        for(t in listOf(37246L,37490L,37741L,38022L,38271L))
+            assertNull(proof.observe(frame(t),snapshot,Seat.PREVIOUS,null))
+
+        val anchorBoxes=cards.indices.map { GlyphBox(.20f+it*.08f,.25f,.24f+it*.08f,.31f) }
+        val partial=frame(38520L,cards=listOf(Card(Rank.Q,Suit.RED)),confidence=.65f,
+            glyphConfidence=.65f,boxes=listOf(anchorBoxes[2]))
+        assertEquals(cards,proof.observe(partial,snapshot,Seat.PREVIOUS,38520L)?.cards)
+    }
+
+    @Test fun noCueOrWrongPartialCannotTurnRetainedFullEvidenceIntoAPlay() {
+        val proof=EarlyFinishPlayProof()
+        for(t in listOf(1000L,1244L,1495L))
+            assertNull(proof.observe(frame(t),snapshot,Seat.PREVIOUS,null))
+        val wrong=frame(1600L,cards=listOf(Card(Rank.Q,Suit.RED)),confidence=.65f,
+            glyphConfidence=.65f,boxes=listOf(GlyphBox(.80f,.65f,.84f,.71f)))
+        assertNull(proof.observe(wrong,snapshot,Seat.PREVIOUS,1600L))
+
+        val noCue=EarlyFinishPlayProof()
+        for(t in listOf(2000L,2244L,2495L,2776L,3025L))
+            assertNull(noCue.observe(frame(t),snapshot,Seat.PREVIOUS,null))
+        assertNull(noCue.observe(frame(3526L),snapshot,Seat.PREVIOUS,null))
+    }
+
+    @Test fun retainedEvidenceExpiresAndCannotCrossLedgerVersionChange() {
+        val expired=EarlyFinishPlayProof()
+        for(t in listOf(1000L,1244L,1495L)) assertNull(expired.observe(frame(t),snapshot,Seat.PREVIOUS,null))
+        assertNull(expired.observe(frame(2501L),snapshot,Seat.PREVIOUS,2501L))
+
+        val changed=EarlyFinishPlayProof()
+        for(t in listOf(3000L,3244L,3495L)) assertNull(changed.observe(frame(t),snapshot,Seat.PREVIOUS,null))
+        val updated=snapshot.copy(plays=snapshot.plays + (Seat.PREVIOUS to listOf(
+            snapshot.plays.getValue(Seat.PREVIOUS).single().copy(eventId="revised"))))
+        assertNull(changed.observe(frame(3600L),updated,Seat.PREVIOUS,3600L))
+        // The old votes cannot commit on the first changed-version frame;
+        // two fresh full reads under the new version can establish a new proof.
+        assertEquals(cards,changed.observe(frame(3710L),updated,Seat.PREVIOUS,3600L)?.cards)
+    }
 }

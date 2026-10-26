@@ -23,6 +23,7 @@ private fun completionSeat(box: GlyphBox?): Seat? {
     if(badge) {
         when {
             b.cx in .055f.. .18f && b.cy in .18f.. .275f -> return Seat.PREVIOUS
+            b.cx in .36f.. .52f && b.cy in .035f.. .12f -> return Seat.OPPOSITE
             b.cx in .82f.. .945f && b.cy in .18f.. .275f -> return Seat.NEXT
             b.cx in .055f.. .18f && b.cy in .74f.. .84f -> return Seat.SELF
         }
@@ -47,6 +48,17 @@ fun tencentEarlyFinishSeats(hints: List<SceneHint>): Map<Seat,String> {
         ranksBySeat[seats.single()]?.size==1 }.map { (rank,seats) -> seats.single() to rank }.toMap()
 }
 
+/** A positioned last-place rank cue, including the central self slot, identifies its seat. */
+fun tencentLastPlaceSeat(hints: List<SceneHint>): Seat? {
+    val seats=hints.asSequence().filter { it.text.filterNot(Char::isWhitespace)=="末游" }
+        .mapNotNull { completionSeat(it.box) }.toSet()
+    val seat=seats.singleOrNull() ?: return null
+    val conflictingRank=hints.any { hint ->
+        hint.text.filterNot(Char::isWhitespace) in setOf("头游","二游","三游") && completionSeat(hint.box)==seat
+    }
+    return seat.takeUnless { conflictingRank }
+}
+
 private fun threeCompletedFinishers(hints: List<SceneHint>): Boolean {
     val ranks=listOf("头游","二游","三游")
     val seatsByRank=ranks.associateWith { linkedSetOf<Seat>() }
@@ -64,7 +76,7 @@ private fun threeCompletedFinishers(hints: List<SceneHint>): Boolean {
 
 fun tencentSelfFinished(hints: List<SceneHint>)=hints.any { hint ->
     val b=hint.box
-    hint.text.replace(" ","") in setOf("头游","二游","三游","末游") && b!=null &&
+    hint.text.replace(" ","") in setOf("头游","二游","三游") && b!=null &&
         ((b.cx<.18f && b.cy in .68f.. .84f) || (b.cx in .3f.. .7f && b.cy in .60f.. .84f && b.height>=.035f))
 }
 
@@ -91,13 +103,9 @@ private fun centralDoublingChoice(hint: SceneHint): Boolean {
 fun tencentScene(hints: List<SceneHint>,hasCards: Boolean,hasHandCards: Boolean): TableScene {
     val lines=hints.filter { (it.box?.cy ?: 0f)>.12f }
     val all=lines.joinToString(" ") { it.text.replace(" ","") }
-    val lastPlace=lines.any { hint ->
-        val b=hint.box
-        hint.text.replace(" ","")=="末游" && b!=null &&
-            ((b.height>=.035f && b.cy in .13f.. .45f) || (b.cx<.18f && b.cy in .68f.. .84f))
-    }
+    val lastPlace=tencentLastPlaceSeat(hints)!=null
     return when {
-        lastPlace || threeCompletedFinishers(lines) -> TableScene.RESULT
+        lastPlace || threeCompletedFinishers(hints) -> TableScene.RESULT
         listOf("进贡","还贡","还牌","贡牌").any { all.contains(it) } -> TableScene.TRIBUTE
         listOf("再来一局","继续游戏","本局结束","本局结算").any { all.contains(it) } -> TableScene.RESULT
         all.contains("队友手牌") || all.contains("对家手牌") -> TableScene.TEAMMATE

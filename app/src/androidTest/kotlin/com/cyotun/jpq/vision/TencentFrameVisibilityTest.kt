@@ -153,6 +153,27 @@ class TencentFrameVisibilityTest {
         assertTrue(earlyFinishSource(text.copy(sourceMasks=listOf(GlyphBox(Float.NaN,0f,.2f,.3f)))).isEmpty())
     }
 
+    @Test fun lastPlaceSourceRecognizesTheCentralSelfSlotAndRejectsStaleMaskedOrAmbiguousHints() {
+        val text=SceneText(listOf(OcrLine("末游",Rect(1229,808,1376,886))),900L,2608,1200,7)
+        fun read(t: SceneText?=text,now: Long=1000L,epoch: Long=7L,scene: TableScene=TableScene.RESULT,
+            masks: List<GlyphBox> = emptyList()) =
+            TencentFrameVisibility.observedLastPlaceSeat(t,now,2608,1200,epoch,scene,masks)
+        assertEquals(Seat.SELF,read())
+        assertEquals(Seat.SELF,read(scene=TableScene.TABLE))
+        assertNull(read(now=1901L)); assertNull(read(now=899L)); assertNull(read(epoch=8L))
+        assertNull(read(t=text.copy(width=2607)))
+        assertNull(read(masks=listOf(GlyphBox(.47f,.67f,.53f,.74f))))
+        assertNull(read(t=text.copy(sourceMasks=listOf(GlyphBox(.47f,.67f,.53f,.74f)))))
+        val conflict=text.copy(lines=text.lines+OcrLine("末游",Rect(1071,83,1201,133)))
+        assertNull(read(t=conflict))
+    }
+
+    @Test fun teammateAvatarFinishBadgeIsFreshOppositeMetadata() {
+        val text=SceneText(listOf(OcrLine("二游",Rect(1071,83,1201,133))),900L,2608,1200,7)
+        assertEquals(mapOf(Seat.OPPOSITE to 900L),TencentFrameVisibility.observedEarlyFinishes(
+            text,1000L,2608,1200,7,TableScene.TABLE,emptyList()))
+    }
+
     @Test fun sourceIdentityRemainsOriginalCaptureTimeAcrossRepeatedCachedOcrDelivery() {
         val text=choices()
         assertEquals(800L,source(text))

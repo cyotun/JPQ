@@ -142,15 +142,15 @@ def encode_single_identities(frame: dict) -> str:
 
 
 def encode_early_finish_hints(frame: dict) -> str:
-    # These are the original, dimension/epoch-qualified OCR snapshot hints
-    # already emitted by TencentRecognizer, not inferred ranks or card truth.
+    # These are original, dimension/epoch-qualified first/second/third/last-place
+    # OCR snapshot hints already emitted by TencentRecognizer, not inferred ranks or card truth.
     elapsed, age = frame.get("elapsedMs"), frame.get("sceneSourceAgeMs")
     hints, source_masks = frame.get("sceneSourceHints"), frame.get("sceneSourceMasks")
     masks = frame.get("overlayMasks")
     if (type(elapsed) is not int or type(age) is not int or not 0 <= age <= 1000 or
             elapsed-age < 0 or not isinstance(hints, list) or not isinstance(masks, list) or
             not isinstance(source_masks, list) or frame.get("adjusting") is True or
-            frame.get("scene") not in {"TABLE", "TEAMMATE"}):
+            frame.get("scene") not in {"TABLE", "TEAMMATE", "RESULT"}):
         return "?"
     all_masks = source_masks + masks
     def valid(box):
@@ -161,7 +161,7 @@ def encode_early_finish_hints(frame: dict) -> str:
         return "?"
     result = []
     for hint in hints:
-        if not isinstance(hint, dict) or hint.get("text") not in {"头游", "二游"}:
+        if not isinstance(hint, dict) or hint.get("text") not in {"头游", "二游", "三游", "末游"}:
             continue
         box = hint.get("box")
         if not valid(box) or any(m[0] < box[2]+.0001 and box[0]-.0001 < m[2] and

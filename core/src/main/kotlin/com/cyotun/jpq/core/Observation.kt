@@ -17,7 +17,10 @@ data class TableFrame(val timeMs: Long,val scene: TableScene,val hand: List<Card
                       // They close an action; they never prove that its old pixels are empty.
                       val observedPasses: Map<Seat,Long> = emptyMap(),
                       // Only positioned first/second finish labels, never automatic third/last rankings.
-                      val observedEarlyFinishes: Map<Seat,Long> = emptyMap())
+                      val observedEarlyFinishes: Map<Seat,Long> = emptyMap(),
+                      // Positioned last-place reveal; this player still holds cards.
+                      val observedLastPlaceSeat: Seat? = null,
+                      val observedLastPlaceSourceTimeMs: Long? = null)
 
 internal fun TableFrame.onlyLocalizedOverlay(): Boolean = incompleteReason!=null &&
     localizedOverlaySeats.isNotEmpty() && !captureGap && !ambiguousPresentation &&
@@ -100,9 +103,12 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     private enum class TerminalCompletionDecision { CONTINUE, HOLD, DISPROVED }
     private var deferredOwnCompletion: DeferredOwnCompletion?=null
     private val ownHandDifferenceProof=OwnHandDifferenceProof()
+    private val ownDelayedHandDifferenceProof=OwnDelayedHandDifferenceProof()
+    private val ownCompletionCueProof=OwnCompletionCueProof()
     private val localizedPendingRecovery=LocalizedPendingPlayRecovery()
     private val quantityProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { QuantityAnchoredPlayProof() }
     private val earlyFinishProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { EarlyFinishPlayProof() }
+    private val terminalSeatProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).map { TerminalSeatPlayProof(it) }
     private val repeatedPlayProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RepeatedPlayCountProof() }
     private val repeatedSingleProofs=listOf(Seat.PREVIOUS,Seat.OPPOSITE,Seat.NEXT).associateWith { RepeatedSingleCardProof() }
     private val countAnchoredRepeatedSingles=CountAnchoredRepeatedSingleProof()
@@ -122,9 +128,11 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         ownExitPlayProof.reset()
         deferredOwnCompletion=null
         ownHandDifferenceProof.clear()
+        ownDelayedHandDifferenceProof.clear()
         localizedPendingRecovery.reset()
         quantityProofs.values.forEach { it.clear() }
         earlyFinishProofs.values.forEach { it.clear() }
+        terminalSeatProofs.forEach { it.clear() }
         repeatedPlayProofs.values.forEach { it.clear() }
         repeatedSingleProofs.values.forEach { it.clear() }
         countAnchoredRepeatedSingles.clear()
@@ -159,6 +167,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     fun incomplete(reason: String,timeMs: Long=lastTime,immediate: Boolean=false) {
         ownExitPlayProof.reset()
         ownHandDifferenceProof.clear()
+        ownDelayedHandDifferenceProof.clear()
         val preserveStrictSupersetQuantity=reason=="出牌变化待核对，正在重新识别"
         if(!preserveStrictSupersetQuantity) quantityProofs.values.forEach { it.clear() }
         repeatedPlayProofs.values.forEach { it.clear() }
@@ -246,8 +255,8 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         val clean=frame.scene in setOf(TableScene.TABLE,TableScene.TEAMMATE) && !frame.captureGap && !frame.ambiguousPresentation &&
             frame.incompleteReason==null && frame.localizedOverlaySeats.isEmpty()
         val lowerHand=if(frame.scene==TableScene.TEAMMATE) frame.teammateHand.takeIf { frame.teammateHandConfidence>=.65f } else frame.hand
-        if(clean && snapshot.phase==RoundPhase.ACTIVE && snapshot.played(Seat.OPPOSITE)==27 &&
-            lowerHand?.isNotEmpty()==true && lowerHand.map { it.rank }.sorted()==ledger.currentHand().map { it.rank }.sorted()) {
+        if(snapshot.phase==RoundPhase.ACTIVE &&
+            ownCompletionCueProof.exactOwnHandStillVisible(frame,ledger.currentHand())) {
             // Re-evaluate positive hand evidence on every frame: a cached finish
             // label cannot win merely because the previous defer was canceled.
             deferredOwnCompletion=null
@@ -294,11 +303,27 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         if(lastTime>=0 && frame.timeMs-lastTime>2500 && snap.remaining!=null)
             incomplete("画面连续性中断，正在重新核对",lastTime,immediate=true)
         lastTime=frame.timeMs
+        for(proof in terminalSeatProofs) {
+            val terminal=proof.observe(frame,ledger.snapshot())
+            if(terminal!=null && recovery==null) {
+                // Only a previously located last play can finish its bounded
+                // confirmation after the result animation starts. Other seats'
+                // exposed unplayed cards never enter ordinary collection here.
+                if(!commit(terminal.seat,terminal.play.cards)) return
+                if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
+            }
+        }
         if(frame.captureGap || frame.ambiguousPresentation || frame.incompleteReason!=null ||
             frame.scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE)) {
             quantityProofs.values.forEach { it.clear() }
             countAnchoredRepeatedSingles.clear()
-            passedSupersetProofs.values.forEach { it.clear() }
+            for((seat,proof) in passedSupersetProofs) {
+                // A brief ownership animation may not erase an already proved
+                // pass boundary. It supplies no card/pass votes and is retained
+                // only against the same hand, presentation and event version.
+                proof.retainAcrossOwnershipAmbiguity(frame,ledger.snapshot(),seat,
+                    quantityPrior(seat),ledger.currentHand(),presentations[seat]?.lastSeen ?: -1L)
+            }
         }
         val localizedPlay=localizedPendingRecovery.observe(frame,ledger.snapshot(),ledger.currentHand(),ledger.phaseBeforeRecovery())
         if(localizedPlay!=null && recovery!=null) {
@@ -350,6 +375,9 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 }
             } else if(!commit(Seat.SELF,ownExit.cards)) return
         }
+        val delayedOwn=if(recovery==null) ownDelayedHandDifferenceProof.observe(frame,ledger.snapshot(),ledger.currentHand())
+            else { ownDelayedHandDifferenceProof.clear(); null }
+        if(delayedOwn!=null && !commit(Seat.SELF,delayedOwn.cards)) return
         val ownDifference=if(recovery==null) ownHandDifferenceProof.observe(frame,ledger.snapshot(),ledger.currentHand())
             else { ownHandDifferenceProof.clear(); null }
         if(ownDifference!=null && !commit(Seat.SELF,ownDifference.cards)) return
@@ -366,6 +394,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
             if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
         }
         if(frame.scene in setOf(TableScene.LOBBY,TableScene.RESULT)) {
+            if(frame.scene==TableScene.RESULT && terminalSeatProofs.any { it.holdResult(frame.timeMs,ledger.snapshot()) }) return
             // A result cannot certify a checkpoint still awaiting reconciliation.
             publishRecoveryIfDue(frame.timeMs,immediate=true)
             if(snap.roundId!=null) { ledger.finish(); emit(); ledger.waitForNext(); lastRound=null; emit() }
@@ -760,7 +789,9 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                         presentation.colorReturnAnchor=p.glyphs.toList(); presentation.colorReturnSeen=frame.timeMs
                         visible[seat]=k; playVotes[seat]!!.clear()
                         if(commitNow && confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
-                    } else if(playVotes[seat]!!.duration(frame.timeMs)>=900) {
+                    } else if(playVotes[seat]!!.duration(frame.timeMs)>=900 &&
+                        !passedSupersetProof.pendingStrongCandidate(frame.timeMs) &&
+                        !(finalHandProof && playVotes[seat]!!.duration(frame.timeMs)<2000)) {
                         // This conflict has already persisted through 900ms of
                         // confirmation, so it has used the short animation grace.
                         incomplete("出牌变化待核对，正在重新识别",frame.timeMs,immediate=true); return

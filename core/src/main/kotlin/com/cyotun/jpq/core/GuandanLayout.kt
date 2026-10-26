@@ -28,8 +28,17 @@ fun partitionGuandanHand(glyphs: List<PlayGlyph>): HandPartition {
             // A tall stack can approach the central play row. The central card
             // print is smaller than hand print even when their vertical gap is
             // short; it cannot join a hand column merely by sharing its x.
+            // Selected cards in a same-rank tower can be clipped to a shorter
+            // glyph box than the unselected hand cards below them. Admit that
+            // top glyph only when it continues the same narrowly aligned rank
+            // stack at ordinary-hand width and near-matching height. Central
+            // plays remain too narrow to use this exception.
+            val sameRankHandStack=p.card.rank==q.card.rank &&
+                kotlin.math.abs(p.box.cx-q.box.cx)<width*.28f &&
+                p.box.width>=q.box.width*.85f && p.box.width<=q.box.width*1.18f &&
+                p.box.height>=q.box.height*.78f && p.box.height<=q.box.height*1.25f
             val sameHandScale=p.box.cy>=.4f || p.card.rank.isJoker || handGlyphHeight==null ||
-                p.box.height>=handGlyphHeight*.84f
+                p.box.height>=handGlyphHeight*.84f || sameRankHandStack
             // Actual stacked/raised rows have a short glyph gap. The larger former
             // gap could bridge a separate central presentation into the own-hand chain.
             sameHandScale && p.box.cy<q.box.cy && dy>=-overlap && dy<height*.6f && kotlin.math.abs(p.box.cx-q.box.cx)<width*.65f

@@ -9,14 +9,27 @@ internal object TencentFrameVisibility {
         scene: TableScene,masks: List<GlyphBox>): Map<Seat,Long> {
         if(scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE) || text==null || text.width!=width ||
             text.height!=height || text.visibilityEpoch!=epoch || timeMs-text.timeMs !in 0L..1000L) return emptyMap()
+        val hints=qualifiedHints(text,width,height,masks) ?: return emptyMap()
+        return tencentEarlyFinishSeats(hints).keys.associateWith { text.timeMs }
+    }
+
+    /** Fresh last-place metadata identifies the player still holding cards. */
+    fun observedLastPlaceSeat(text: SceneText?,timeMs: Long,width: Int,height: Int,epoch: Long,
+        scene: TableScene,masks: List<GlyphBox>): Seat? {
+        if(scene !in setOf(TableScene.TABLE,TableScene.TEAMMATE,TableScene.RESULT) || text==null || text.width!=width ||
+            text.height!=height || text.visibilityEpoch!=epoch || timeMs-text.timeMs !in 0L..1000L) return null
+        val hints=qualifiedHints(text,width,height,masks) ?: return null
+        return tencentLastPlaceSeat(hints)
+    }
+
+    private fun qualifiedHints(text: SceneText,width: Int,height: Int,masks: List<GlyphBox>): List<SceneHint>? {
         val allMasks=text.sourceMasks+masks
-        if(allMasks.any { !validMask(it) }) return emptyMap()
-        val hints=text.lines.mapNotNull { line ->
+        if(allMasks.any { !validMask(it) }) return null
+        return text.lines.mapNotNull { line ->
             val r=line.box ?: return@mapNotNull null
             val b=GlyphBox(r.left.toFloat()/width,r.top.toFloat()/height,r.right.toFloat()/width,r.bottom.toFloat()/height)
             if(!validMask(b) || allMasks.any { intersects(it,b) }) null else SceneHint(line.text,b)
         }
-        return tencentEarlyFinishSeats(hints).keys.associateWith { text.timeMs }
     }
 
     fun observedPasses(text: SceneText?,timeMs: Long,width: Int,height: Int,epoch: Long,

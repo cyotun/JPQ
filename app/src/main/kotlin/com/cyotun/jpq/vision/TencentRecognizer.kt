@@ -232,6 +232,8 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             val openingChoiceSourceTimeMs=if(detectedScene==TableScene.DEALING && !captured.adjusting)
                 TencentFrameVisibility.openingChoiceSourceTimeMs(text,start,captured.width,captured.height,activeVisibilityEpoch,normalizedMasks)
                 else null
+            val lastPlaceSeat=if(captured.adjusting) null else TencentFrameVisibility.observedLastPlaceSeat(
+                text,start,captured.width,captured.height,activeVisibilityEpoch,scene,normalizedMasks)
             val observation=TencentFrameVisibility.qualify(TableFrame(start,scene,
                 if(scene==TableScene.TEAMMATE || captured.adjusting) null else hand,observed,selfFinished,
                 incompleteReason=when {
@@ -245,7 +247,9 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
                 observedPasses=if(captured.adjusting) emptyMap() else TencentFrameVisibility.observedPasses(
                     text,start,captured.width,captured.height,activeVisibilityEpoch,scene,ownership.seats,normalizedMasks),
                 observedEarlyFinishes=if(captured.adjusting) emptyMap() else TencentFrameVisibility.observedEarlyFinishes(
-                    text,start,captured.width,captured.height,activeVisibilityEpoch,scene,normalizedMasks)),
+                    text,start,captured.width,captured.height,activeVisibilityEpoch,scene,normalizedMasks),
+                observedLastPlaceSeat=lastPlaceSeat,
+                observedLastPlaceSourceTimeMs=text?.timeMs.takeIf { lastPlaceSeat!=null }),
                 partition.hand,emptyEvidence,normalizedMasks)
             fun rounded(value: Float)=kotlin.math.round(value*10000f)/10000f
             trace.writeIfEnabled { JSONObject().put("type","frame").put("frame",frameNumber).put("imageTimestampNs",captured.imageTimestampNs).put("elapsedMs",start)

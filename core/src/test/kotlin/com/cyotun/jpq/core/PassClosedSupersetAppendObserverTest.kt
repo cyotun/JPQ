@@ -4,7 +4,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class PassClosedSupersetAppendObserverTest {
-    @Test fun appendedOtherPlayKeepsOppositePassProofAndObserverContinuesWithPreviousAndSelf() {
+    @Test fun appendedOtherPlayKeepsOppositePassProofAndObserverContinuesWithPreviousAndSelf() = scenario(false)
+
+    @Test fun briefOwnershipAmbiguityKeepsTheClosedPassAcrossTheWholeObserver() = scenario(true)
+
+    private fun scenario(interruptOwnership: Boolean) {
         val old=Card(Rank.EIGHT,Suit.RED)
         val ownPlay=Card(Rank.NINE,Suit.BLACK)
         val nextKing=Card(Rank.K,Suit.BLACK)
@@ -64,6 +68,8 @@ class PassClosedSupersetAppendObserverTest {
         assertEquals(6,ledger.snapshot().played(Seat.NEXT))
         assertEquals(RoundPhase.ACTIVE,ledger.snapshot().phase)
 
+        if(interruptOwnership) observer.observe(frame(4500).copy(
+            ambiguousPresentation=true,incompleteReason="出牌归属待核对，正在重新识别"))
         for(t in 4600L..5200L step 200)
             observer.observe(frame(t,mapOf(Seat.OPPOSITE to oppositeStraight,Seat.NEXT to nextStraight)))
         assertEquals(6,ledger.snapshot().played(Seat.OPPOSITE))

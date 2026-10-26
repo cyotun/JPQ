@@ -88,12 +88,20 @@ class OwnExitPlayProof {
             (freshAnchoredHandoff || ongoingHandoff) &&
             foreignHand && handoffHasNoSelfPlay && (active || latched)
         val exactOwnAnchor=anchor?.let { strong(it) && key(it.cards)==key(originalHand) }==true
+        val trackedPartialOwnPlay=exactOwnAnchor && anchor!=null && frame.plays[Seat.SELF]?.let {
+            strong(it) && trackedStrictSubset(it,anchor!!,originalHand)
+        }==true
+        val ambiguousTrackedPartialHandoff=frame.scene==TableScene.TEAMMATE &&
+            frame.ambiguousPresentation && frame.incompleteReason==ambiguousOwnershipReason &&
+            !frame.captureGap && frame.localizedOverlaySeats.isEmpty() && !frame.dealingChoicesObserved &&
+            continuationLive && exactOwnAnchor && trackedPartialOwnPlay && foreignHand &&
+            (active || latched)
         val ambiguousOwnHandoff=frame.scene==TableScene.TABLE && frame.ambiguousPresentation &&
             frame.incompleteReason==ambiguousOwnershipReason && !frame.captureGap &&
             frame.localizedOverlaySeats.isEmpty() && !frame.dealingChoicesObserved &&
             frameHand?.isEmpty()==true && handoffHasNoSelfPlay && exactOwnAnchor &&
             (freshAnchoredHandoff || ongoingHandoff) && (active || latched)
-        if(ambiguousForeignHandoff || ambiguousOwnHandoff) {
+        if(ambiguousForeignHandoff || ambiguousTrackedPartialHandoff || ambiguousOwnHandoff) {
             // Keep only the already established exact-own-hand authority. The
             // ambiguous frame supplies no card vote, and repeated ambiguous
             // frames cannot restart or extend this handoff deadline.
@@ -125,6 +133,22 @@ class OwnExitPlayProof {
         // A partial remnant of the old hand is not proof that the lower area
         // has been replaced by another player's complete hand.
         val departed=frameHand!=null && (frameHand.isEmpty() || foreignHand)
+
+        // Once an exact own-hand play is directly anchored, a strong tracked
+        // strict subset can bridge the short foreign-hand handoff. It supplies
+        // no cards or votes; the fixed deadline starts at the first such frame
+        // and every later full-hand vote must be fresh.
+        val firstTrackedForeignPartial=active && continuationAt<0L && votes>0 &&
+            frame.scene==TableScene.TABLE && foreignHand && trackedPartialOwnPlay &&
+            frame.timeMs-lastTime in 0L..500L
+        val continuingTrackedForeignPartial=continuationLive && exactOwnAnchor && foreignHand &&
+            trackedPartialOwnPlay && (active || latched)
+        if(firstTrackedForeignPartial || continuingTrackedForeignPartial) {
+            if(continuationAt<0L) continuationAt=frame.timeMs
+            foreignHandSeenAt=frame.timeMs
+            clearFreshVotes()
+            return null
+        }
 
         // A terminal cue can close an already established full-hand proof,
         // but cannot supply a missing card or start a candidate. This branch
@@ -278,6 +302,19 @@ class OwnExitPlayProof {
                 maxOf(glyph.box.height,tracked.box.height)<=minOf(glyph.box.height,tracked.box.height)*1.4f }
             if(index<0) false else { remaining.removeAt(index); true }
         } && remaining.isEmpty()
+    }
+    private fun trackedStrictSubset(current: ObservedPlay,old: ObservedPlay,of: List<Card>): Boolean {
+        if(current.cards.size>=of.size || !strictSubset(current.cards,of) ||
+            current.glyphs.size!=current.cards.size || old.glyphs.size!=old.cards.size) return false
+        val remaining=old.glyphs.toMutableList()
+        return current.glyphs.all { glyph ->
+            val index=remaining.indexOfFirst { tracked -> glyph.card.colorKey()==tracked.card.colorKey() &&
+                kotlin.math.abs(glyph.box.cx-tracked.box.cx)<=minOf(glyph.box.width,tracked.box.width)*.35f &&
+                kotlin.math.abs(glyph.box.cy-tracked.box.cy)<=minOf(glyph.box.height,tracked.box.height)*.35f &&
+                maxOf(glyph.box.width,tracked.box.width)<=minOf(glyph.box.width,tracked.box.width)*1.4f &&
+                maxOf(glyph.box.height,tracked.box.height)<=minOf(glyph.box.height,tracked.box.height)*1.4f }
+            if(index<0) false else { remaining.removeAt(index); true }
+        }
     }
     private fun sameRankSlots(current: ObservedPlay,old: ObservedPlay): Boolean {
         fun ranks(cards: List<Card>)=cards.map { it.rank.name }.sorted()

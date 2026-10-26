@@ -49,12 +49,88 @@ class PassClosedSupersetProof {
     private var lastPassSource = -1L
     private var passVotes = 0
     private var candidate: Candidate? = null
+    private var ownershipAmbiguityUntil: Long? = null
     // Keep successful versions fenced across transient observation faults. A
     // later recovery of the same presentation must not emit it a second time.
     private val delivered = linkedSetOf<String>()
 
     /** Drop pending proof state after a caller-observed global fault/round reset. */
     fun clear() = reset()
+
+    /**
+     * True only while this exact frame extends a live, strong candidate which
+     * has at least one strong vote. Callers may use this to defer a conflicting
+     * fallback for this frame; the pass witness alone never suppresses it.
+     */
+    fun pendingStrongCandidate(timeMs: Long): Boolean {
+        val current=candidate ?: return false
+        return current.votes>=1 && current.lastTime==timeMs &&
+            timeMs-current.firstTime in 0L..MAX_CANDIDATE_LIFETIME_MS &&
+            timeMs-current.lastTime in 0L..MAX_CANDIDATE_FRAME_GAP_MS &&
+            passVotes>=REQUIRED_PASS_VOTES && lastPassSource>=0 &&
+            timeMs-lastPassSource in 0L..MAX_PASS_AGE_MS &&
+            scope!=null && observedClosingVersion!=null
+    }
+
+    /**
+     * Preserve an already established pass fence across one short ownership-only
+     * ambiguity. This frame contributes no pass or candidate vote. The caller
+     * must still run its ordinary recovery path when this returns false.
+     *
+     * Repeated ambiguity frames can advance the observation clock only until
+     * the fixed deadline set by the first accepted frame; they never refresh
+     * the pass-source timestamps or candidate's first/last visible times.
+     */
+    fun retainAcrossOwnershipAmbiguity(
+        frame: TableFrame,
+        snapshot: RoundSnapshot,
+        seat: Seat,
+        prior: QuantityAnchoredPlayProof.PriorPresentation?,
+        expectedOwnHand: List<Card>,
+        priorObservedAt: Long,
+    ): Boolean {
+        val currentClosing = prior?.let { currentClosingVersion(snapshot, seat, it) }
+        val sameClosing = currentClosing != null && currentClosing == observedClosingVersion
+        val appendedClosing = currentClosing != null && observedClosingVersion != null &&
+            isPrefix(observedClosingVersion!!.events, currentClosing.events) &&
+            passVotes >= REQUIRED_PASS_VOTES &&
+            lastPassSource - firstPassSource >= PASS_MIN_SPAN_MS &&
+            lastPassSource >= 0 && frame.timeMs - lastPassSource in 0L..MAX_PASS_AGE_MS
+        val valid = frame.ambiguousPresentation &&
+            frame.scene == TableScene.TABLE &&
+            !frame.captureGap &&
+            !frame.selfFinished &&
+            !frame.dealingChoicesObserved &&
+            frame.localizedOverlaySeats.isEmpty() &&
+            (frame.incompleteReason == null || frame.incompleteReason == OWNERSHIP_REVIEW_REASON) &&
+            frame.hand != null && sameCards(frame.hand, expectedOwnHand) && expectedOwnHand.isNotEmpty() &&
+            frame.timeMs > lastFrameTime && lastFrameTime >= 0 && frame.timeMs - lastFrameTime <= MAX_FRAME_GAP_MS &&
+            snapshot.phase == RoundPhase.ACTIVE && seat != Seat.SELF &&
+            prior != null && matchesCurrentScope(snapshot, seat, prior, expectedOwnHand, priorObservedAt) &&
+            hasEstablishedPass(frame.timeMs) && (sameClosing || appendedClosing)
+
+        if (!valid) {
+            clearProof()
+            ownershipAmbiguityUntil = null
+            return false
+        }
+
+        val deadline = ownershipAmbiguityUntil ?: (frame.timeMs + MAX_OWNERSHIP_AMBIGUITY_MS)
+        if (frame.timeMs > deadline) {
+            clearProof()
+            ownershipAmbiguityUntil = null
+            return false
+        }
+        ownershipAmbiguityUntil = deadline
+        // Match normal observation behavior: once the whole retention gate has
+        // passed, an established pass may advance across verified new events.
+        // Keep closingVersion as the original pass fence.
+        if(appendedClosing) observedClosingVersion = currentClosing
+        // Advance only the inter-frame clock. Pass and candidate evidence keeps
+        // its original source times, so this cannot create votes or extend TTL.
+        lastFrameTime = frame.timeMs
+        return true
+    }
 
     /**
      * expectedOwnHand is the immutable active-round hand checkpoint. The
@@ -73,7 +149,9 @@ class PassClosedSupersetProof {
             if(frame.timeMs<lastFrameTime) reset()
             return null
         }
-        if(lastFrameTime>=0 && frame.timeMs-lastFrameTime>500L) clearProof()
+        if(ownershipAmbiguityUntil?.let { frame.timeMs > it } == true) clearProof()
+        if(lastFrameTime>=0 && frame.timeMs-lastFrameTime>MAX_FRAME_GAP_MS) clearProof()
+        ownershipAmbiguityUntil = null
         lastFrameTime=frame.timeMs
 
         val previous=prior ?: run { clearProof(); return null }
@@ -167,12 +245,18 @@ class PassClosedSupersetProof {
             return null
         }
 
-        // Any visible group during the pass interval either starts the exact
-        // new strict-superset candidate below, or invalidates the boundary.
+        // Any structurally invalid visible group during the pass interval
+        // invalidates the boundary. A structurally complete but weak reading
+        // is an abstention: it cannot vote, yet need not erase a fresh pass
+        // fence established independently before this arrival effect.
         if(passVotes<REQUIRED_PASS_VOTES || lastPassSource-firstPassSource<PASS_MIN_SPAN_MS ||
             frame.timeMs-lastPassSource>MAX_PASS_AGE_MS ||
-            !validNewSuperset(current,previous)) {
+            !structurallyValidNewSuperset(current,previous)) {
             clearPassAndCandidate()
+            return null
+        }
+        if(!strongNewSuperset(current)) {
+            candidate=null
             return null
         }
         return observeCandidate(current,frame.timeMs,previous)
@@ -235,11 +319,14 @@ class PassClosedSupersetProof {
         return result
     }
 
-    private fun validNewSuperset(play: ObservedPlay,prior: QuantityAnchoredPlayProof.PriorPresentation): Boolean =
-        play.regionObserved && play.confidence>=MIN_STRONG_CONFIDENCE && validGlyphs(play.glyphs,play.cards) &&
-            play.glyphs.all { it.confidence>=MIN_STRONG_CONFIDENCE } &&
+    private fun structurallyValidNewSuperset(play: ObservedPlay,
+        prior: QuantityAnchoredPlayProof.PriorPresentation): Boolean =
+        play.regionObserved && play.confidence in MIN_GLYPH_CONFIDENCE..1f && validGlyphs(play.glyphs,play.cards) &&
             play.cards.size>prior.cards.size && isSubset(prior.cards,play.cards) &&
             !matchesAnyOldSlot(play.glyphs,prior.glyphs)
+
+    private fun strongNewSuperset(play: ObservedPlay): Boolean =
+        play.confidence>=MIN_STRONG_CONFIDENCE && play.glyphs.all { it.confidence>=MIN_STRONG_CONFIDENCE }
 
     private fun clearPassAndCandidate() {
         firstPassSource=-1L
@@ -255,6 +342,32 @@ class PassClosedSupersetProof {
         closingFenceAt=-1L
         lastPriorObservedAt=-1L
         clearPassAndCandidate()
+        ownershipAmbiguityUntil=null
+    }
+
+    private fun matchesCurrentScope(snapshot: RoundSnapshot, seat: Seat,
+        prior: QuantityAnchoredPlayProof.PriorPresentation, expectedOwnHand: List<Card>, priorObservedAt: Long): Boolean {
+        val latest=snapshot.plays[seat].orEmpty().lastOrNull() ?: return false
+        val roundId=snapshot.roundId ?: return false
+        val expected=Scope(roundId,seat,latest.eventId,latest.sequence,cardKeys(latest.cards),
+            glyphKeys(prior.glyphs),cardKeys(expectedOwnHand))
+        return scope==expected && latest.eventId==prior.eventId && sameCards(latest.cards,prior.cards) &&
+            latest.eventId.isNotBlank() && prior.cards.isNotEmpty() &&
+            prior.glyphs.size==prior.cards.size && validGlyphs(prior.glyphs,prior.cards) &&
+            priorObservedAt==lastPriorObservedAt
+    }
+
+    private fun hasEstablishedPass(timeMs: Long): Boolean = passVotes>=REQUIRED_PASS_VOTES &&
+        lastPassSource-firstPassSource>=PASS_MIN_SPAN_MS && lastPassSource>=0 &&
+        timeMs-lastPassSource in 0L..MAX_PASS_AGE_MS && closingVersion!=null && observedClosingVersion!=null
+
+    private fun currentClosingVersion(snapshot: RoundSnapshot, seat: Seat,
+        prior: QuantityAnchoredPlayProof.PriorPresentation): ClosingVersion? {
+        val latest=snapshot.plays[seat].orEmpty().lastOrNull()?.takeIf { it.eventId==prior.eventId } ?: return null
+        val events=snapshot.plays.values.flatten().filter { it.seat!=seat && it.sequence>latest.sequence }
+            .sortedBy { it.sequence }.map { ClosingEvent(it.sequence,it.seat,it.eventId,cardKeys(it.cards)) }
+        if(!validClosingChain(events)) return null
+        return ClosingVersion(events)
     }
 
     private fun reset() {
@@ -322,6 +435,7 @@ class PassClosedSupersetProof {
     private fun copy(play: ObservedPlay)=play.copy(cards=play.cards.toList(),glyphs=play.glyphs.toList())
 
     private companion object {
+        const val OWNERSHIP_REVIEW_REASON="出牌归属待核对，正在重新识别"
         const val MIN_STRONG_CONFIDENCE=.80f
         const val MIN_GLYPH_CONFIDENCE=.70f
         const val REQUIRED_PASS_VOTES=2
@@ -329,6 +443,8 @@ class PassClosedSupersetProof {
         const val MAX_PASS_SOURCE_AGE_MS=1000L
         const val MAX_PASS_SOURCE_GAP_MS=1500L
         const val MAX_PASS_AGE_MS=15_000L
+        const val MAX_FRAME_GAP_MS=500L
+        const val MAX_OWNERSHIP_AMBIGUITY_MS=500L
         const val REQUIRED_CANDIDATE_VOTES=4
         const val CANDIDATE_MIN_SPAN_MS=180L
         const val MAX_CANDIDATE_FRAME_GAP_MS=500L

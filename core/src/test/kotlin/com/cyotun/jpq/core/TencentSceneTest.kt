@@ -75,6 +75,12 @@ class TencentSceneTest {
     @Test fun selfLastPlaceBadgeAlsoEndsTheRound() {
         assertEquals(TableScene.RESULT,tencentScene(listOf(hint("末游",.1f,.80f)),true,true))
     }
+    @Test fun centralLastPlaceBannerIsSelfTerminalButDoesNotMeanSelfFinished() {
+        val last=SceneHint("末游",GlyphBox(.4716f,.6733f,.5276f,.7383f))
+        assertEquals(Seat.SELF,tencentLastPlaceSeat(listOf(last)))
+        assertEquals(TableScene.RESULT,tencentScene(listOf(last),true,true))
+        assertFalse(tencentSelfFinished(listOf(last)))
+    }
     @Test fun smallNicknameInsideUpperBandIsNotABanner() {
         assertEquals(TableScene.TABLE,tencentScene(listOf(SceneHint("末游",GlyphBox(.53f,.14f,.57f,.16f))),true,true))
     }
@@ -95,6 +101,28 @@ class TencentSceneTest {
     }
     @Test fun anOwnFinishBadgeCanSupplyTheThirdProofWithoutItsLargeBanner() {
         assertEquals(TableScene.RESULT,tencentScene(listOf(actualHeadBadge,actualSecond,actualThirdBadge),true,false))
+    }
+    @Test fun teammateTopLeftAvatarBadgeIsQualifiedAsOpposite() {
+        val badge=SceneHint("二游",GlyphBox(.4107f,.0692f,.4605f,.1108f))
+        assertEquals(mapOf(Seat.OPPOSITE to "二游"),tencentEarlyFinishSeats(listOf(badge)))
+        assertEquals(Seat.OPPOSITE,tencentLastPlaceSeat(listOf(
+            SceneHint("末游",GlyphBox(.4107f,.0692f,.4605f,.1108f)))))
+    }
+    @Test fun topAvatarLastPlaceBadgeAloneSelectsTheResultScene() {
+        val badge=SceneHint("末游",GlyphBox(.4107f,.0692f,.4605f,.1108f))
+        assertEquals(Seat.OPPOSITE,tencentLastPlaceSeat(listOf(badge)))
+        assertEquals(TableScene.RESULT,tencentScene(listOf(badge),true,true))
+    }
+    @Test fun lastPlaceCueConflictingWithAnotherRankAtTheSameSlotIsRejected() {
+        val slot=GlyphBox(.4107f,.0692f,.4605f,.1108f)
+        val hints=listOf(SceneHint("末游",slot),SceneHint("二游",slot))
+        assertNull(tencentLastPlaceSeat(hints))
+        assertEquals(TableScene.TABLE,tencentScene(hints,true,true))
+    }
+    @Test fun conflictingLastPlaceSlotsAreAmbiguous() {
+        assertNull(tencentLastPlaceSeat(listOf(
+            SceneHint("末游",GlyphBox(.4107f,.0692f,.4605f,.1108f)),
+            SceneHint("末游",GlyphBox(.4716f,.6733f,.5276f,.7383f)))))
     }
     @Test fun aBannerAndBadgeAreNotTwoDifferentCompletedPlayers() {
         assertEquals(TableScene.TABLE,tencentScene(listOf(actualHead,actualHeadBadge,actualSecond),true,false))

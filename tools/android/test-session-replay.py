@@ -14,18 +14,37 @@ TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 class SessionReplayTests(unittest.TestCase):
-    def test_early_finish_replay_copies_original_positioned_source_not_rank_inference(self):
+    def test_finish_replay_copies_original_positioned_source_not_rank_inference(self):
         frame = self.frame(scene="TEAMMATE", elapsedMs=2000, sceneSourceAgeMs=300,
                            sceneSourceMasks=[], overlayMasks=[], sceneSourceHints=[
                                {"text": "二游", "box": [.0763, .2158, .1189, .25]},
                                {"text": "三游", "box": [.88, .2, .92, .25]}])
         columns = replay.frame_to_tape_row(frame)[0].split(";")
         self.assertEqual(17, len(columns))
-        self.assertEqual("二游,1700,0.0763,0.2158,0.1189,0.25", columns[16])
+        self.assertEqual("二游,1700,0.0763,0.2158,0.1189,0.25|三游,1700,0.88,0.2,0.92,0.25", columns[16])
         for change in ({"sceneSourceAgeMs": 1001}, {"sceneSourceAgeMs": -1},
-                       {"sceneSourceMasks": None}, {"adjusting": True}, {"scene": "RESULT"}):
+                       {"sceneSourceMasks": None}, {"adjusting": True}):
             self.assertEqual("?", replay.encode_early_finish_hints(frame | change))
-        self.assertEqual("", replay.encode_early_finish_hints(frame | {"overlayMasks": [[.07, .2, .13, .26]]}))
+        result_frame=frame | {"scene":"RESULT","sceneSourceHints":[
+            {"text":"末游","box":[.4716,.6733,.5276,.7383]}]}
+        self.assertEqual("末游,1700,0.4716,0.6733,0.5276,0.7383",
+                         replay.encode_early_finish_hints(result_frame))
+        self.assertEqual("三游,1700,0.88,0.2,0.92,0.25",
+                         replay.encode_early_finish_hints(frame | {"overlayMasks": [[.07, .2, .13, .26]]}))
+        self.assertEqual("", replay.encode_early_finish_hints(frame | {
+            "overlayMasks": [[.07, .2, .13, .26], [.87, .19, .93, .26]]}))
+
+    def test_replay_preserves_each_qualified_finish_rank_at_its_ocr_source_time(self):
+        frame=self.frame(scene="RESULT",elapsedMs=2000,sceneSourceAgeMs=300,
+            sceneSourceMasks=[],overlayMasks=[],sceneSourceHints=[
+                {"text":"头游","box":[.8,.2,.85,.25]},
+                {"text":"二游","box":[.41,.07,.46,.11]},
+                {"text":"三游","box":[.4,.67,.46,.74]},
+                {"text":"末游","box":[.47,.67,.53,.74]}])
+        columns=replay.frame_to_tape_row(frame)[0].split(";")
+        self.assertEqual(17,len(columns))
+        self.assertEqual("头游,1700,0.8,0.2,0.85,0.25|二游,1700,0.41,0.07,0.46,0.11|三游,1700,0.4,0.67,0.46,0.74|末游,1700,0.47,0.67,0.53,0.74",
+                         columns[16])
 
     def test_rotated_sources_replay_oldest_first_and_bind_every_part(self):
         with self.temporary_directory() as folder:
