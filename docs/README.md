@@ -4,6 +4,7 @@
 
 | 需要做什么 | 当前入口 |
 | --- | --- |
+| 开新会话继续维护 APP | [根目录后续开发提示词](../后续开发提示词.md) |
 | 了解当前项目及本机保留项 | [交接记录](development/project-handoff.md) |
 | 了解当前项目及本机保留项 | [交接记录](development/project-handoff.md) |
 | 确认 BETA 开发、正式发布和回滚规则 | [项目规则](../AGENTS.md)、[发布流程](development/beta-release-workflow.md) |
