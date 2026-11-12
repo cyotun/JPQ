@@ -8,7 +8,8 @@ package com.cyotun.jpq.core
 class EarlyFinishPlayProof {
     private data class Version(val roundId: String,val seat: Seat,val events: List<String>,val remaining: Int)
     private data class Candidate(val version: Version,val firstTime: Long,val cueMustFollowFirst: Boolean,
-        var lastTime: Long,var votes: Int,val anchor: ObservedPlay,var latest: ObservedPlay)
+        var lastTime: Long,var votes: Int,val anchor: ObservedPlay,var latest: ObservedPlay,
+        var proposal: ObservedPlay?=null)
 
     private var lastTime=-1L
     private var candidate: Candidate?=null
@@ -17,9 +18,18 @@ class EarlyFinishPlayProof {
 
     fun clear() { candidate=null; lastTime=-1L }
 
+    /** A proposal is consumed only after its exact returned value commits. */
+    fun commitAccepted(play: ObservedPlay) {
+        val current=candidate ?: return
+        if(current.proposal!==play) return
+        delivered=current.version
+        candidate=null
+    }
+
     /** completionSourceTimeMs must come from the qualified OCR source adapter. */
     fun observe(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat,
         completionSourceTimeMs: Long?): ObservedPlay? {
+        candidate?.proposal=null
         if(frame.timeMs<=lastTime) {
             if(frame.timeMs<lastTime) candidate=null
             return null
@@ -65,9 +75,7 @@ class EarlyFinishPlayProof {
         }
         if(current.votes<REQUIRED_VOTES || current.lastTime-current.firstTime<MIN_VOTE_SPAN_MS) return null
         if(completionSourceTimeMs==null || (current.cueMustFollowFirst && completionSourceTimeMs<current.firstTime)) return null
-        delivered=version
-        candidate=null
-        return copy(current.latest)
+        return copy(current.latest).also { current.proposal=it }
     }
 
     private fun isStrongExact(play: ObservedPlay,remaining: Int): Boolean =

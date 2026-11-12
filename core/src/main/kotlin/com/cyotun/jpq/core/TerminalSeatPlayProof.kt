@@ -27,7 +27,8 @@ class TerminalSeatPlayProof(private val targetSeat: Seat? = null) {
         var firstFull: ObservedPlay? = null,
         var latestFull: ObservedPlay? = null,
         var fullVotes: Int = 0,
-        var delivered: Boolean = false
+        var delivered: Boolean = false,
+        var proposal: ObservedPlay? = null
     )
 
     private var authority: Authority? = null
@@ -35,8 +36,17 @@ class TerminalSeatPlayProof(private val targetSeat: Seat? = null) {
 
     fun clear() { authority = null; lastTime = -1L }
 
+    /** Keep the original result deadline until the exact proposal commits. */
+    fun commitAccepted(play: ObservedPlay) {
+        val current=authority ?: return
+        if(current.proposal!==play) return
+        current.delivered=true
+        current.proposal=null
+    }
+
     /** Observe only the eligible unfinished opponent's direct play region. */
     fun observe(frame: TableFrame, snapshot: RoundSnapshot): Recovered? {
+        authority?.proposal=null
         if (frame.timeMs <= lastTime) {
             if (frame.timeMs < lastTime) clear()
             return null
@@ -142,6 +152,7 @@ class TerminalSeatPlayProof(private val targetSeat: Seat? = null) {
         val play = frame.plays[active.seat] ?: return null
         if (!validFull(play, active.version.remaining) || !containsPartial(play, active)) {
             active.firstFull = null; active.latestFull = null; active.fullVotes = 0; active.firstFullTime = null
+            active.proposal = null
             return null
         }
         val previous = active.latestFull
@@ -151,13 +162,15 @@ class TerminalSeatPlayProof(private val targetSeat: Seat? = null) {
             active.firstFull = copy(play)
             active.latestFull = copy(play)
             active.fullVotes = 1
+            active.proposal = null
             return null
         }
         active.latestFull = copy(play)
         active.fullVotes++
         if (active.fullVotes < REQUIRED_FULL_VOTES || frame.timeMs - (active.firstFullTime ?: frame.timeMs) < MIN_FULL_SPAN_MS) return null
-        active.delivered = true
-        return Recovered(active.seat, copy(active.latestFull!!))
+        val proposed=copy(active.latestFull!!)
+        active.proposal=proposed
+        return Recovered(active.seat, proposed)
     }
 
     private fun authorized(a: Authority, timeMs: Long): Boolean = when {

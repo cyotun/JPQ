@@ -177,6 +177,7 @@ class C47PassClosureInterruptionTest {
         }
         val result = assertNotNull(proof.observe(candidateFrame(2080), snapshot, Seat.OPPOSITE, prior, hand, 900))
         assertEquals(play.map { it.colorKey() }.sorted(), result.cards.map { it.colorKey() }.sorted())
+        proof.commitAccepted(result)
         assertFalse(proof.pendingStrongCandidate(2080))
     }
 }

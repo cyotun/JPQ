@@ -19,11 +19,18 @@ class LocalizedPendingPlayRecovery {
     private var candidate: Candidate?=null
     private var lastTime=-1L
     private var delivered=false
+    private var proposal: Recovered?=null
 
-    fun reset() { version=null; prior=null; candidate=null; lastTime=-1L; delivered=false }
+    fun reset() { version=null; prior=null; candidate=null; lastTime=-1L; delivered=false; proposal=null }
+
+    fun commitAccepted(recovered: Recovered) {
+        if(proposal !== recovered) return
+        delivered=true; candidate=null; prior=null; proposal=null
+    }
 
     fun observe(frame: TableFrame,snapshot: RoundSnapshot,knownOwnHand: List<Card>,
                 phaseBeforeRecovery: RoundPhase): Recovered? {
+        proposal=null
         val id=snapshot.roundId
         if(id==null || phaseBeforeRecovery!=RoundPhase.ACTIVE ||
             snapshot.phase !in setOf(RoundPhase.ACTIVE,RoundPhase.RECOVERING) ||
@@ -129,9 +136,10 @@ class LocalizedPendingPlayRecovery {
         }
         if(frame.timeMs-time !in 1L..500L || !sameSlots(current,post) || !sameSlots(ownPlay,candidatePost)) return reject()
         if(frame.timeMs-time<100L) return null
-        delivered=true
-        candidate=null; prior=null
-        return Recovered(c.seat,copy(ownPlay))
+        // Keep the latest directly verified pair for a rejected transaction's
+        // retry; lastPreTime still fixes the original overall expiry.
+        c.postTime=frame.timeMs; c.postMasked=copy(current); c.postCandidate=copy(ownPlay)
+        return Recovered(c.seat,copy(ownPlay)).also { proposal=it }
     }
 
     private fun candidateVisible(frame: TableFrame,c: Candidate): Boolean {
@@ -144,7 +152,7 @@ class LocalizedPendingPlayRecovery {
         (strong(p) && snapshot.plays[seat]?.lastOrNull()?.let { key(it.cards)==key(p.cards) }==true)
     private fun samePresentation(p: ObservedPlay,old: ObservedPlay)=
         if(old.cards.isEmpty()) empty(p) else strong(p) && sameSlots(p,old)
-    private fun reject(): Recovered? { candidate=null; prior=null; return null }
+    private fun reject(): Recovered? { candidate=null; prior=null; proposal=null; return null }
     private fun copy(p: ObservedPlay)=p.copy(cards=p.cards.toList(),glyphs=p.glyphs.toList())
     private fun key(cards: List<Card>)=cards.map { it.colorKey() }.sorted()
     private fun validCards(cards: List<Card>)=cards.size<=27 &&

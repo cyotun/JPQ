@@ -105,8 +105,19 @@ class TaskResumeRecoveryPolicy {
 
         if (visibilityEpoch < latestEpoch || capturedTimeMs < 0L || capturedTimeMs > timeMs ||
             capturedTimeMs <= lastSourceTimeMs) return null
-        // A newer epoch is accepted only after an explicit discontinuity callback.
-        if (visibilityEpoch != latestEpoch) return null
+        if (visibilityEpoch != latestEpoch) {
+            // A reset/round boundary while hidden may retire the old wrapper's
+            // discontinuity proof before this new epoch reaches the recognizer.
+            // Fresh health may reopen eligibility for a FUTURE real break, but
+            // cannot arm empties, change a live episode, or replenish requests.
+            if (episode == null && visibilityEpoch > latestEpoch && content == Content.GAME_CONTENT &&
+                timeMs - capturedTimeMs <= MAX_SOURCE_AGE_MS) {
+                latestEpoch = visibilityEpoch
+                lastSourceTimeMs = capturedTimeMs
+                mayArm = true
+            }
+            return null
+        }
         val current = episode
         if (current != null && capturedTimeMs < current.sourceFenceMs) return null
         lastSourceTimeMs = capturedTimeMs

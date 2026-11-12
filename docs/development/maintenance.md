@@ -1,87 +1,41 @@
 # 构建、测试与维护
 
-基线 `v0.2.26`，2026-10-19。先读 [当前规格](../design/current-spec.md)、[架构](architecture.md) 和 [版本记录](../releases/0.2.26.md)，不要从旧修复文档推断当前状态。
+当前正式版本为 `v0.2.27`（versionCode 29），旧正式回滚基线为 `v0.2.26`（versionCode 28）。先读 [当前规格](../design/current-spec.md)、[架构](architecture.md) 和本轮正式发布记录；不要从旧修复文档推断当前状态。
 
 ## 1. 建立可恢复基线
 
 源码以 Git 标签定位；APK 以文件名、大小、SHA-256、包名、versionCode、证书共同定位。字体、模型、原生库、签名身份和私人测试素材独立本机备份，Git 不包含它们。恢复源码本身不能恢复这些私有资产。
 
-当前应用版本 `0.2.26-regression` / 28，不为稳定标签重构建。下一版至少 29，保持包名 `com.cyotun.jpq` 和原证书。配置存 SharedPreferences，牌局记录由 `RoundRepository` 保存，升级不要清用户数据。旧 JSON 缺新增字段时走默认值和 `validate()`；改字段语义须定义迁移和旧备份测试。
+旧正式 APK `0.2.26-regression` / 28 保持原始字节归档；当前发布 APK 为 `0.2.27` / 29，保持正式包名 `com.cyotun.jpq` 和原证书。API 37 及以上正式包启用 Android `APP_TASK` 单应用采集，旧 Android 保留 `DISPLAY` 采集，两者都继续经过 Android 系统授权。配置存 SharedPreferences，牌局记录由 `RoundRepository` 保存，升级不要清用户数据。旧 JSON 缺新增字段时走默认值和 `validate()`；改字段语义须定义迁移和旧备份测试。
+
+BETA 包名 `com.cyotun.jpq.candidate`、应用数据、签名身份和更新通道继续与正式版隔离。BETA 不读取或安装正式更新，不覆盖正式应用。无需日常维护 BETA 分支；需要额外验证时才从明确的源码点临时构建独立 BETA，验证完成后可清理该临时分支/工作区，但不能删除正式回滚产物或唯一回归素材。
 
 ## 2. 修改和验证顺序
 
-2026-10-20 补充：采集方法的电脑验证使用 [Android 模拟器实测流程](emulator-capture-20261020.md)，不能用录像回放替代。识别问题另用 [电脑识别工具](desktop-first-testing.md)，实际图片/录像模型重跑与旧预测账本回放应分别记录。未完成对应验证不让用户重复开新局；手机负责厂商系统兼容、实际内容与必要实局、耗电验收。
+采集方法的电脑验证使用 [Android 模拟器实测流程](emulator-capture-20261020.md)，不能用录像回放替代。识别问题另用 [电脑识别工具](desktop-first-testing.md)，实际图片/录像模型重跑与旧预测账本回放应分别记录。可在电脑完成的验证应先完成，再安排必要的真机或实战检查；是否豁免由用户明确决定，并在本次验证记录中区分“用户豁免”与“验收通过”。
 
-1. 新问题先保存原 ZIP、截图及时间/局号，不覆盖旧失败目录。区分牌面识别、座位归属、事件边界、账本、显示缓存和采集生命周期。
+1. 新问题按项目留存规则保存最小必要的原始证据，并先列清单；区分牌面识别、座位归属、事件边界、账本、显示缓存和采集生命周期。未解决问题的唯一原证据不能先删。
 2. 在最小负责模块修复并补能重现问题的测试；不要只隐藏错误提示或用数量差补猜牌。
-3. 一批相关修复完成后冻结源码与输入；先定向回放，再完整连续回放可用的正常局来源。运行中源码/输入变动则结果作废重跑。
-4. 核心、宿主、整包、Lint、手机截图/交互/共享启停分别记录。手机检查前确认没有进行中的真实对局和共享；恢复所有临时配置。
-5. 确认实际大厅持续进入识别后，由用户正常打完整局。期间不点击游戏、不改设置、不安装、不启动 instrumentation，不录屏或创建第二个共享。结束后才完整导出和核对。
-6. 本次用户已取消把旧素材缺口作为稳定归档阻塞项；保留原报告。未来新增来源仍须如实记录失败，不删除样本或改异常排除来制造通过。
+3. 一批相关修复完成后冻结源码与输入；先定向回放，再运行可用的连续回归。运行中源码或输入变动则结果作废重跑。
+4. 核心、宿主、整包、Lint、模拟器及手机检查按本次范围分别记录。真机检查前确认没有进行中的真实对局和共享；恢复所有临时配置。
+5. 真机及完整实战通常属于发布验收流程，由用户操作对局。用户可明确豁免某轮检查；必须记录为流程豁免，不能写成通过、设备兼容或用户实战验收。
+6. 本轮 v0.2.27：用户明确豁免新增真机及实战验收，要求完成电脑端工作后正式发布并由用户通过 APP 内更新。本轮 19 个正常局来源共 28,442 帧、681 个事件；另一个 3,521 帧中断来源未核实，不计为通过。最终测试总数由发布记录补充。不得宣称全局准确或 99.9% 无异常。
+7. 本轮 BETA 工作分支归并前打 archive 标签以留档，再删除该开发分支。未来新功能继续先走 BETA 开发与 review；需要时临时构建独立 BETA，不做日常分支维护。
+8. 回归结束后按项目清理规则先生成待删清单，只清理核实后的非必要测试副本；最小回归素材、来源清单、报告、正式回滚包和未解决问题原证据按规则保留。
 
-## 3. 常用命令
+## 3. 当前可重跑回归
 
-工具与本机资产准备见 [app/README](../../app/README.md)。以下从仓库根目录运行，PowerShell 7：
+本轮最小私人回归素材保留于 `artifacts/regression-minimal-0.2.27/`：`source-manifest.json`、`normal-*.tape`、`expected-*.json`、`interrupted-input.tape`、验证报告及未核实来源的完整原始诊断 ZIP。这些素材含私有输入，不提交 Git。其余已验证录像模拟器和冗余采集数据按授权清理；未解决问题的原始唯一证据不属于可删副本。
 
-```powershell
-./tools/android/build.ps1 -Tasks ':core:test',':app:testReleaseUnitTest',':app:assembleRelease',':app:assembleReleaseAndroidTest',':app:lintRelease'
-```
-
-回放工具自检（`<python>` 替换为实际 Python 可执行文件）：
-
-```text
-<python> tools/android/test-session-replay.py
-<python> tools/android/test-single-card-replay.py
-<python> tools/android/test-replay-visibility.py
-<python> tools/android/test-replay-cohort.py
-```
-
-从完整 ZIP 中明确选择 session，不从精简电脑日志推造缺字段：
-
-```text
-<python> tools/android/prepare-session-replay.py --archive captures/phone/<run>/diagnostics.zip --session <session-id> --output captures/phone/<run>/source-replay --manifest captures/phone/<run>/source-replay/provenance.json
-```
-
-对应 core 回放任务可输入单 tape 或 tape 目录：
+维护者使用下面的命令重跑保留来源；输出目录必须尚不存在：
 
 ```powershell
-./tools/android/build.ps1 -Tasks ':core:replayLoggedFrames','-PloggedTape=D:/JPQ/captures/phone/<run>/source-replay','-PloggedOutput=D:/JPQ/captures/phone/<run>/replay-new'
+python tools/android/run-retained-regression.py --output artifacts/regression-minimal-0.2.27/replay-NEW
 ```
 
-`loggedTape` 和 `loggedOutput` 必须为绝对路径（上例按实际仓库位置替换），JavaExec 默认工作目录属于 core 子工程。重跑原固定来源时使用下面的真实本机路径，每次 `OutputDirectory` 必须全新。素材不在新克隆仓库内，缺失时不能声称执行过：
+该脚本已对本轮来源执行。19 个正常局共 28,442 帧、681 个事件；一个 3,521 帧中断来源虽已运行，但仍未核实，不计为通过。过去的 33-source cohort、旧 `captures/` 目录和相关固定路径是历史记录，不是当前可运行测试集；不要从旧报告中的 OK 或数量推断本轮通过。
 
-```powershell
-./tools/android/run-replay-cohort.ps1 `
-  -Inputs captures/phone/bugs-0.2.16-20261015/replay-inputs.json `
-  -SourceLock captures/phone/bugs-0.2.16-20261015/cohort-source-lock.json `
-  -OutputDirectory captures/phone/bugs-0.2.16-20261015/replay-NEW `
-  -Python '<Python可执行文件绝对路径>' `
-  -Exclusions captures/phone/bugs-0.2.16-20261015/verified-normal-game-exclusions.json `
-  -RawArchive captures/phone/bugs-0.2.16-20261015/diagnostics.zip
-```
-
-脚本固定 33 个源 session；当前历史 gate 仍会因两个旧证据缺口返回 1。检查 `verification.json` 区分 build/source 校验失败与历史 audit gate，不修改旧 gate 来匹配本次稳定决定。将来更换测试集应新建来源清单/哈希和审核记录，保留旧集。
-
-安全 UI 套件先检查共享已停、备份配置、运行并恢复；`-RecoverOnly` 用于恢复同一中断运行：
-
-```powershell
-./tools/android/run-ui-suite.ps1 -DeviceSerial '<serial>' -EvidenceDirectory captures/phone/ui-NEW
-./tools/android/run-ui-suite.ps1 -EvidenceDirectory captures/phone/ui-NEW -RecoverOnly
-```
-
-该脚本是 UI 套件，不等于本版 108 项全部手机检查。手机回放测试需本地 fixtures 和对应类/专用探针配置；原始执行日志保存在各次 preflight 目录，不复制旧 OK 冒充新执行。
-
-真实对局只读记录：
-
-```powershell
-./tools/android/collect-live-test.ps1 -DeviceSerial '<serial>' -OutputDirectory captures/phone/live-NEW -LogsOnly -DurationSeconds 1800
-```
-
-停止使用该目录 `stop.signal`；必须等用户确认对局结束。完整 ZIP 从 APP「设置 → 牌局与诊断」导出，或在停止采集后按 `DeviceEvidenceTest` 的既有导出测试执行。`SessionTrace` 的电脑日志会精简/省略大帧，不能替代原始 ZIP。
-
-每个会话的 `SessionTrace` 保留当前文件和最近 6 个轮转文件（默认每个最多 8 MiB），总量上限约 56 MiB，为 `sessions` 目录现有 64 MiB 清理配额中的其他会话证据留出空间。完整导出会包含保留的所有轮转文件；按目录清理仍删除最旧会话，不改变导出结构中的 `sessions/<sessionId>/trace*.jsonl` 路径。
-
-更新服务改动另运行 `npm test`、`npm run check`、`npm run build`（dry-run），不把 dry-run 当成部署成功。
+核心与宿主测试、发布构建和更新服务检查按当前代码及本轮发布清单执行；实际运行结果写入本轮发布记录。dry-run 不等于上传成功。发布须验证生产签名清单、下载完整性及安装身份；实际手机安装单独记录，本轮按明确授权豁免，不得冒称通过。
 
 ## 4. 证据等级
 
@@ -112,8 +66,8 @@
 
 ## 6. 发布与回退
 
-当前稳定基线只推源码、设计/维护文档和标签；私人输入、APK、参考资产、密钥不入 Git。Cloudflare 仅更新，不做诊断上传；自动关联 main 的服务构建不等于已发布新安装包。
+正式更新由应用内流程检查、下载并交给 Android 系统安装确认。API 37+ 的正式包单应用采集与旧系统显示器采集都保留用户系统授权。私人输入、APK、参考资产、密钥不入 Git。Cloudflare 仅用于应用更新，不做诊断上传；自动关联 main 的服务构建不等于已发布新安装包。
 
-未来发布需：原证书签名的新包、增加 versionCode、完整本次验证、冻结哈希、更新 `docs/releases/<version>.md/.json`，再走 `tools/release/package.mjs` 和 [清单契约](../design/update-contract.md) / [服务说明](../../services/updates/README.md)。只有实际上传并验证接口后才标记服务器已发布。
+未来发布需：原证书签名的新包、增加 versionCode、完成本轮验证（或如实记录用户明确豁免）、冻结哈希、更新 `docs/releases/<version>.md/.json`，再走 `tools/release/package.mjs` 和 [清单契约](../design/update-contract.md) / [服务说明](../../services/updates/README.md)。只有实际上传并验证接口及 APP 内更新后才标记服务器已发布。本轮 v0.2.27 仍待线上验证。
 
-源码回退可从 `v0.2.26` 新建修复分支比较，避免直接覆盖工作区。Android 通常拒绝安装较低 versionCode；不能以卸载清数据作为默认回退。若新版已装，使用旧稳定代码构建一个更高 versionCode、同证书的修复包，并重新验证、发布新的签名清单。服务器“latest”只换文案或指向低版本不会自动绕过客户端版本/哈希/证书校验。
+源码回退可从 `v0.2.26` 新建修复分支比较，避免直接覆盖工作区。Android 通常拒绝安装较低 versionCode；不能以卸载清数据作为默认回退。若新版已装，使用旧稳定代码构建一个更高 versionCode、同证书的修复包，并重新验证、发布新的签名清单。服务器“latest”只换文案或指向低版本不会自动绕过客户端版本/哈希/证书校验。准备发布前验证正式旧 APK、哈希、签名信息、源码标签及回滚清单可用；正式包的身份和数据不得因应用显示名称或采集能力更新而改变。

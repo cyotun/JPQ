@@ -244,6 +244,34 @@ class TaskResumeRecoveryPolicyTest {
         assertNull(policy.frame(89_000L, epoch = 4L))
     }
 
+    @Test fun freshHealthyNewEpochCanRearmAfterAnExpiredRoundWasResetWhileHidden() {
+        val policy=TaskResumeRecoveryPolicy()
+        assertTrue(policy.arm())
+        policy.frame(0L)
+        val oldRequest=assertNotNull(policy.frame(8_000L))
+        assertNull(policy.frame(60_000L)) // Fixed deadline expired; mayArm remains false.
+        assertNull(policy.frame(60_001L,healthy,epoch=3L,phase=RoundPhase.WAITING,round=null))
+        assertFalse(policy.take(oldRequest,60_002L))
+        assertTrue(policy.arm(61_000L,4L))
+        policy.frame(61_000L,epoch=4L)
+        val next=assertNotNull(policy.frame(69_000L,epoch=4L))
+        assertEquals(2,next.sequence)
+        assertTrue(policy.exhausted) // Healthy epochs never replenish the session budget.
+    }
+
+    @Test fun emptyOrStaleUnannouncedEpochCannotRearmAndOtherEpochHealthCannotCancelAnEpisode() {
+        val policy=TaskResumeRecoveryPolicy()
+        policy.arm(); policy.frame(0L)
+        val request=assertNotNull(policy.frame(8_000L))
+        assertNull(policy.frame(8_001L,healthy,epoch=2L))
+        assertTrue(policy.take(request,8_002L))
+        assertNull(policy.frame(60_000L))
+        assertNull(policy.frame(60_001L,empty,epoch=3L))
+        assertNull(policy.frame(62_002L,healthy,epoch=3L,sourceTime=61_000L))
+        assertFalse(policy.arm(63_000L,4L))
+        assertNull(policy.frame(71_000L,epoch=4L))
+    }
+
     @Test fun wrongRoundOrPhaseCannotRepairOrRetainAPendingCallback() {
         for ((phase, round) in listOf(
             RoundPhase.ACTIVE to oldRound,

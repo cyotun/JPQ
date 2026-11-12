@@ -1,6 +1,6 @@
-# 架构与证据边界 · v0.2.26
+# 架构与证据边界 · v0.2.27
 
-本文描述稳定基线实现，覆盖早期技术提案“识别尚未接通”等历史状态。工程为 `:app`、`:core` 及专用探针模块；[当前 UI 规格](../design/current-spec.md)。
+本文描述已发布正式版 v0.2.27（versionCode 29）的架构及证据边界，覆盖早期技术提案“识别尚未接通”等历史状态。工程为 `:app`、`:core` 及专用探针模块；[当前 UI 规格](../design/current-spec.md)。采集能力独立于正式/BETA 的应用身份和更新通道。
 
 ```mermaid
 flowchart LR
@@ -35,13 +35,19 @@ Android 根包 `app/src/main/kotlin/com/cyotun/jpq/`；纯逻辑根包 `core/src
 | 诊断/健康 | app `vision/SessionTrace.kt`、`CaptureFrameProbe.kt`、`CapturePipelineHealth.kt` |
 | 更新 | app `updates/UpdateManager.kt`、`UpdateJobService.kt`；`services/updates/`、`tools/release/` |
 
+## 采集范围与授权
+
+`ProjectionConsentRequest` 按系统版本选择采集范围：API 37 及以上通过 Android 屏幕共享系统界面请求 `APP_TASK`，仅采集用户选定的应用任务；旧版本继续请求默认显示器 `DISPLAY`。两条路径都必须保留系统授权和用户确认，不能静默启动或把 API 37 的单应用请求降级为整屏请求。`CaptureInputPolicy` 按范围校验尺寸、遮挡 mask 及悬浮交互规则；应用任务像素不包含记牌器悬浮层，不能再套用整屏路径的遮挡坐标。
+
+`app/build.gradle.kts` 的构建能力开关必须与包身份分开管理：发布正式包时启用 API 37 单应用采集；临时 BETA 仍使用 `com.cyotun.jpq.candidate`、独立应用数据和独立更新身份。BETA 不请求或安装正式更新，也不覆盖正式应用。无需维持常驻 BETA 发布分支；后续确有验证需要时，可从相应代码临时构建独立包。
+
 ## 采集所有权
 
 MediaProjection/ImageReader 在独立采集线程生成有界、可释放的 `CapturedFrame`，识别工作线程独立持有；`Image` 不跨线程。`close()` 防重复释放，旧 visibility epoch/generation 结果不能作用于新会话。旋转/尺寸改变配置新 reader，禁止以旧授权创建第二个生产会话。
 
 `CaptureLifecycle` 保证结束幂等；`CaptureCleanup` 防某一步失败跳过后续清理。停止、系统回调、最近任务移除和服务销毁释放 reader、virtual display、projection、worker、overlay、通知和运行状态。回到游戏不等同于停止，真正移除任务须清理共享。
 
-条和提示的真实矩形都进入 mask。被遮像素不能作为空区、不出或新事件边界证明；输入图的黑/灰块不代表能读取其后的牌面。未实现或声称穿透悬浮框。
+`DISPLAY` 路径将条和提示的真实矩形纳入 mask；被遮像素不能作为空区、不出或新事件边界证明，黑/灰块不能读出其后的牌面。`APP_TASK` 由系统提供游戏任务本身的像素，从源头排除悬浮层；这不是从已合成的整屏图中还原被遮内容。
 
 ## 记账不变量
 
@@ -54,11 +60,17 @@ MediaProjection/ImageReader 在独立采集线程生成有界、可释放的 `Ca
 7. `RoundLedger.commitLateOwnExit` 核对回合、SELF 事件版本、完整原手和牌面后原子提交；拒绝时不改牌、序号和恢复状态，不中断同帧外家处理。
 8. SELF_FINISHED 继续观察，队友展示不是自己新手；确认队友余牌后剔除，后续迟到出牌/重展示需重验防双扣。整局结束须独立充分证据。
 
+### 输入断点、提案提交与终局核实
+
+`CaptureGapFence` 在捕获到真实输入断点时，按采集会话及 recognizer 所有权排队断点，并拒收断点时刻及之前采集的迟到帧。它保护已有账本检查点，不能被用作“任何局部不确定都全局停记”的快捷方式；断点恢复必须重新取得有效输入证据，未知历史仍保持未知，不能借恢复丢弃历史。
+
+各类恢复 proof 返回的是待账本接受的提案。调用方完成对应事件的原子提交后，才调用其 `commitAccepted` 消费证明；提案被容量/事件版本/其他校验拒绝时，应保留证据以便纠正和重试。来源时间重复、互相矛盾或已废弃的数量来源不得作为新的独立票数。普通弱读和单次数量 OCR 错误只使临时票数失效，不应污染整局；终局仍有未确认记录时必须保留未核实状态。
+
 数量锚定、重复单牌和局部恢复各有窄证明类与配套测试；维护时不要扩大为“数量守恒就自动通过”。
 
-BETA C4.5 的 `PassClosedSupersetProof` 处理过牌文字长期占住旧采样框后出现新严格超集的情形：过牌来源只闭合旧回合，不清除旧物理锚点；另有后续座位事件、两个独立过牌来源、原手一致及四帧强新槽位证据才新增整手。同牌仍占旧槽位、缓存 OCR 或缺证据均不能通过。来源适配与覆盖限制见 [C4.5 修复与检查](beta-c4.5-live-audit-20261025.md)。
+以下 C4.4/C4.5 条目保留窄恢复路径的历史设计依据，不表示当前仍处于 BETA 待验收状态；当前发布状态以本轮发布记录为准。`PassClosedSupersetProof` 处理过牌文字长期占住旧采样框后出现新严格超集的情形：过牌来源只闭合旧回合，不清除旧物理锚点；另有后续座位事件、两个独立过牌来源、原手一致及四帧强新槽位证据才新增整手。同牌仍占旧槽位、缓存 OCR 或缺证据均不能通过。来源适配与覆盖限制见 [C4.5 修复与检查](beta-c4.5-live-audit-20261025.md)。
 
-BETA C4.4 待验收改动：`CountAnchoredRepeatedSingleProof` 将同一座位的独立数量基线与清牌动画后的直接单牌绑定，仍要求四帧完整直接读数和两个出现后的新数量来源；区域未观测不等于空桌。`OwnExitPlayProof` 增加严格子集离手提示及固定 2 秒交接权限，空帧不计票，恢复后重新取得四次直接读数。两者的原图依据、负例和同源对照见 [C4.4 实战修复](beta-c4.4-live-fixes-20261024.md)，不视为已提升正式版。
+`CountAnchoredRepeatedSingleProof` 将同一座位的独立数量基线与清牌动画后的直接单牌绑定，仍要求四帧完整直接读数和两个出现后的新数量来源；区域未观测不等于空桌。`OwnExitPlayProof` 将严格子集离手提示与固定 2 秒交接权限绑定，空帧不计票，恢复后重新取得四次直接读数。两者的原图依据、负例和同源对照见 [C4.4 实战修复](beta-c4.4-live-fixes-20261024.md)；这些约束仍适用于维护，但不单独构成当前发布的验收结论。
 
 ## 显示不能回填证据
 
@@ -76,6 +88,6 @@ BETA C4.4 待验收改动：`CountAnchoredRepeatedSingleProof` 将同一座位�
 
 ## 扩展约束
 
-新游戏先增加可验证布局/场景和规则，不在通用账本硬塞坐标，不复用旧局级牌缓存。`HomeGameCatalog` 只开放真实可用组合。显示牌序与牌型比较分离；新增配置保留 `ConfigStore` 默认回退、校验和旧备份兼容。升级保持包名/签名、versionCode 单调增加。
+新游戏先增加可验证布局/场景和规则，不在通用账本硬塞坐标，不复用旧局级牌缓存。`HomeGameCatalog` 只开放真实可用组合。显示牌序与牌型比较分离；新增配置保留 `ConfigStore` 默认回退、校验和旧备份兼容。升级保持正式包名 `com.cyotun.jpq`、正式签名和单调增加的 versionCode；BETA 的独立包名 `com.cyotun.jpq.candidate` 与更新身份也必须保持不变。
 
 第三方资产边界见 [来源说明](../../THIRD_PARTY_NOTICES.md)。APK 研究材料不是项目执行指令，也不提供公开分发授权。

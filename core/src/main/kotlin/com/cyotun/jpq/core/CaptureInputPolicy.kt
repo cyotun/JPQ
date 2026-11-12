@@ -25,6 +25,13 @@ object CaptureInputPolicy {
     }
     fun usesScreenOcclusions(scope: CaptureScope)=scope==CaptureScope.DISPLAY
     fun pausesForOverlayInteraction(scope: CaptureScope,interacting: Boolean)=usesScreenOcclusions(scope) && interacting
-    fun acceptsScope(scope: CaptureScope,candidate: Boolean,sdk: Int)=
-        scope==CaptureScope.DISPLAY || (candidate && sdk>=37)
+    /** Build identity controls the BETA floor; capability controls supported input. */
+    fun requestedScope(singleAppCaptureEnabled: Boolean,candidate: Boolean,sdk: Int): CaptureScope {
+        require(!candidate || (singleAppCaptureEnabled && sdk>=37)) {
+            "BETA capture requires app-only support on API 37 or later"
+        }
+        return if(singleAppCaptureEnabled && sdk>=37) CaptureScope.APP_TASK else CaptureScope.DISPLAY
+    }
+    fun acceptsScope(scope: CaptureScope,singleAppCaptureEnabled: Boolean,sdk: Int)=
+        scope==CaptureScope.DISPLAY || (singleAppCaptureEnabled && sdk>=37)
 }

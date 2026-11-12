@@ -99,7 +99,44 @@ class PassClosedSupersetProofTest {
         val proof = PassClosedSupersetProof()
         val result = assertNotNull(prove(proof))
         assertEquals((listOf(old) + added).map { it.colorKey() }.sorted(), result.cards.map { it.colorKey() }.sorted())
+        proof.commitAccepted(result)
         assertNull(proof.observe(group(time = 1540), snapshot, Seat.OPPOSITE, prior, hand, 900))
+    }
+
+    @Test fun rejectedPassProposalCanRetryAndCorrectWithoutRefreshingItsPassWitness() {
+        val proof=PassClosedSupersetProof()
+        val rejected=assertNotNull(prove(proof))
+        val retry=assertNotNull(proof.observe(group(time=1540),snapshot,Seat.OPPOSITE,prior,hand,900))
+        assertEquals(rejected,retry)
+        proof.commitAccepted(rejected)
+        val corrected=listOf(old)+added.dropLast(1)+Card(Rank.SIX,Suit.RED)
+        assertNull(proof.observe(group(cards=corrected,time=1600),snapshot,Seat.OPPOSITE,prior,hand,900))
+        proof.commitAccepted(retry)
+        for(t in listOf(1660L,1720L))
+            assertNull(proof.observe(group(cards=corrected,time=t),snapshot,Seat.OPPOSITE,prior,hand,900))
+        val accepted=assertNotNull(proof.observe(group(cards=corrected,time=1780),snapshot,Seat.OPPOSITE,prior,hand,900))
+        assertEquals(corrected,accepted.cards)
+        proof.commitAccepted(accepted)
+        assertNull(proof.observe(group(cards=corrected,time=1840),snapshot,Seat.OPPOSITE,prior,hand,900))
+    }
+
+    @Test fun clearingPassEvidenceRevokesTheProposalToken() {
+        val proof=PassClosedSupersetProof()
+        val oldProposal=assertNotNull(prove(proof))
+        proof.clear()
+        proof.commitAccepted(oldProposal)
+        assertNotNull(prove(proof))
+    }
+
+    @Test fun aNonVotingAmbiguityObservationRevokesThePreviousProposalToken() {
+        val proof=PassClosedSupersetProof()
+        val oldProposal=assertNotNull(prove(proof))
+        val ambiguous=group(time=1540).copy(ambiguousPresentation=true,
+            incompleteReason="出牌归属待核对，正在重新识别")
+        kotlin.test.assertTrue(proof.retainAcrossOwnershipAmbiguity(ambiguous,snapshot,
+            Seat.OPPOSITE,prior,hand,900))
+        proof.commitAccepted(oldProposal)
+        assertNotNull(proof.observe(group(time=1600),snapshot,Seat.OPPOSITE,prior,hand,900))
     }
 
     @Test fun newRankAtOldCenterIsAllowedButOldCardAtItsOldCenterIsNot() {
@@ -267,6 +304,7 @@ class PassClosedSupersetProofTest {
         val committed=assertNotNull(proof.observe(r3GroupFrame(f,1780),f.appendedSnapshot,
             Seat.OPPOSITE,f.prior,f.hand,900))
         assertEquals(f.newGroup.map { it.colorKey() }.sorted(),committed.cards.map { it.colorKey() }.sorted())
+        proof.commitAccepted(committed)
         assertNull(proof.observe(r3GroupFrame(f,1840),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
     }
 
@@ -275,7 +313,8 @@ class PassClosedSupersetProofTest {
         assertNull(proof.observe(r3GroupFrame(f,1600),f.oldSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
         assertNull(proof.observe(r3GroupFrame(f,1660),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
         assertNull(proof.observe(r3GroupFrame(f,1720),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
-        assertNotNull(proof.observe(r3GroupFrame(f,1780),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        val proposal=assertNotNull(proof.observe(r3GroupFrame(f,1780),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
+        proof.commitAccepted(proposal)
         assertNull(proof.observe(r3GroupFrame(f,1840),f.appendedSnapshot,Seat.OPPOSITE,f.prior,f.hand,900))
     }
 

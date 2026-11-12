@@ -405,7 +405,9 @@ class MainActivity : ComponentActivity() {
         add(c,row("通知权限",if(Build.VERSION.SDK_INT<33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED) "已允许" else "去开启") {
             startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,packageName))
         })
-        add(c,text("屏幕共享在每次开始记牌时由系统请求授权。",14f,muted))
+        add(c,text(if(BuildConfig.SINGLE_APP_CAPTURE_ENABLED && Build.VERSION.SDK_INT>=37)
+            "每次开始记牌时，请在系统授权中选择要记牌的游戏应用。" else
+            "屏幕共享在每次开始记牌时由系统请求授权。",14f,muted))
         add(c,row("后台运行与耗电","去设置") { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName"))) })
         add(c,row("锁定后台应用","查看指引") {
             AlertDialog.Builder(this).setMessage("在澎湃系统的最近任务中长按记牌器，按手机实际菜单锁定后台。再进入应用设置检查后台运行和耗电限制。具体菜单以你的系统为准。").setPositiveButton("知道了",null).show()
@@ -582,8 +584,11 @@ class MainActivity : ComponentActivity() {
         catch(error: Exception) {
             capturePending=false; updateState()
             android.util.Log.w("JPQCapture","consent_unavailable",error)
-            Toast.makeText(this,if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE)
-                "系统暂不支持本轮单应用授权，请继续使用正式版" else "暂时无法打开屏幕共享授权",Toast.LENGTH_LONG).show()
+            Toast.makeText(this,when {
+                BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE -> "系统暂不支持本轮单应用授权，请继续使用正式版"
+                BuildConfig.SINGLE_APP_CAPTURE_ENABLED && Build.VERSION.SDK_INT>=37 -> "暂时无法打开游戏应用共享授权，请稍后重试"
+                else -> "暂时无法打开屏幕共享授权"
+            },Toast.LENGTH_LONG).show()
         }
     }
     private fun stopCapture() {

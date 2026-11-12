@@ -11,11 +11,13 @@ class TeammateHandPlayProofTracker {
     private data class Hand(val cards: List<Card>, val key: String)
     private data class IssuedHandoff(val version: Version,val cards: List<Card>,val hand: Hand,
         val votes: Int,val firstSeen: Long,val lastSeen: Long,val issuedAt: Long)
+    private data class Proposal(val play: ObservedPlay,val handoff: IssuedHandoff?)
     private data class PartialHandoff(val hand: Hand,val removed: List<Card>,val glyphs: List<PlayGlyph>,
         val startedAt: Long,var fullEvidence: DeskEvidence? = null,var fullWitness: DeskEvidence? = null,
         var handVotes: Int = 1,var firstHandVote: Long? = startedAt,
         var lastHandVote: Long? = startedAt,
-        var firstBadgeSource: Long? = null,var lastBadgeSource: Long = -1L,var badgeVotes: Int = 0)
+        var firstBadgeSource: Long? = null,var lastBadgeSource: Long = -1L,var badgeVotes: Int = 0,
+        var proposedOnce: Boolean = false)
 
     private var version: Version? = null
     private var lastTime: Long? = null
@@ -32,6 +34,17 @@ class TeammateHandPlayProofTracker {
     private var partialHandoff: PartialHandoff? = null
     private var delivered = false
     private var issuedHandoff: IssuedHandoff? = null
+    private var proposal: Proposal? = null
+
+    /** A successful ledger write alone consumes this exact returned proposal. */
+    fun commitAccepted(play: ObservedPlay) {
+        val pending=proposal ?: return
+        if(pending.play !== play) return
+        delivered=true
+        issuedHandoff=pending.handoff
+        partialHandoff=null
+        proposal=null
+    }
 
     fun reset() {
         version = null
@@ -58,6 +71,7 @@ class TeammateHandPlayProofTracker {
     }
 
     fun observe(frame: TableFrame, snapshot: RoundSnapshot): ObservedPlay? {
+        proposal=null
         val roundId = snapshot.roundId ?: run { reset(); return null }
         val nextVersion = Version(roundId, snapshot.plays[Seat.OPPOSITE].orEmpty().map {
             it.eventId + ":" + it.sequence + ":" + cardsKey(it.cards)
@@ -178,13 +192,23 @@ class TeammateHandPlayProofTracker {
         }
 
         partialHandoff?.let { pending ->
-            if (pending.hand.key != current.key || !sameCards(pending.removed,removed) ||
+            val changed=pending.hand.key != current.key || !sameCards(pending.removed,removed)
+            if(changed && pending.proposedOnce && frame.timeMs-pending.startedAt in 0L..PARTIAL_HANDOFF_MS &&
+                validHand(baseline.cards,snapshot.remaining!!)) {
+                // The prior interpretation was offered but never committed.
+                // Keep the full seed, discard all old partial witnesses, and
+                // require independent evidence for the corrected difference.
+                partialHandoff=null
+                resetShrink()
+            } else {
+                if (changed ||
                 frame.timeMs-pending.startedAt !in 0L..PARTIAL_HANDOFF_MS ||
                 !validHand(baseline.cards,snapshot.remaining!!)) {
-                clearProofState()
-                return null
+                    clearProofState()
+                    return null
+                }
+                return observePartialHandoff(pending,frame,visiblePlay)
             }
-            return observePartialHandoff(pending,frame,visiblePlay)
         }
         // A directly visible prefix can reserve a fresh hand difference while
         // its other cards arrive. The reservation cannot supply missing cards.
@@ -255,13 +279,11 @@ class TeammateHandPlayProofTracker {
         if (shrinkVotes < REQUIRED_VOTES || delivered ||
             frame.timeMs - (shrinkFirstSeen ?: frame.timeMs) < MIN_VOTE_SPAN_MS) return null
 
-        delivered = true
         val proof=anchoredDesk.play.copy(
             cards = anchoredDesk.play.cards.toList(),
             glyphs = anchoredDesk.play.glyphs.toList(),
         )
-        issuePostCommitHandoff(proof,current,shrinkVotes,shrinkFirstSeen,shrinkLastSeen,frame.timeMs)
-        return proof
+        return propose(proof,current,shrinkVotes,shrinkFirstSeen,shrinkLastSeen,frame.timeMs)
     }
 
     private fun observePartialHandoff(pending: PartialHandoff,frame: TableFrame,play: ObservedPlay?): ObservedPlay? {
@@ -300,12 +322,10 @@ class TeammateHandPlayProofTracker {
                 !sameGeometry(play.glyphs,previous.play.glyphs)) {
                 pending.fullEvidence=DeskEvidence(play,timeMs)
             } else if(!delivered && timeMs-previous.time>=MIN_VOTE_SPAN_MS) {
-                delivered=true
-                partialHandoff=null
                 val proof=previous.play.copy(cards=previous.play.cards.toList(),glyphs=previous.play.glyphs.toList())
-                issuePostCommitHandoff(proof,pending.hand,pending.handVotes,pending.firstHandVote,
+                pending.proposedOnce=true
+                return propose(proof,pending.hand,pending.handVotes,pending.firstHandVote,
                     pending.lastHandVote,timeMs)
-                return proof
             }
         } else if(play.cards.isNotEmpty()) {
             pending.fullEvidence=null
@@ -366,11 +386,9 @@ class TeammateHandPlayProofTracker {
             timeMs-pending.lastBadgeSource>MAX_BADGE_AGE_MS ||
             timeMs-confirmedWitness.time>MAX_PARTIAL_WITNESS_AGE_MS) return null
 
-        delivered=true
-        partialHandoff=null
         val proof=confirmedWitness.play.copy(cards=confirmedWitness.play.cards.toList(),glyphs=confirmedWitness.play.glyphs.toList())
-        issuePostCommitHandoff(proof,pending.hand,pending.handVotes,pending.firstHandVote,pending.lastHandVote,timeMs)
-        return proof
+        pending.proposedOnce=true
+        return propose(proof,pending.hand,pending.handVotes,pending.firstHandVote,pending.lastHandVote,timeMs)
     }
 
     private fun resetShortProof(pending: PartialHandoff) {
@@ -402,15 +420,17 @@ class TeammateHandPlayProofTracker {
         delivered = false
     }
 
-    private fun issuePostCommitHandoff(proof: ObservedPlay,hand: Hand,votes: Int,firstSeen: Long?,
-        lastSeen: Long?,issuedAt: Long) {
-        val sourceVersion=version ?: return
-        val first=firstSeen ?: return
-        val last=lastSeen ?: return
-        if(hand.cards.isEmpty() || votes<REQUIRED_VOTES || last-first<MIN_VOTE_SPAN_MS ||
-            last>issuedAt || issuedAt-last>MAX_GAP_MS) return
-        issuedHandoff=IssuedHandoff(sourceVersion,proof.cards.toList(),hand.copy(cards=hand.cards.toList()),
-            votes,first,last,issuedAt)
+    private fun propose(proof: ObservedPlay,hand: Hand,votes: Int,firstSeen: Long?,
+        lastSeen: Long?,issuedAt: Long): ObservedPlay {
+        val sourceVersion=version
+        val handoff=if(sourceVersion!=null && firstSeen!=null && lastSeen!=null && hand.cards.isNotEmpty() &&
+            votes>=REQUIRED_VOTES && lastSeen-firstSeen>=MIN_VOTE_SPAN_MS &&
+            lastSeen<=issuedAt && issuedAt-lastSeen<=MAX_GAP_MS)
+            IssuedHandoff(sourceVersion,proof.cards.toList(),hand.copy(cards=hand.cards.toList()),
+                votes,firstSeen,lastSeen,issuedAt)
+            else null
+        proposal=Proposal(proof,handoff)
+        return proof
     }
 
     private fun canRebase(issued: IssuedHandoff,oldVersion: Version?,nextVersion: Version,
@@ -454,6 +474,7 @@ class TeammateHandPlayProofTracker {
         deskEvidence = null
         delivered = false
         issuedHandoff = null
+        proposal = null
     }
 
     private fun isStrongCompletePlay(play: ObservedPlay): Boolean = directlyRead(play,MIN_CONFIDENCE)

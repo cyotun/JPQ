@@ -118,6 +118,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
     private val countPlayBoundaryAt=mutableMapOf<Seat,Long>()
     private val seatReview=UntrackedSeatReview()
     private var rejectedPlayCandidates=0L
+    private val rejectedTerminalSeats=mutableSetOf<Seat>()
     fun diagnosticStatus()=ObserverStatus(armed,locked,baselineWindow,tribute,handVote.count,playVotes.mapValues { it.value.count },pending.size,sequence,recovery!=null,seatReview.pendingSeats(),rejectedPlayCandidates)
     private fun key(cards: List<Card>)=cards.map { "${it.rank.name}:${it.suit.name}" }.sorted().joinToString(",")
     private fun emit() { runCatching { changed(ledger.snapshot()) } }
@@ -142,6 +143,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         passedSupersetProofs.values.forEach { it.clear() }
         seatReview.clear()
         rejectedPlayCandidates=0
+        rejectedTerminalSeats.clear()
     }
     fun interrupted(reason: String) { locked=true; ledger.invalidate(reason); clearCandidates(); emit() }
     /** A fragmented confirmed display stays that event; no missing glyph is invented. */
@@ -258,6 +260,8 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         // Keep the live display stable, but never turn unresolved local cards
         // into a verified result merely because the scene changed to RESULT.
         if(seatReview.pendingSeats().isNotEmpty()) ledger.suspendForRecovery("仍有单家出牌待核对")
+        if(rejectedTerminalSeats.any { ledger.snapshot().played(it)<27 })
+            ledger.suspendForRecovery("终局出牌未能完整确认")
         ledger.finish(); emit()
     }
     /** A positively finished own hand may still be in its short departure
@@ -333,7 +337,11 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 // Only a previously located last play can finish its bounded
                 // confirmation after the result animation starts. Other seats'
                 // exposed unplayed cards never enter ordinary collection here.
-                if(!commit(terminal.seat,terminal.play.cards)) return
+                if(!commit(terminal.seat,terminal.play.cards)) {
+                    rejectedTerminalSeats.add(terminal.seat)
+                    return
+                }
+                proof.commitAccepted(terminal.play)
                 if(confirmedRoundFinished(ledger.snapshot())) { finishConfirmedRound(); return }
             }
         }
@@ -364,6 +372,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 recovery!!.observationInterrupted(frame.timeMs)
                 publishRecoveryIfDue(frame.timeMs,immediate=true); return
             }
+            localizedPendingRecovery.commitAccepted(localizedPlay)
             sequence=nextSequence
             val seat=localizedPlay.seat
             val play=localizedPlay.play
@@ -488,6 +497,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 // a same-value next play that has no clean empty-table boundary.
                 // It does not infer any other player's missing cards.
                 if(!commit(Seat.OPPOSITE,proof.cards)) return
+                teammateHandProof.commitAccepted(proof)
                 val event=ledger.snapshot().plays.getValue(Seat.OPPOSITE).last()
                 presentations[Seat.OPPOSITE]=Presentation(proof.cards.toList(),proof.glyphs.toList(),frame.timeMs,event.eventId)
                 visible[Seat.OPPOSITE]=key(proof.cards)
@@ -544,6 +554,8 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 }
             }
             if(recovered!=null && recoveredEvent!=null) {
+                if(checkpoint.recoveredQuantityPlay!=null)
+                    quantityProofs.getValue(recovered.first).commitAccepted(recovered.second)
                 sequence=recoveredEvent.sequence
                 val seat=recovered.first; val play=recovered.second
                 presentations[seat]=Presentation(play.cards.toList(),play.glyphs.toList(),frame.timeMs,recoveredEvent.eventId)
@@ -677,6 +689,11 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
                 else { quantityProof.clear(); null }
             if(shortPlay!=null) {
                 if(!commit(seat,shortPlay.cards)) continue
+                when {
+                    finishedPlay!=null -> earlyFinishProof.commitAccepted(shortPlay)
+                    passedSuperset!=null -> passedSupersetProof.commitAccepted(shortPlay)
+                    else -> quantityProof.commitAccepted(shortPlay)
+                }
                 val event=ledger.snapshot().plays.getValue(seat).last()
                 presentations[seat]=Presentation(shortPlay.cards.toList(),shortPlay.glyphs.toList(),frame.timeMs,event.eventId)
                 visible[seat]=key(shortPlay.cards); previousGlyphs[seat]=shortPlay.glyphs.toList()
@@ -902,6 +919,7 @@ class RoundObserver(private val ledger: RoundLedger,private val changed: (RoundS
         val nextSequence=sequence+1
         return runCatching {
             ledger.commit(PlayEvent(id,"$id:$nextSequence",nextSequence,seat,cards))
+            if(ledger.snapshot().played(seat)==27) rejectedTerminalSeats.remove(seat)
             sequence=nextSequence; emit(); true
         }.getOrElse {
             // Capacity/identity validation is atomic. Reject only the untrusted

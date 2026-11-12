@@ -3,6 +3,7 @@ package com.cyotun.jpq.core
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertNotNull
 
 class EarlyFinishPlayProofTest {
     private val cards=listOf(Card(Rank.A,Suit.RED),Card(Rank.K,Suit.BLACK),Card(Rank.Q,Suit.RED),
@@ -26,7 +27,9 @@ class EarlyFinishPlayProofTest {
     @Test fun twoDistinctStrongExactFinalGroupsAndFreshSourceEmitOnlyOnce() {
         val proof=EarlyFinishPlayProof()
         assertNull(proof.observe(frame(627705731),snapshot,Seat.PREVIOUS,627705299))
-        assertEquals(cards,proof.observe(frame(627705930),snapshot,Seat.PREVIOUS,627705299)?.cards)
+        val proposal=assertNotNull(proof.observe(frame(627705930),snapshot,Seat.PREVIOUS,627705299))
+        assertEquals(cards,proposal.cards)
+        proof.commitAccepted(proposal)
         assertNull(proof.observe(frame(627706030),snapshot,Seat.PREVIOUS,627705299))
     }
 
@@ -36,8 +39,10 @@ class EarlyFinishPlayProofTest {
         assertNull(proof.observe(frame(1000),snapshot,Seat.PREVIOUS,950))
         assertNull(proof.observe(frame(1100,boxes=cards.indices.map { GlyphBox(.55f+it*.08f,.25f,.59f+it*.08f,.31f) }),
             snapshot,Seat.PREVIOUS,950))
-        assertEquals(cards,proof.observe(frame(1200,boxes=cards.indices.map { GlyphBox(.55f+it*.08f,.25f,.59f+it*.08f,.31f) }),
-            snapshot,Seat.PREVIOUS,950)?.cards)
+        val proposal=assertNotNull(proof.observe(frame(1200,boxes=cards.indices.map { GlyphBox(.55f+it*.08f,.25f,.59f+it*.08f,.31f) }),
+            snapshot,Seat.PREVIOUS,950))
+        assertEquals(cards,proposal.cards)
+        proof.commitAccepted(proposal)
         assertNull(proof.observe(frame(1301),snapshot,Seat.PREVIOUS,950))
         assertNull(proof.observe(frame(1400,scene=TableScene.TABLE),snapshot.copy(phase=RoundPhase.ACTIVE),Seat.PREVIOUS,950))
     }
@@ -83,8 +88,46 @@ class EarlyFinishPlayProofTest {
         val proof=EarlyFinishPlayProof()
         assertNull(proof.observe(frame(1000,scene=TableScene.TEAMMATE),snapshot,Seat.PREVIOUS,950))
         val active=snapshot.copy(phase=RoundPhase.ACTIVE)
-        assertEquals(cards,proof.observe(frame(1100,scene=TableScene.TABLE),active,Seat.PREVIOUS,950)?.cards)
+        val proposal=assertNotNull(proof.observe(frame(1100,scene=TableScene.TABLE),active,Seat.PREVIOUS,950))
+        assertEquals(cards,proposal.cards)
+        proof.commitAccepted(proposal)
         assertNull(proof.observe(frame(1200,scene=TableScene.TEAMMATE),snapshot,Seat.PREVIOUS,950))
+    }
+
+    @Test fun uncommittedProposalCanRetryAndCorrectWhileOnlyTheCurrentTokenMayCommit() {
+        val proof=EarlyFinishPlayProof()
+        assertNull(proof.observe(frame(1000),snapshot,Seat.PREVIOUS,950))
+        val rejected=assertNotNull(proof.observe(frame(1100),snapshot,Seat.PREVIOUS,950))
+        val retry=assertNotNull(proof.observe(frame(1200),snapshot,Seat.PREVIOUS,950))
+        assertEquals(rejected,retry)
+        proof.commitAccepted(rejected) // a previous delivery cannot consume the current proposal
+        val fresh=assertNotNull(proof.observe(frame(1300),snapshot,Seat.PREVIOUS,950))
+        val corrected=cards.map { if(it.rank==Rank.A) it.copy(suit=Suit.BLACK) else it }
+        assertNull(proof.observe(frame(1400,cards=corrected),snapshot,Seat.PREVIOUS,950))
+        proof.commitAccepted(fresh)
+        val accepted=assertNotNull(proof.observe(frame(1500,cards=corrected),snapshot,Seat.PREVIOUS,950))
+        assertEquals(corrected,accepted.cards)
+        proof.commitAccepted(accepted)
+        assertNull(proof.observe(frame(1600,cards=corrected),snapshot,Seat.PREVIOUS,950))
+    }
+
+    @Test fun clearRevokesTheUncommittedProposalWithoutFencingFreshEvidence() {
+        val proof=EarlyFinishPlayProof()
+        proof.observe(frame(1000),snapshot,Seat.PREVIOUS,950)
+        val old=assertNotNull(proof.observe(frame(1100),snapshot,Seat.PREVIOUS,950))
+        proof.clear()
+        proof.commitAccepted(old)
+        assertNull(proof.observe(frame(1200),snapshot,Seat.PREVIOUS,1150))
+        assertNotNull(proof.observe(frame(1300),snapshot,Seat.PREVIOUS,1150))
+    }
+
+    @Test fun aNewObservationWithoutACompletionCueRevokesThePreviousProposalToken() {
+        val proof=EarlyFinishPlayProof()
+        proof.observe(frame(1000),snapshot,Seat.PREVIOUS,950)
+        val old=assertNotNull(proof.observe(frame(1100),snapshot,Seat.PREVIOUS,950))
+        assertNull(proof.observe(frame(1200),snapshot,Seat.PREVIOUS,null))
+        proof.commitAccepted(old)
+        assertNotNull(proof.observe(frame(1300),snapshot,Seat.PREVIOUS,1250))
     }
 
     @Test fun recentExactFullHandCanBeConfirmedByFreshCueOnSameSlotPartialRead() {

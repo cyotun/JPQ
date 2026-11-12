@@ -1,10 +1,10 @@
 # 记牌器 Android 工程
 
-稳定源码基线 `v0.2.26`，实测包保留 `0.2.26-regression`、versionCode 28、包名 `com.cyotun.jpq`。[版本记录](../docs/releases/0.2.26.md) 说明范围；当前行为以 [当前规格](../docs/design/current-spec.md) 为准，旧版“识别未接通／缺图即等待下一局”已被覆盖。
+正式稳定回滚基线为 `v0.2.26` / versionCode 28。当前正式版 `v0.2.27` / code 29 已发布，包名 `com.cyotun.jpq`、签名身份保持不变。线上签名清单、整包下载与身份已验证；本轮按用户要求未重测手机安装。以 [本轮发布记录](../docs/releases/0.2.27.md) 和 [当前规格](../docs/design/current-spec.md) 为准。
 
 ## 本地准备
 
-固定 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、compile/target SDK 36、min SDK 28、ABI arm64-v8a。原生 View/Canvas 界面，纯逻辑在 `:core`，Android 采集和识别在 `:app`。
+固定 JDK 17、Gradle 8.13、AGP 8.13.2、Kotlin 2.3.21、compile/target SDK 36、min SDK 28、ABI arm64-v8a。运行时 Android API 37 及以上使用 `APP_TASK` 单应用采集，旧系统使用 `DISPLAY`；Android 系统授权步骤对两者都保留。采集能力由 `SINGLE_APP_CAPTURE_ENABLED` 控制，独立于 `SINGLE_APP_CAPTURE_CANDIDATE` BETA 身份/包名。正式包启用单应用能力不意味着改变 `com.cyotun.jpq` 包名或安装签名。原生 View/Canvas 界面，纯逻辑在 `:core`，Android 采集和识别在 `:app`。
 
 仓库根目录执行：
 
@@ -27,10 +27,10 @@ node tools/release/identity.mjs
 - 手机测试包：`app/build/outputs/apk/androidTest/release/app-release-androidTest.apk`。
 - 实测冻结 APK 在本机忽略目录 `artifacts/`，完整校验值见版本记录。
 - 核心检查 `core/src/test/`，宿主检查 `app/src/test/`，手机截图/采集/UI 检查 `app/src/androidTest/`。
-- 连续素材、完整 ZIP、截图和报告在本机 `captures/`，不随源码分发。
+- 本轮最小私人回归素材在本机 `artifacts/regression-minimal-0.2.27/`，保留 `source-manifest.json`、`normal-*.tape`、`expected-*.json`、`interrupted-input.tape`、回归报告及未核实来源的完整原始诊断 ZIP；不随源码分发。其余已验证录像/模拟器和重复采集数据按授权清理。中断输入仍未核实，不计为通过。
 
-回放和排障见 [维护指南](../docs/development/maintenance.md)。真实对局只允许 LogsOnly 采集，禁止同时运行 instrumentation、电脑截图、录屏或第二个共享。
+回放和排障见 [维护指南](../docs/development/maintenance.md)。本轮用户明确豁免新增真机及实战验收，不能改记为通过。未来如开展实战，始终由用户操作；对局期间只读证据，不操作游戏、不改设置、不重启采集。
 
 ## 更新边界
 
-识别、配置、牌局和诊断都在本地。Cloudflare 仅更新；客户端检查清单签名、哈希、包名、版本、SDK、证书后调用系统安装，对局中不安装。GitHub 标签不代表服务已有新包；见 [更新服务](../services/updates/README.md)。
+识别、配置、牌局和诊断都在本地。Cloudflare 仅更新；客户端检查清单签名、哈希、包名、版本、SDK、证书后调用系统安装，对局中不安装。设置一级菜单右侧的单一更新按钮执行检查/下载，系统负责安装确认。GitHub 标签不代表服务已有新包；见 [更新服务](../services/updates/README.md)。

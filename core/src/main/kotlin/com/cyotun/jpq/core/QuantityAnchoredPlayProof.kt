@@ -7,17 +7,20 @@ class QuantityAnchoredPlayProof {
     private data class Version(val round: String,val seat: Seat,val events: List<PlayEvent>,val remaining: Int,
         val phase: RoundPhase,val scene: TableScene,val supersededEventId: String?=null)
     private data class PreCountSample(val source: Long,val count: Int)
+    private enum class SourceStatus { ABSENT,FRESH,CACHED,REJECTED }
+    private class SourceFence(var highest: Long=-1,var count: Int?=null,var rejected: Boolean=false)
     data class PriorPresentation(val eventId: String,val cards: List<Card>,val glyphs: List<PlayGlyph>)
     private data class Candidate(val version: Version,val first: Long,val anchor: ObservedPlay,
         var latest: ObservedPlay,var lastFrame: Long,var lastVisible: Long,
         var visibleVotes: Int=1,var emptyVotes: Int=0,var strong: Boolean=false,var firstCount: Long?=null,var lastCount: Long?=null,
         var lastSource: Long?=null,var lastSourceCount: Int?=null,
-        val preCounts: List<PreCountSample> = emptyList(),var strongRun: Int=0,var shortEligible: Boolean=false,
+        var preCounts: List<PreCountSample> = emptyList(),var strongRun: Int=0,var shortEligible: Boolean=false,
         var shortPostSource: Long?=null,val startedAt: Long=first,
         var ambiguityStartedAt: Long?=null,var ambiguityRetained: Boolean=false)
     private var candidate: Candidate?=null
     private var lastTime=-1L
     private var delivered: Version?=null
+    private var proposal: Pair<Version,ObservedPlay>?=null
     private var preCountVersion: Version?=null
     private val preCounts=mutableListOf<PreCountSample>()
     private var lastPreSource: Long?=null
@@ -25,6 +28,7 @@ class QuantityAnchoredPlayProof {
     private var activeSuperset: SupersetKey?=null
     private var activeSupersetSince=-1L
     private var expiredSuperset: SupersetKey?=null
+    private val sourceFences=mutableMapOf<Seat,SourceFence>()
 
     fun clear() {
         clearCandidate()
@@ -32,7 +36,20 @@ class QuantityAnchoredPlayProof {
         preCountVersion=null
     }
 
-    private fun clearCandidate() { candidate=null }
+    private fun clearCandidate() { candidate=null; proposal=null }
+
+    /** Only the caller's successful ledger transaction consumes this exact proposal. */
+    fun commitAccepted(play: ObservedPlay) {
+        val proposed=proposal ?: return
+        if(proposed.second !== play) return
+        delivered=proposed.first
+        clearCandidate()
+        clearPreCounts()
+    }
+
+    private fun propose(current: Candidate): ObservedPlay = copy(current.latest).also {
+        proposal=current.version to it
+    }
 
     fun observe(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat,clearBoundaryAt: Long?): ObservedPlay? =
         observe(frame,snapshot,seat,clearBoundaryAt,null,null)
@@ -59,6 +76,7 @@ class QuantityAnchoredPlayProof {
      * not add votes or replace the last clean presentation.
      */
     fun retainAcrossOwnershipAmbiguity(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat): Boolean {
+        proposal=null
         val current=candidate ?: return false
         fun reject(): Boolean { clear(); return false }
         if(frame.timeMs<=lastTime) return reject()
@@ -92,6 +110,8 @@ class QuantityAnchoredPlayProof {
 
     private fun observe(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat,clearBoundaryAt: Long?,
         prior: PriorPresentation?,expectedOverride: Int?,phaseVersion: RoundPhase?=null): ObservedPlay? {
+        val uncommittedProposal=proposal
+        proposal=null
         if(frame.timeMs<=lastTime) { clear(); clearPreCounts(); return null }
         lastTime=frame.timeMs
         val id=snapshot.roundId
@@ -106,6 +126,14 @@ class QuantityAnchoredPlayProof {
         candidate?.ambiguityStartedAt=null
         val remaining=expectedRemaining
         if(remaining !in 1..27) { clear(); return null }
+        // Only this clean observation may advance the source fence. Ownership
+        // ambiguity retention deliberately never reads or poisons badge OCR.
+        val reading=frame.remainingHandCounts[seat]
+        val sourceStatus=observeSource(seat,reading,frame.timeMs)
+        if(sourceStatus==SourceStatus.REJECTED) {
+            clearPreCounts()
+            candidate?.let(::clearCountEvidence)
+        }
         val p=frame.plays[seat]
         val supersetBoundary=prior!=null && prior.eventId.isNotBlank() &&
             snapshot.plays[seat].orEmpty().lastOrNull()?.let { it.eventId==prior.eventId && it.cards==prior.cards }==true &&
@@ -126,7 +154,8 @@ class QuantityAnchoredPlayProof {
             phaseVersion ?: snapshot.phase,frame.scene,if(supersetBoundary) prior.eventId else null)
         if(preCountVersion!=version) resetPreCounts(version)
         val boundary=clearBoundaryAt!=null || supersetBoundary
-        if(candidate==null && !supersetBoundary) rememberPreCount(frame,snapshot,seat,remaining,version)
+        if(candidate==null && !supersetBoundary && sourceStatus!=SourceStatus.REJECTED)
+            rememberPreCount(frame,snapshot,seat,remaining,version,sourceStatus==SourceStatus.FRESH)
         if(!boundary) {
             if(isUncommittedPresentation(frame.plays[seat],snapshot,seat)) clearPreCounts()
             clearCandidate(); return null
@@ -156,12 +185,14 @@ class QuantityAnchoredPlayProof {
                     val restartShortCandidate=!current.ambiguityRetained && current.shortEligible && current.version.supersededEventId==null &&
                         !supersetBoundary && strong(p) && clearBoundaryAt!=null &&
                         frame.timeMs-clearBoundaryAt in 0L..1500L && clearBoundaryAt<frame.timeMs
+                    val restartRejectedSuperset=supersetBoundary && current.version.supersededEventId!=null &&
+                        uncommittedProposal?.first==current.version && strong(p)
                     val currentStartedAt=current.startedAt
                     clearCandidate()
-                    if(!restartShortCandidate) { clearPreCounts(); return null }
+                    if(!restartShortCandidate && !restartRejectedSuperset) { clearPreCounts(); return null }
                     val copy=copy(p)
                     current=Candidate(version,frame.timeMs,copy,copy,frame.timeMs,frame.timeMs,strong=true,
-                        preCounts=preCounts.takeLast(2),strongRun=1,shortEligible=true,startedAt=currentStartedAt)
+                        preCounts=preCounts.takeLast(2),strongRun=1,shortEligible=!supersetBoundary,startedAt=currentStartedAt)
                     candidate=current
                 } else {
                     current.latest=copy(p); current.lastVisible=frame.timeMs; current.visibleVotes++
@@ -174,24 +205,21 @@ class QuantityAnchoredPlayProof {
         current ?: return null
         current.lastFrame=frame.timeMs
         if(empty) { current.emptyVotes++; current.shortEligible=false }
-        val reading=frame.remainingHandCounts[seat]
+        if(sourceStatus==SourceStatus.REJECTED) { clearCountEvidence(current); return null }
         if(reading!=null) {
-            if(reading.sourceTimeMs<0 ||
-                reading.sourceTimeMs>frame.timeMs ||
-                (current.lastSource!=null && reading.sourceTimeMs<current.lastSource!!)) { clear(); return null }
             val sameSource=reading.sourceTimeMs==current.lastSource
-            val sourceChangedCount=sameSource && current.lastSourceCount!=reading.count
             current.lastSource=reading.sourceTimeMs
             current.lastSourceCount=reading.count
             if(current.version.supersededEventId!=null) {
                 // The old ledger count is a valid pre-play reading. A strict
                 // superset only earns a new event from the exact full-group
                 // decrement; an expansion-sized or other change resets votes.
-                if(sourceChangedCount || (reading.count!=remaining && reading.count!=remaining-current.anchor.cards.size)) {
+                if(reading.count!=remaining && reading.count!=remaining-current.anchor.cards.size) {
                     current.firstCount=null; current.lastCount=null
                 } else if(reading.count==remaining) {
                     if(current.firstCount!=null) { current.firstCount=null; current.lastCount=null }
-                } else if(reading.sourceTimeMs>=current.first && frame.timeMs-reading.sourceTimeMs<=500 && !sameSource) {
+                } else if(reading.sourceTimeMs>=current.first && frame.timeMs-reading.sourceTimeMs<=500 &&
+                    sourceStatus==SourceStatus.FRESH && !sameSource) {
                     if(current.firstCount==null) current.firstCount=reading.sourceTimeMs
                     current.lastCount=reading.sourceTimeMs
                 }
@@ -199,10 +227,13 @@ class QuantityAnchoredPlayProof {
                 // An asynchronous pre-arrival badge is not a post-play vote,
                 // even when its value happens to equal the expected decrement.
                 if(reading.sourceTimeMs>=current.first) {
-                    if(reading.count!=remaining-current.anchor.cards.size) { clear(); return null }
-                    if(frame.timeMs-reading.sourceTimeMs<=1000) current.shortPostSource=reading.sourceTimeMs
+                    if(reading.count!=remaining-current.anchor.cards.size) {
+                        clearPreCounts(); clearCountEvidence(current); return null
+                    }
+                    if(sourceStatus==SourceStatus.FRESH && frame.timeMs-reading.sourceTimeMs<=1000)
+                        current.shortPostSource=reading.sourceTimeMs
                     val sourceAgeLimit=if(current.ambiguityRetained) MAX_RETAINED_COUNT_SOURCE_AGE_MS else MAX_COUNT_SOURCE_AGE_MS
-                    if(frame.timeMs-reading.sourceTimeMs<=sourceAgeLimit) {
+                    if(sourceStatus==SourceStatus.FRESH && frame.timeMs-reading.sourceTimeMs<=sourceAgeLimit) {
                         if(current.firstCount==null) current.firstCount=reading.sourceTimeMs
                         current.lastCount=reading.sourceTimeMs
                     }
@@ -219,10 +250,7 @@ class QuantityAnchoredPlayProof {
             current.shortPostSource?.let { it !in preSamples.map(PreCountSample::source) &&
                 it>=current.first && frame.timeMs-it<=1000 }==true
         if(shortPreValid && current.lastVisible==frame.timeMs && current.lastSourceCount==remaining-current.anchor.cards.size) {
-            delivered=version
-            clearCandidate()
-            clearPreCounts()
-            return copy(current.latest)
+            return propose(current)
         }
         val firstCount=current.firstCount ?: return null
         val lastCount=current.lastCount ?: return null
@@ -230,13 +258,33 @@ class QuantityAnchoredPlayProof {
         if(current.visibleVotes<requiredVisibleVotes || !current.strong || current.lastVisible-current.first<100 ||
             (empty && current.emptyVotes<2) ||
             lastCount-firstCount<100 || frame.timeMs-lastCount>finalCountAgeLimit) return null
-        delivered=version
-        clearCandidate()
-        clearPreCounts()
-        return copy(current.latest)
+        return propose(current)
     }
 
-    private fun rememberPreCount(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat,remaining: Int,version: Version) {
+    private fun observeSource(seat: Seat,reading: RemainingHandCount?,timeMs: Long): SourceStatus {
+        if(reading==null) return SourceStatus.ABSENT
+        val source=reading.sourceTimeMs
+        // A malformed future timestamp cannot move the fence ahead of real OCR.
+        if(source<0 || source>timeMs) return SourceStatus.REJECTED
+        val fence=sourceFences.getOrPut(seat) { SourceFence() }
+        if(source<fence.highest) return SourceStatus.REJECTED
+        if(source==fence.highest) {
+            if(reading.count!=fence.count) fence.rejected=true
+            return if(fence.rejected) SourceStatus.REJECTED else SourceStatus.CACHED
+        }
+        fence.highest=source
+        fence.count=reading.count
+        fence.rejected=reading.count !in 0..27
+        return if(fence.rejected) SourceStatus.REJECTED else SourceStatus.FRESH
+    }
+
+    private fun clearCountEvidence(current: Candidate) {
+        current.firstCount=null; current.lastCount=null; current.shortPostSource=null
+        current.preCounts=emptyList()
+    }
+
+    private fun rememberPreCount(frame: TableFrame,snapshot: RoundSnapshot,seat: Seat,remaining: Int,version: Version,
+        freshSource: Boolean) {
         val reading=frame.remainingHandCounts[seat] ?: return
         val p=frame.plays[seat]
         val empty=p?.let { it.regionObserved && it.cards.isEmpty() && it.glyphs.isEmpty() }==true
@@ -255,6 +303,7 @@ class QuantityAnchoredPlayProof {
             if(lastPreCount!=reading.count) { clearPreCounts(); preCountVersion=version }
             return
         }
+        if(!freshSource) return
         preCounts+=PreCountSample(reading.sourceTimeMs,reading.count)
         while(preCounts.size>16) preCounts.removeAt(0)
         lastPreSource=reading.sourceTimeMs

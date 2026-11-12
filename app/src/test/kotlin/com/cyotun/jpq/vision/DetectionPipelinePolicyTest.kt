@@ -6,19 +6,31 @@ import kotlin.test.assertEquals
 class DetectionPipelinePolicyTest {
     @Test fun candidateAlwaysUsesFullCpuEvenWithCurrentReferenceQualification() {
         assertEquals(DetectionPipelinePolicy.FULL_CPU,DetectionPipelinePolicy.select(
-            isCandidate=true,storedFingerprint="device",storedVersion="v1",
+            singleAppCaptureEnabled=true,isCandidate=true,storedFingerprint="device",storedVersion="v1",
             currentFingerprint="device",expectedVersion="v1"))
     }
 
     @Test fun stableBuildRetainsReferenceQualificationRequirements() {
         assertEquals(DetectionPipelinePolicy.REFERENCE,DetectionPipelinePolicy.select(
-            isCandidate=false,storedFingerprint="device",storedVersion="v1",
+            singleAppCaptureEnabled=false,isCandidate=false,storedFingerprint="device",storedVersion="v1",
             currentFingerprint="device",expectedVersion="v1"))
         assertEquals(DetectionPipelinePolicy.FULL_CPU,DetectionPipelinePolicy.select(
-            isCandidate=false,storedFingerprint="other-device",storedVersion="v1",
+            singleAppCaptureEnabled=false,isCandidate=false,storedFingerprint="other-device",storedVersion="v1",
             currentFingerprint="device",expectedVersion="v1"))
         assertEquals(DetectionPipelinePolicy.FULL_CPU,DetectionPipelinePolicy.select(
-            isCandidate=false,storedFingerprint="device",storedVersion="old",
+            singleAppCaptureEnabled=false,isCandidate=false,storedFingerprint="device",storedVersion="old",
+            currentFingerprint="device",expectedVersion="v1"))
+    }
+
+    @Test fun promotedFormalBuildCannotInheritOldReferenceQualificationEvenWithExactMatch() {
+        assertEquals(DetectionPipelinePolicy.FULL_CPU,DetectionPipelinePolicy.select(
+            singleAppCaptureEnabled=true,isCandidate=false,storedFingerprint="device",storedVersion="v1",
+            currentFingerprint="device",expectedVersion="v1"))
+    }
+
+    @Test fun betaIdentityStillCannotUseReferenceWhenFeatureIsAccidentallyDisabled() {
+        assertEquals(DetectionPipelinePolicy.FULL_CPU,DetectionPipelinePolicy.select(
+            singleAppCaptureEnabled=false,isCandidate=true,storedFingerprint="device",storedVersion="v1",
             currentFingerprint="device",expectedVersion="v1"))
     }
 }

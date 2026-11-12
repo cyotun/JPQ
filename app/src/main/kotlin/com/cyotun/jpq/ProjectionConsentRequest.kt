@@ -5,11 +5,13 @@ import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import com.cyotun.jpq.core.CaptureScope
+import com.cyotun.jpq.core.CaptureInputPolicy
 
 /** Uses only public API 37 methods, discovered at runtime to keep the stable SDK/toolchain unchanged. */
 internal object ProjectionConsentRequest {
     const val SCOPE_EXTRA="jpq.capture.scope"
-    val scope get()=if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE) CaptureScope.APP_TASK else CaptureScope.DISPLAY
+    val scope get()=CaptureInputPolicy.requestedScope(BuildConfig.SINGLE_APP_CAPTURE_ENABLED,
+        BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE,Build.VERSION.SDK_INT)
 
     fun create(manager: MediaProjectionManager): Intent {
         if(scope==CaptureScope.DISPLAY) return if(Build.VERSION.SDK_INT>=34)

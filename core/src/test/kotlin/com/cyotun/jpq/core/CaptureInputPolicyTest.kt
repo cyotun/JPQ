@@ -35,11 +35,30 @@ class CaptureInputPolicyTest {
         assertTrue(CaptureInputPolicy.usesScreenOcclusions(CaptureScope.DISPLAY))
         assertTrue(CaptureInputPolicy.pausesForOverlayInteraction(CaptureScope.DISPLAY,true))
     }
-    @Test fun stableBuildAndOlderDevicesCannotClaimStrictTaskCapture() {
+    @Test fun taskInputRequiresCapabilityAndSupportedSystemRegardlessOfAppIdentity() {
         assertFalse(CaptureInputPolicy.acceptsScope(CaptureScope.APP_TASK,false,37))
         assertFalse(CaptureInputPolicy.acceptsScope(CaptureScope.APP_TASK,true,36))
         assertTrue(CaptureInputPolicy.acceptsScope(CaptureScope.APP_TASK,true,37))
         assertTrue(CaptureInputPolicy.acceptsScope(CaptureScope.DISPLAY,false,28))
+        assertTrue(CaptureInputPolicy.acceptsScope(CaptureScope.DISPLAY,true,36))
+    }
+    @Test fun promotedFormalBuildUsesTaskOnlyOnSupportedSystems() {
+        for(sdk in listOf(28,33,34,36)) {
+            val scope=CaptureInputPolicy.requestedScope(singleAppCaptureEnabled=true,candidate=false,sdk=sdk)
+            assertEquals(CaptureScope.DISPLAY,scope)
+            assertTrue(CaptureInputPolicy.acceptsScope(scope,true,sdk))
+        }
+        for(sdk in listOf(37,38)) {
+            val scope=CaptureInputPolicy.requestedScope(singleAppCaptureEnabled=true,candidate=false,sdk=sdk)
+            assertEquals(CaptureScope.APP_TASK,scope)
+            assertTrue(CaptureInputPolicy.acceptsScope(scope,true,sdk))
+        }
+    }
+    @Test fun betaCannotSilentlyFallBackToDisplayOrRunWithCapabilityDisabled() {
+        assertEquals(CaptureScope.APP_TASK,CaptureInputPolicy.requestedScope(true,true,37))
+        assertFailsWith<IllegalArgumentException> { CaptureInputPolicy.requestedScope(true,true,36) }
+        assertFailsWith<IllegalArgumentException> { CaptureInputPolicy.requestedScope(false,true,37) }
+        assertEquals(CaptureScope.DISPLAY,CaptureInputPolicy.requestedScope(false,false,37))
     }
     @Test fun invalidDimensionsCannotReachTheReader() {
         assertFailsWith<IllegalArgumentException> { CaptureInputPolicy.dimensions(0,1200,CaptureScope.APP_TASK,true) }

@@ -35,6 +35,9 @@ class PassClosedSupersetProof {
         val firstTime: Long,
         var lastTime: Long,
         var votes: Int,
+        var proposal: ObservedPlay? = null,
+        val startedAt: Long = firstTime,
+        var proposedOnce: Boolean = false,
     )
 
     private var scope: Scope? = null
@@ -57,6 +60,15 @@ class PassClosedSupersetProof {
     /** Drop pending proof state after a caller-observed global fault/round reset. */
     fun clear() = reset()
 
+    /** Only a successful ledger transaction may fence this returned group. */
+    fun commitAccepted(play: ObservedPlay) {
+        val current=candidate ?: return
+        if(current.proposal!==play) return
+        delivered += deliveredKey(current.identity)
+        if(delivered.size>128) delivered.remove(delivered.first())
+        candidate=null
+    }
+
     /**
      * True only while this exact frame extends a live, strong candidate which
      * has at least one strong vote. Callers may use this to defer a conflicting
@@ -65,7 +77,7 @@ class PassClosedSupersetProof {
     fun pendingStrongCandidate(timeMs: Long): Boolean {
         val current=candidate ?: return false
         return current.votes>=1 && current.lastTime==timeMs &&
-            timeMs-current.firstTime in 0L..MAX_CANDIDATE_LIFETIME_MS &&
+            timeMs-current.startedAt in 0L..MAX_CANDIDATE_LIFETIME_MS &&
             timeMs-current.lastTime in 0L..MAX_CANDIDATE_FRAME_GAP_MS &&
             passVotes>=REQUIRED_PASS_VOTES && lastPassSource>=0 &&
             timeMs-lastPassSource in 0L..MAX_PASS_AGE_MS &&
@@ -89,6 +101,7 @@ class PassClosedSupersetProof {
         expectedOwnHand: List<Card>,
         priorObservedAt: Long,
     ): Boolean {
+        candidate?.proposal=null
         val currentClosing = prior?.let { currentClosingVersion(snapshot, seat, it) }
         val sameClosing = currentClosing != null && currentClosing == observedClosingVersion
         val appendedClosing = currentClosing != null && observedClosingVersion != null &&
@@ -145,6 +158,7 @@ class PassClosedSupersetProof {
         expectedOwnHand: List<Card>,
         priorObservedAt: Long,
     ): ObservedPlay? {
+        candidate?.proposal=null
         if(frame.timeMs<=lastFrameTime) {
             if(frame.timeMs<lastFrameTime) reset()
             return null
@@ -294,16 +308,26 @@ class PassClosedSupersetProof {
     private fun observeCandidate(current: ObservedPlay,frameTime: Long,
         prior: QuantityAnchoredPlayProof.PriorPresentation): ObservedPlay? {
         val identity=cardKeys(current.cards)
-        val deliveredKey="${scope?.roundId}:${scope?.seat}:${scope?.priorEventId}:${closingVersion?.events}:$identity"
+        val deliveredKey=deliveredKey(identity)
         if(deliveredKey in delivered) return null
         val existing=candidate
         if(existing==null) {
             candidate=Candidate(identity,copy(current),copy(current),frameTime,frameTime,1)
             return null
         }
-        if(frameTime-existing.firstTime>MAX_CANDIDATE_LIFETIME_MS || frameTime-existing.lastTime>MAX_CANDIDATE_FRAME_GAP_MS ||
+        if(frameTime-existing.startedAt>MAX_CANDIDATE_LIFETIME_MS || frameTime-existing.lastTime>MAX_CANDIDATE_FRAME_GAP_MS ||
             identity!=existing.identity || !sameSlots(current,existing.anchor) || !sameSlots(current,existing.latest) ||
             matchesAnyOldSlot(current.glyphs,prior.glyphs)) {
+            // A rejected proposal is not an accepted presentation. A corrected,
+            // directly observed group may earn fresh votes against the same
+            // still-live pass witness; its source/deadline is never refreshed.
+            if(existing.proposedOnce && frameTime-existing.startedAt<=MAX_CANDIDATE_LIFETIME_MS &&
+                frameTime-existing.lastTime<=MAX_CANDIDATE_FRAME_GAP_MS &&
+                !matchesAnyOldSlot(current.glyphs,prior.glyphs)) {
+                candidate=Candidate(identity,copy(current),copy(current),frameTime,frameTime,1,
+                    startedAt=existing.startedAt)
+                return null
+            }
             clearPassAndCandidate()
             return null
         }
@@ -312,12 +336,14 @@ class PassClosedSupersetProof {
         existing.votes++
         if(existing.votes<REQUIRED_CANDIDATE_VOTES || frameTime-existing.firstTime<CANDIDATE_MIN_SPAN_MS)
             return null
-        delivered += deliveredKey
-        if(delivered.size>128) delivered.remove(delivered.first())
         val result=copy(existing.latest)
-        candidate=null
+        existing.proposal=result
+        existing.proposedOnce=true
         return result
     }
+
+    private fun deliveredKey(identity: List<String>)=
+        "${scope?.roundId}:${scope?.seat}:${scope?.priorEventId}:${closingVersion?.events}:$identity"
 
     private fun structurallyValidNewSuperset(play: ObservedPlay,
         prior: QuantityAnchoredPlayProof.PriorPresentation): Boolean =

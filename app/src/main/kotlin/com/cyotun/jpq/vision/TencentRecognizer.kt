@@ -25,7 +25,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     private var lastDiagnostic=0L
     private val detector=VisionRuntime.getDetector(context)
     private val detectionPipeline=context.getSharedPreferences("jpq-runtime",Context.MODE_PRIVATE).let { prefs ->
-        DetectionPipelinePolicy.select(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE,
+        DetectionPipelinePolicy.select(BuildConfig.SINGLE_APP_CAPTURE_ENABLED,BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE,
             prefs.getString("referencePipelineFingerprint",null),
             prefs.getString("referencePipelineVersion",null),
             android.os.Build.FINGERPRINT,ReferenceCardDetector.PIPELINE_VERSION)
@@ -77,7 +77,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     private var activeVisibilityEpoch=0L
     private fun frameCurrent()=sessionAlive() && frameAvailable() && activeVisibilityEpoch==visibilityEpoch()
     override fun startupCaptureSurface(stage: String,generation: Long,recoveryId: Int,epoch: Long,imageTimestampNs: Long?) {
-        if(!BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE || sessionCaptureScope!=CaptureScope.APP_TASK) return
+        if(!BuildConfig.SINGLE_APP_CAPTURE_ENABLED || sessionCaptureScope!=CaptureScope.APP_TASK) return
         trace.writeIfEnabled { JSONObject().put("type","task_startup_surface").put("stage",stage)
             .put("elapsedMs",SystemClock.elapsedRealtime()).put("generation",generation)
             .put("recoveryId",recoveryId).put("visibilityEpoch",epoch)
@@ -88,7 +88,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             // The gap announces an epoch change; the previous frame's epoch is
             // intentionally not used as permission to retain its exact counts.
             observer.incomplete(reason,timeMs,immediate=true)
-            if(inputDiscontinuity && BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && sessionCaptureScope==CaptureScope.APP_TASK) {
+            if(inputDiscontinuity && BuildConfig.SINGLE_APP_CAPTURE_ENABLED && sessionCaptureScope==CaptureScope.APP_TASK) {
                 val snapshot=AppState.ledger.snapshot()
                 resumeRoundId=snapshot.roundId.takeIf { snapshot.phase==RoundPhase.RECOVERING }
                 // Start the bounded repair window at the first visible source,
@@ -115,14 +115,14 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     }
     override fun observe(captured: CapturedFrame) {
         val epochChanged=captured.visibilityEpoch!=activeVisibilityEpoch
-        if(captured.visibilityEpoch!=activeVisibilityEpoch && BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE &&
+        if(captured.visibilityEpoch!=activeVisibilityEpoch && BuildConfig.SINGLE_APP_CAPTURE_ENABLED &&
             sessionCaptureScope==CaptureScope.APP_TASK)
             startupInputRecovery.observe(captured.capturedElapsedMs,eligible=false,suspicious=false)
         activeVisibilityEpoch=captured.visibilityEpoch
         if(closed || !frameCurrent()) return
         synchronized(sessionGuard) {
             if(!frameCurrent()) return
-            if((resumeGapPending || epochChanged) && resumeRoundId!=null && BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE &&
+            if((resumeGapPending || epochChanged) && resumeRoundId!=null && BuildConfig.SINGLE_APP_CAPTURE_ENABLED &&
                 sessionCaptureScope==CaptureScope.APP_TASK) {
                 val snapshot=AppState.ledger.snapshot()
                 if(snapshot.roundId==resumeRoundId) resumeInputRecovery.onDiscontinuity(SystemClock.elapsedRealtime(),
@@ -131,7 +131,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             }
         }
         if(captured.bitmap==null || !captured.completeDisplay) {
-            if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && sessionCaptureScope==CaptureScope.APP_TASK)
+            if(BuildConfig.SINGLE_APP_CAPTURE_ENABLED && sessionCaptureScope==CaptureScope.APP_TASK)
                 startupInputRecovery.observe(captured.capturedElapsedMs,eligible=false,suspicious=false)
             onPipelineStage(if(captured.bitmap==null) "null_bitmap" else "partial_capture")
             observeResumeInput(captured,if(captured.adjusting || captured.bitmap!=null) TaskResumeRecoveryPolicy.Content.OTHER
@@ -184,10 +184,10 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
             val glyphs=detections.map { p -> PlayGlyph(p.card,p.confidence,GlyphBox(p.box.left,p.box.top,p.box.right,p.box.bottom)) }
             val partition=partitionGuandanHand(glyphs)
             val hand=partition.hand.map { it.card }
-            val startupRecoveryEligible=BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE &&
+            val startupRecoveryEligible=BuildConfig.SINGLE_APP_CAPTURE_ENABLED &&
                 sessionCaptureScope==CaptureScope.APP_TASK && round.phase==RoundPhase.WAITING &&
                 round.roundId==null && scene==TableScene.UNKNOWN && hand.isEmpty() && frameCurrent()
-            if(BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE && sessionCaptureScope==CaptureScope.APP_TASK &&
+            if(BuildConfig.SINGLE_APP_CAPTURE_ENABLED && sessionCaptureScope==CaptureScope.APP_TASK &&
                 !startupInputRecovery.exhausted) {
                 val blackFraction=if(startupRecoveryEligible) startupBlackFraction(bitmap) else 0f
                 if(startupInputRecovery.observe(start,startupRecoveryEligible,
@@ -424,7 +424,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
         return black/512f
     }
     private fun observeResumeInput(captured: CapturedFrame,content: TaskResumeRecoveryPolicy.Content) = synchronized(sessionGuard) {
-        if(!BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE || sessionCaptureScope!=CaptureScope.APP_TASK || !frameCurrent()) return@synchronized
+        if(!BuildConfig.SINGLE_APP_CAPTURE_ENABLED || sessionCaptureScope!=CaptureScope.APP_TASK || !frameCurrent()) return@synchronized
         val snapshot=AppState.ledger.snapshot()
         val request=resumeInputRecovery.observe(SystemClock.elapsedRealtime(),captured.capturedElapsedMs,
             activeVisibilityEpoch,snapshot.phase,snapshot.roundId,content)
@@ -441,7 +441,7 @@ class TencentRecognizer(private val context: Context,private val sessionAlive: (
     /** Queued surface repair must still belong to this recognizer and old checkpoint. */
     fun takeResumeInputRecovery(request: TaskResumeRecoveryPolicy.Request): Boolean = synchronized(sessionGuard) {
         if(closed || !sessionAlive() || !frameAvailable() || sessionCaptureScope!=CaptureScope.APP_TASK ||
-            !BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE) return@synchronized false
+            !BuildConfig.SINGLE_APP_CAPTURE_ENABLED) return@synchronized false
         val snapshot=AppState.ledger.snapshot()
         resumeInputRecovery.takeRequest(request,SystemClock.elapsedRealtime(),visibilityEpoch(),snapshot.phase,snapshot.roundId)
     }

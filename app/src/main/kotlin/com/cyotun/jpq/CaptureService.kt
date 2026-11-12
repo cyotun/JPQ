@@ -19,6 +19,7 @@ import com.cyotun.jpq.core.LatestFrameDispatcher
 import com.cyotun.jpq.core.CaptureScope
 import com.cyotun.jpq.core.CaptureInputPolicy
 import com.cyotun.jpq.core.CaptureContentGeometry
+import com.cyotun.jpq.core.CaptureGapFence
 
 class CaptureService : Service() {
     private var projection: MediaProjection? = null
@@ -41,6 +42,7 @@ class CaptureService : Service() {
     private val closed get()=lifecycle.closed
     private val session get()=lifecycle.generation
     private val sessionGuard=Any()
+    private val captureGapFence=CaptureGapFence<FrameRecognizer>()
     @Volatile private var capturedVisible=true
     @Volatile private var requestedVisible=true
     @Volatile private var visibilityEpoch=0L
@@ -64,18 +66,10 @@ class CaptureService : Service() {
                     // a new visible epoch. Image timestamps need not share our clock.
                     restoreVisibility(generation,visibilityEpoch)
                 }
-                if(!visible && AppState.ledger.snapshot().remaining!=null) {
-                    AppState.markCaptureUnobserved()
-                    val currentRecognizer=recognizer
-                    val lostAt=SystemClock.elapsedRealtime()
-                    worker?.post {
-                        synchronized(sessionGuard) {
-                            if(generation==session && !closed && recognizer===currentRecognizer) {
-                                currentRecognizer.observationGap(lostAt,"正在重新核对牌面，恢复后继续记牌",inputDiscontinuity=true)
-                                AppState.captureGapCheckpointed()
-                            }
-                        }
-                    }
+                val round=AppState.ledger.snapshot()
+                if(!visible && CaptureGapFence.hasTrackedRound(round.phase,round.roundId)) {
+                    queueObservationGap(generation,SystemClock.elapsedRealtime(),
+                        "正在重新核对牌面，恢复后继续记牌",inputDiscontinuity=true)
                 }
             }
         }
@@ -138,14 +132,14 @@ class CaptureService : Service() {
         capturedVisible=true; requestedVisible=true; visibilityEpoch=0L
         taskSurfaceRecoveryId=0; taskSurfaceAwaitingFrame=0
         referenceCapture=getSharedPreferences("jpq-runtime",MODE_PRIVATE).getString("captureProfile","reference")!="adaptive_scaled"
-        val generation=lifecycle.begin()
+        val generation=synchronized(sessionGuard) { captureGapFence.clear(); lifecycle.begin() }
         android.util.Log.i("JPQCapture","session_start generation=$generation")
         lastFrame=0L; lastFrameError=0L
         AppState.recognitionReady=false
         try {
             val requestedScope=intent.getStringExtra(ProjectionConsentRequest.SCOPE_EXTRA) ?: CaptureScope.DISPLAY.name
             captureScope=CaptureScope.valueOf(requestedScope)
-            check(CaptureInputPolicy.acceptsScope(captureScope,BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE,Build.VERSION.SDK_INT))
+            check(CaptureInputPolicy.acceptsScope(captureScope,BuildConfig.SINGLE_APP_CAPTURE_ENABLED,Build.VERSION.SDK_INT))
             check(!BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE || captureScope==CaptureScope.APP_TASK) {
                 "Candidate capture must use explicit app-only consent"
             }
@@ -168,8 +162,15 @@ class CaptureService : Service() {
             dispatcher=LatestFrameDispatcher({ visionWorker.post(it) },{ frame ->
                 health.consumeStarted()
                 try {
-                    if(generation==session && !closed && capturedVisible && frame.visibilityEpoch==visibilityEpoch && AppState.recognitionReady) {
-                        recognizer.observe(frame)
+                    val current=synchronized(sessionGuard) {
+                        if(generation==session && !closed && capturedVisible && frame.visibilityEpoch==visibilityEpoch && AppState.recognitionReady) {
+                            val active=recognizer
+                            flushObservationGap(generation,active)
+                            active.takeIf { captureGapFence.acceptsSource(generation,it,frame.capturedElapsedMs) }
+                        } else null
+                    }
+                    if(current!=null) {
+                        current.observe(frame)
                         if(generation==session && !closed) {
                             AppState.capturedFrames++
                             if(AppState.capturedFrames % 8L==0L) AppState.notifyChanged()
@@ -189,14 +190,14 @@ class CaptureService : Service() {
                     val prepared=TencentRecognizer(this,{ generation==session && !closed },
                         { visibilityEpoch },sessionGuard,health::visionStage,{ capturedVisible },{
                             main.post {
-                                if(generation==session && !closed && BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE &&
+                                if(generation==session && !closed && BuildConfig.SINGLE_APP_CAPTURE_ENABLED &&
                                     captureScope==CaptureScope.APP_TASK && AppState.ledger.snapshot().roundId==null)
                                     refreshTaskSurface()
                             }
                         },{ request ->
                             main.post resumeRepair@{
                                 synchronized(sessionGuard) {
-                                    if(generation!=session || closed || !BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE ||
+                                    if(generation!=session || closed || !BuildConfig.SINGLE_APP_CAPTURE_ENABLED ||
                                         captureScope!=CaptureScope.APP_TASK || !capturedVisible || !requestedVisible) return@resumeRepair
                                     val current=recognizer as? TencentRecognizer ?: return@resumeRepair
                                     if(current.takeResumeInputRecovery(request)) refreshTaskSurface(request.roundId)
@@ -260,18 +261,27 @@ class CaptureService : Service() {
     private fun frameFailed(generation: Long,error: Exception) {
         val now=SystemClock.elapsedRealtime()
         if(now-lastFrameError>5000) { lastFrameError=now; android.util.Log.e("JPQCapture","frame_failed",error) }
-        if(generation==session && !closed) {
+        queueObservationGap(generation,now,"识别暂时中断，正在重新核对牌面")
+    }
+    private fun queueObservationGap(generation: Long,timeMs: Long,reason: String,inputDiscontinuity: Boolean=false) {
+        synchronized(sessionGuard) {
+            if(generation!=session || closed) return
             AppState.markCaptureUnobserved()
             val currentRecognizer=recognizer
+            captureGapFence.mark(generation,currentRecognizer,timeMs,reason,inputDiscontinuity)
             worker?.post {
                 synchronized(sessionGuard) {
-                    if(generation==session && !closed && recognizer===currentRecognizer) {
-                        currentRecognizer.observationGap(now,"识别暂时中断，正在重新核对牌面")
-                        AppState.captureGapCheckpointed()
-                    }
+                    flushObservationGap(generation,currentRecognizer)
                 }
             }
         }
+    }
+    /** Under sessionGuard, on the vision worker; inference itself stays outside the guard. */
+    private fun flushObservationGap(generation: Long,currentRecognizer: FrameRecognizer) {
+        if(generation!=session || closed || recognizer!==currentRecognizer) return
+        val gap=captureGapFence.take(generation,currentRecognizer) ?: return
+        currentRecognizer.observationGap(gap.timeMs,gap.reason,gap.inputDiscontinuity)
+        AppState.captureGapCheckpointed()
     }
     private fun createForeground() {
         val manager=getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -359,19 +369,10 @@ class CaptureService : Service() {
             if(captureScope==CaptureScope.APP_TASK) {
                 synchronized(sessionGuard) {
                     capturedVisible=false; visibilityEpoch++
-                    if(AppState.ledger.snapshot().remaining!=null) {
-                        AppState.markCaptureUnobserved()
-                        val currentRecognizer=recognizer
-                        val resizeGeneration=session
-                        val lostAt=SystemClock.elapsedRealtime()
-                        worker?.post {
-                            synchronized(sessionGuard) {
-                                if(resizeGeneration==session && !closed && recognizer===currentRecognizer) {
-                                    currentRecognizer.observationGap(lostAt,"共享游戏画面尺寸变化，恢复后继续记牌",inputDiscontinuity=true)
-                                    AppState.captureGapCheckpointed()
-                                }
-                            }
-                        }
+                    val round=AppState.ledger.snapshot()
+                    if(CaptureGapFence.hasTrackedRound(round.phase,round.roundId)) {
+                        queueObservationGap(session,SystemClock.elapsedRealtime(),
+                            "共享游戏画面尺寸变化，恢复后继续记牌",inputDiscontinuity=true)
                     }
                 }
             }
@@ -392,7 +393,7 @@ class CaptureService : Service() {
     }
     /** Reattach a consumer to the existing projection; no token reuse or second display. */
     private fun refreshTaskSurface(resumeRoundId: String?=null) {
-        if(!BuildConfig.SINGLE_APP_CAPTURE_CANDIDATE || captureScope!=CaptureScope.APP_TASK) return
+        if(!BuildConfig.SINGLE_APP_CAPTURE_ENABLED || captureScope!=CaptureScope.APP_TASK) return
         val currentDisplay=display ?: return
         val old=reader ?: return
         val capture=captureWorker ?: return
@@ -450,6 +451,7 @@ class CaptureService : Service() {
     private fun shutdown(message: String,expectedGeneration: Long=session) {
         synchronized(sessionGuard) {
             if(!lifecycle.close(expectedGeneration)) return
+            captureGapFence.clear()
         }
         android.util.Log.i("JPQCapture","session_stop reason=$message")
         taskSurfaceRefresh?.let { main.removeCallbacks(it) }; taskSurfaceRefresh=null

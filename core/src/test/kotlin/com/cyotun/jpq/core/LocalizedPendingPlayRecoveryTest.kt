@@ -79,7 +79,32 @@ class LocalizedPendingPlayRecoveryTest {
         assertEquals(Seat.PREVIOUS, recovered.seat)
         assertEquals(s.candidate, recovered.play.cards)
         assertEquals(s.before, s.ledger.snapshot().plays.values.flatten())
+        s.helper.commitAccepted(recovered)
         assertNull(s.helper.observe(post(s, 900), s.ledger.snapshot(), s.own, RoundPhase.ACTIVE))
+    }
+
+    @Test fun aProposalIsRetainedForRetryUntilItsExactTransactionCommits() {
+        val s=make();pre(s)
+        assertNull(s.helper.observe(post(s,600),s.ledger.snapshot(),s.own,RoundPhase.ACTIVE))
+        val first=assertNotNull(s.helper.observe(post(s,750),s.ledger.snapshot(),s.own,RoundPhase.ACTIVE))
+        s.helper.commitAccepted(first.copy())
+        val second=assertNotNull(s.helper.observe(post(s,900),s.ledger.snapshot(),s.own,RoundPhase.ACTIVE))
+        s.helper.commitAccepted(first)
+        val third=assertNotNull(s.helper.observe(post(s,1050),s.ledger.snapshot(),s.own,RoundPhase.ACTIVE))
+        assertEquals(first.play.cards,third.play.cards)
+        assertEquals(s.before,s.ledger.snapshot().plays.values.flatten())
+        s.helper.commitAccepted(third)
+        assertNull(s.helper.observe(post(s,1200),s.ledger.snapshot(),s.own,RoundPhase.ACTIVE))
+        assertEquals(second.seat,third.seat)
+    }
+
+    @Test fun uncommittedLocalizedProofStillExpiresAtItsOriginalDeadline() {
+        val s=make();pre(s)
+        s.helper.observe(post(s,600),s.ledger.snapshot(),s.own,RoundPhase.ACTIVE)
+        assertNotNull(s.helper.observe(post(s,750),s.ledger.snapshot(),s.own,RoundPhase.ACTIVE))
+        for(t in listOf(1100L,1450L,1800L))
+            assertNotNull(s.helper.observe(post(s,t),s.ledger.snapshot(),s.own,RoundPhase.ACTIVE))
+        assertNull(s.helper.observe(post(s,1900),s.ledger.snapshot(),s.own,RoundPhase.ACTIVE))
     }
 
     @Test fun requiresImmediatePositiveEmptySeedAndTwoPreMaskCandidateReads() {

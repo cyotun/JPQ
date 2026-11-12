@@ -2,21 +2,25 @@
 
 Android 本地记牌工具，当前适配腾讯独立 App「大掼蛋」四人、两副牌玩法。授权屏幕共享后识别已显示的物理牌面，以黑金悬浮条显示手牌外剩余牌、三家出牌数量与明细，以及同花顺可能性。没有账号、会员、广告或手动改牌功能。
 
-2026-10-24 起：测试应用名称固定为 **记牌器BETA**，正式应用名称为 **记牌器**。新功能和修复先在 BETA 测试验收，只有通过的内容才发布正式更新。项目规则位于根目录 [AGENTS.md](AGENTS.md)，详细步骤见 [BETA 与正式版发布流程](docs/development/beta-release-workflow.md)。
+测试应用名称固定为 **记牌器BETA**，正式应用名称为 **记牌器**。新功能和修复仍先在独立 BETA 身份下开发、review 和电脑回归；BETA 不接收正式更新。日常开发不维护常驻 BETA 分支，需要验证时按需临时构建。本轮 BETA 工作分支归并前保留 archive 标签以供追溯，再删除分支。项目规则见 [AGENTS.md](AGENTS.md) 和 [BETA 与正式版发布流程](docs/development/beta-release-workflow.md)。
 
-## 当前稳定基线
+## 当前正式版本
 
-**2026-10-19，用户确认将当前已测试版本归档为稳定基线，Git 标签 `v0.2.26`。** 对应手机已实测的 `0.2.26-regression`（versionCode 28）；保留版本名和安装包字节，避免仅为改名生成未经实测的包。后续升级必须使用大于 28 的 versionCode。
+正式版 **v0.2.27（versionCode 29）已上线**，应用名「记牌器」、包名 `com.cyotun.jpq`，沿用原签名身份。签名清单、完整生产下载哈希及安装身份已验证；用户可从原正式 APP 内更新。按用户本轮要求未做新手机安装验证。旧正式回滚基线为 `v0.2.26` / code 28。
 
-最新三局共 3,749 帧、107 手，均有结束证据，未发现新的漏记、重复扣牌或恢复卡住；此前 624 项核心、5 项应用宿主、108 项手机非对局检查通过。旧素材缺口按用户本次决定不再阻止稳定归档，原结果保留，不改写为通过。本次确认不构成 99.9% 准确率统计。
+本轮电脑回归覆盖 19 个正常局来源，共 28,442 帧、681 个事件。另有一个中断来源共 3,521 帧，结果仍未核实，不计为通过。用户明确豁免本轮新增真机和实战验收；豁免不代表设备兼容、实战验收通过或任何准确率结论。936 项核心、正式/BETA 各 31 项宿主及 8 项服务测试通过；整包与 Lint 检查通过。
 
-- [版本说明与验证范围](docs/releases/0.2.26.md) / [版本 JSON](docs/releases/0.2.26.json)
+正式版 API 37 及以上启用 Android `APP_TASK` 单应用采集，较旧 Android 使用 `DISPLAY` 整屏采集；两种方式均保留 Android 系统屏幕共享授权。采集能力开关 `SINGLE_APP_CAPTURE_ENABLED` 与 BETA 身份开关 `SINGLE_APP_CAPTURE_CANDIDATE` 分离，不能把正式包的采集范围与 candidate 包身份绑定。
+
+- [本轮版本说明与验证范围](docs/releases/0.2.27.md) / [版本 JSON](docs/releases/0.2.27.json)
+- [旧正式回滚基线](docs/releases/0.2.26.md) / [版本 JSON](docs/releases/0.2.26.json)
+- [项目交接和本机保留项](docs/development/project-handoff.md)
+- [项目交接和本机保留项](docs/development/project-handoff.md)
 - [文档导航与优先级](docs/README.md)
 - [当前产品和 UI 规格](docs/design/current-spec.md)
 - [架构、算法与代码入口](docs/development/architecture.md)
 - [测试、排障与升级维护](docs/development/maintenance.md)
-- [Android 本地资产与构建准备](app/README.md)
-- [0.2.26 修复和实局核对](docs/development/repair-0.2.26.md)
+- [Android 本地资产与构建准备及回归入口](app/README.md)
 
 ## 功能与范围
 
@@ -26,11 +30,7 @@ Android 本地记牌工具，当前适配腾讯独立 App「大掼蛋」四人�
 
 识别冲突后台复核，保留最近确认显示，充分确认后再扣牌；缓存不作为新证据，不凭数量猜牌。自己出完后继续队友视角，确认队友余牌后剔除。游戏版本、玩法、布局或设备变化需重新验证，当前实测不推及全部大厅入口和手机。
 
-更新使用独立 Cloudflare Worker `jpq`，仅检查/下载更新，不上传诊断。2026-10-24 已恢复原正式 v0.2.26 APK 的签名分发，安装包字节不变；未验收的 BETA 功能未推送正式通道。见 [正式更新验证](docs/development/official-updates-20261024.md) 和 [最新 BETA 六局核查](docs/development/beta-c4.2-live-review-20261024.md)。GitHub 源码推送和服务器正式发布分别管理。
-
-BETA C4.3 已将应用更新改为一级设置右侧的单个操作按钮，原地完成检查、下载和安装，无更新二级页。见 [实现与验证](docs/development/beta-c4.3-inline-updates-20261024.md)；BETA 继续隔离正式更新通道，正式发布前仍需相应验收。
-
-C4.3 后续四局审计确认一张重复黑色 6 漏记及本人最后五张出牌史缺口；C4.4 已完成修复、同源电脑回归和 78 项手机非对局检查，尚待新实战验证，未推送正式版。见 [本轮审计与修复](docs/development/beta-c4.4-live-fixes-20261024.md) 和 [手机检查](docs/development/phone-beta-c44-20261025.md)。
+更新服务使用独立 Cloudflare Worker `jpq`，只服务 APP 更新，不上传诊断、录像或对局图片。设置一级菜单右侧按钮直接完成更新检查/下载并交给 Android 系统安装确认。v0.2.27 已发布；网络分发与客户端校验已核对，实际手机安装未在本轮重测。
 
 ## 资产与源码
 

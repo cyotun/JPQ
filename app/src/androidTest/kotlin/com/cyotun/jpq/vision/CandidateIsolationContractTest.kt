@@ -26,9 +26,11 @@ class CandidateIsolationContractTest {
 
     @Test fun candidateHasAnIndependentPackageAndLabel() {
         val c=context()
+        assertTrue(BuildConfig.SINGLE_APP_CAPTURE_ENABLED)
         assertEquals("com.cyotun.jpq.candidate.tests",InstrumentationRegistry.getInstrumentation().context.packageName)
         assertEquals("记牌器BETA",c.applicationInfo.loadLabel(c.packageManager).toString())
-        assertEquals(CaptureScope.APP_TASK,ProjectionConsentRequest.scope)
+        if(Build.VERSION.SDK_INT>=37) assertEquals(CaptureScope.APP_TASK,ProjectionConsentRequest.scope)
+        else assertThrows(IllegalArgumentException::class.java) { ProjectionConsentRequest.scope }
     }
 
     @Test fun publicAppOnlyConfigExcludesDisplayAndContentSources() {
@@ -45,6 +47,8 @@ class CandidateIsolationContractTest {
 
     @Test fun candidateCannotCheckDownloadInstallOrScheduleStableUpdates() {
         val c=context()
+        // The promoted capability must never grant the BETA formal-update access.
+        assertTrue(BuildConfig.SINGLE_APP_CAPTURE_ENABLED)
         val prefs=c.getSharedPreferences("jpq-updates",0)
         val before=prefs.all.toMap()
         val jobs=c.getSystemService(JobScheduler::class.java)

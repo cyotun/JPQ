@@ -59,6 +59,84 @@ class TeammateHandPlayProofTest {
         snapshot,
     )
 
+    private fun colorExhaustedLedger(seedSize: Int): RoundLedger {
+        val excluded=setOf(Rank.A,Rank.Q,Rank.K,Rank.J)
+        val initial=List(4) { Card(Rank.A,Suit.RED) }+
+            fullDeck.filter { it.rank !in excluded }.take(23)
+        val available=fullDeck.toMutableList().apply { initial.forEach { assertTrue(remove(it)) } }
+        return RoundLedger().apply {
+            begin("teammate-retry",initial)
+            commit(PlayEvent("teammate-retry","prior",1,Seat.OPPOSITE,
+                available.filter { it.rank !in excluded }.take(27-seedSize)))
+            selfFinished()
+        }
+    }
+
+    @Test fun rejectedExhaustedRedAceCanBeCorrectedToALegalQueenWithoutLosingTheSeed() {
+        val ledger=colorExhaustedLedger(3)
+        val tracker=TeammateHandPlayProofTracker()
+        val a=Card(Rank.A,Suit.RED); val q=Card(Rank.Q,Suit.RED); val k=Card(Rank.K,Suit.BLACK)
+        val seed=listOf(a,q,k)
+        val before=ledger.snapshot()
+        assertNull(observe(tracker,before,1000,seed,play(emptyList())))
+        assertNull(observe(tracker,before,1100,seed,play(emptyList())))
+        assertNull(observe(tracker,before,1200,listOf(q,k),play(listOf(a))))
+        val rejected=assertNotNull(observe(tracker,before,1300,listOf(q,k),play(listOf(a))))
+        assertFails { ledger.commit(PlayEvent("teammate-retry","bad",2,Seat.OPPOSITE,rejected.cards)) }
+        assertEquals(before,ledger.snapshot())
+        assertNull(observe(tracker,before,1400,listOf(a,k),play(listOf(q))))
+        val corrected=assertNotNull(observe(tracker,before,1500,listOf(a,k),play(listOf(q))))
+        ledger.commit(PlayEvent("teammate-retry","good",2,Seat.OPPOSITE,corrected.cards))
+        tracker.commitAccepted(corrected)
+        assertEquals(listOf(q),ledger.snapshot().plays.getValue(Seat.OPPOSITE).last().cards)
+        assertEquals(before.remaining!!.getValue(Rank.Q)-1,ledger.snapshot().remaining!![Rank.Q])
+        // The successful ack still authorizes the original fast hand rebase.
+        assertNull(observe(tracker,ledger.snapshot(),1600,listOf(a),play(listOf(k))))
+        val next=assertNotNull(observe(tracker,ledger.snapshot(),1700,listOf(a),play(listOf(k))))
+        assertEquals(listOf(k),next.cards)
+        ledger.commit(PlayEvent("teammate-retry","next",3,Seat.OPPOSITE,next.cards))
+        tracker.commitAccepted(next)
+        assertEquals(26,ledger.snapshot().played(Seat.OPPOSITE))
+    }
+
+    @Test fun rejectedPartialHandoffCanDiscardItsWrongWitnessAndReproveTheCorrectDifference() {
+        val ledger=colorExhaustedLedger(4)
+        val s=ledger.snapshot(); val tracker=TeammateHandPlayProofTracker()
+        val a=Card(Rank.A,Suit.RED); val q=Card(Rank.Q,Suit.RED)
+        val k=Card(Rank.K,Suit.BLACK); val j=Card(Rank.J,Suit.RED)
+        val seed=listOf(a,q,k,j)
+        observe(tracker,s,1000,seed,play(emptyList()))
+        observe(tracker,s,1100,seed,play(emptyList()))
+        assertNull(observe(tracker,s,1200,listOf(q,j),play(listOf(a),.7f)))
+        assertNull(observe(tracker,s,1300,listOf(q,j),play(listOf(a,k))))
+        val rejected=assertNotNull(observe(tracker,s,1400,listOf(q,j),play(listOf(a,k))))
+        assertFails { ledger.commit(PlayEvent("teammate-retry","bad",2,Seat.OPPOSITE,rejected.cards)) }
+        assertNull(observe(tracker,s,1500,listOf(a,j),play(listOf(q,k))))
+        tracker.commitAccepted(rejected) // the changed observation revoked the old proposal
+        val corrected=assertNotNull(observe(tracker,s,1600,listOf(a,j),play(listOf(q,k))))
+        assertEquals(listOf(q,k),corrected.cards)
+        ledger.commit(PlayEvent("teammate-retry","good",2,Seat.OPPOSITE,corrected.cards))
+        tracker.commitAccepted(corrected)
+        assertEquals(25,ledger.snapshot().played(Seat.OPPOSITE))
+        assertEquals(s.remaining!!.getValue(Rank.Q)-1,ledger.snapshot().remaining!![Rank.Q])
+        assertEquals(s.remaining!!.getValue(Rank.K)-1,ledger.snapshot().remaining!![Rank.K])
+    }
+
+    @Test fun aNewObservationWithoutAProposalRevokesThePreviousToken() {
+        val tracker=TeammateHandPlayProofTracker(); val s=snapshot(3)
+        val seed=listOf(Card(Rank.A,Suit.RED),Card(Rank.Q,Suit.RED),Card(Rank.K,Suit.BLACK))
+        val smaller=seed.drop(1); val desk=play(seed.take(1))
+        observe(tracker,s,1000,seed,null); observe(tracker,s,1100,seed,null)
+        assertNull(observe(tracker,s,1200,smaller,desk))
+        val old=assertNotNull(observe(tracker,s,1300,smaller,desk))
+        assertNull(observe(tracker,s,1350,smaller,null))
+        tracker.commitAccepted(old)
+        assertNull(observe(tracker,s,1400,smaller,desk))
+        val fresh=assertNotNull(observe(tracker,s,1500,smaller,desk))
+        tracker.commitAccepted(fresh)
+        assertNull(observe(tracker,s,1600,smaller,desk))
+    }
+
     @Test fun sameVisibleBigCanProveANewBigWhenTheCompleteTeammateHandShrinks() {
         val tracker = TeammateHandPlayProofTracker()
         val snapshot = snapshot(3)
@@ -74,6 +152,7 @@ class TeammateHandPlayProofTest {
 
         assertEquals(listOf(big), proof?.cards)
         assertEquals(oldVisibleBig.glyphs, proof?.glyphs)
+        tracker.commitAccepted(assertNotNull(proof))
         assertNull(observe(tracker, snapshot, 1500, smaller, oldVisibleBig))
     }
 
@@ -259,6 +338,7 @@ class TeammateHandPlayProofTest {
         val proof=observe(tracker,snapshot,3977,emptyList(),full,
             incompleteReason="出牌归属待核对，正在重新识别",ambiguous=true)
         assertEquals(full,proof)
+        tracker.commitAccepted(assertNotNull(proof))
         assertNull(observe(tracker,snapshot,4100,emptyList(),full))
     }
 
@@ -355,6 +435,16 @@ class TeammateHandPlayProofTest {
         assertNull(observe(tracker,snapshot,5418,emptyList(),play(finalFive)))
     }
 
+    @Test fun uncommittedPartialProposalsCannotRefreshTheOriginalHandoffDeadline() {
+        val tracker=handoffTracker(); val s=snapshot(finalFive.size)
+        assertNull(observe(tracker,s,1500,emptyList(),play(finalFive)))
+        val old=assertNotNull(observe(tracker,s,1600,emptyList(),play(finalFive)))
+        for(time in 2000L..5200L step 400L) observe(tracker,s,time,emptyList(),play(finalFive))
+        assertNull(observe(tracker,s,5268,emptyList(),play(finalFive)))
+        tracker.commitAccepted(old)
+        assertNull(observe(tracker,s,5418,emptyList(),play(finalFive)))
+    }
+
     private val shortHandoffSeed=listOf(
         Card(Rank.TEN,Suit.BLACK),Card(Rank.TEN,Suit.BLACK),Card(Rank.SIX,Suit.RED),
         Card(Rank.SEVEN,Suit.BLACK),Card(Rank.EIGHT,Suit.RED),Card(Rank.NINE,Suit.RED))
@@ -379,7 +469,7 @@ class TeammateHandPlayProofTest {
     private data class IssuedShortHandoff(val tracker: TeammateHandPlayProofTracker,val snapshot: RoundSnapshot,
         val proof: ObservedPlay,val issuedAt: Long)
 
-    private fun issueShortHandoff(): IssuedShortHandoff {
+    private fun issueShortHandoff(acknowledged: Boolean=true): IssuedShortHandoff {
         val (tracker,snapshot)=shortHandoffTracker(644061295)
         assertNull(observe(tracker,snapshot,644061827,listOf(shortHandoffSeed.first()),play(shortHandoffPlay,.632f),
             remainingHandCounts=oneOpponentBadge(1,644061827)))
@@ -391,6 +481,7 @@ class TeammateHandPlayProofTest {
             remainingHandCounts=oneOpponentBadge(1,644062342)))
         assertEquals(shortHandoffPlay,proof.cards)
         assertEquals(strong.glyphs,proof.glyphs)
+        if(acknowledged) tracker.commitAccepted(proof)
         return IssuedShortHandoff(tracker,snapshot,proof,644062858)
     }
 
@@ -418,7 +509,7 @@ class TeammateHandPlayProofTest {
     }
 
     @Test fun postCommitSeedCannotRebaseWithoutTheExactSingleAppendWrittenToTheLedger() {
-        val issued=issueShortHandoff()
+        val issued=issueShortHandoff(acknowledged=false)
         val ten=Card(Rank.TEN,Suit.BLACK)
         // A returned proof alone is not evidence that commit succeeded.
         assertNull(observe(issued.tracker,issued.snapshot,644063107,emptyList(),play(listOf(ten))))

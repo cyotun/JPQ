@@ -23,6 +23,11 @@ internal class RoundRecovery(
     private var countVotes=0
     private var firstCountSource=-1L
     private var lastCountSource=-1L
+    // Observation resets revoke votes, never the monotonic OCR source fence.
+    // A source which contradicts its earlier value cannot become fresh again.
+    private var highestUnchangedCountSource=-1L
+    private var unchangedCountSignature: Map<Seat,Int>?=null
+    private var unchangedCountSourceRejected=false
     private var countSourceCutoff=startedAt
     private var openingSourceCutoff=startedAt
     private val clearOpeningFrames=java.util.ArrayDeque<Long>()
@@ -41,8 +46,9 @@ internal class RoundRecovery(
     private var lastTeammateSource=-1L
     private fun key(cards: List<Card>)=cards.map { it.colorKey() }.sorted().joinToString(",")
     fun observationInterrupted(timeMs: Long) {
+        votes=0; firstVote=0L; lastVote=-1L; previousGlyphs=emptyMap()
         countSourceCutoff=maxOf(countSourceCutoff,timeMs)
-        countVotes=0; firstCountSource=-1; lastCountSource=-1
+        resetUnchangedCountVotes()
         recoveredQuantityPlay=null
         quantityProofs.values.forEach { it.clear() }
         resetTeammateProof()
@@ -162,7 +168,7 @@ internal class RoundRecovery(
             (frame.incompleteReason==null || frame.onlyLocalizedOverlay())
         if(!sceneValid) {
             countSourceCutoff=maxOf(countSourceCutoff,frame.timeMs)
-            countVotes=0; firstCountSource=-1; lastCountSource=-1
+            resetUnchangedCountVotes()
             resetTeammateProof()
         }
         val ownValid=if(selfFinished) frame.scene==TableScene.TEAMMATE || frame.selfFinished
@@ -173,6 +179,28 @@ internal class RoundRecovery(
                 frame.timeMs-reading.sourceTimeMs in 0L..1000L
         }
         val source=readings.values.map { it.sourceTimeMs }.distinct().singleOrNull()
+        var freshSource=false
+        if(source!=null && readings.keys==expectedHandCounts.keys && source>=0 && source<=frame.timeMs) {
+            val signature=readings.mapValues { it.value.count }
+            when {
+                source<highestUnchangedCountSource -> {
+                    resetUnchangedCountVotes()
+                    return false
+                }
+                source==highestUnchangedCountSource -> {
+                    if(signature!=unchangedCountSignature) {
+                        unchangedCountSourceRejected=true
+                        resetUnchangedCountVotes()
+                    }
+                }
+                else -> {
+                    highestUnchangedCountSource=source
+                    unchangedCountSignature=signature
+                    unchangedCountSourceRejected=false
+                    freshSource=true
+                }
+            }
+        }
         val tableConsistent=anchors.all { (seat,anchor) ->
             val play=frame.plays[seat]
             // Every seat still needs its own independent unchanged quantity.
@@ -185,18 +213,21 @@ internal class RoundRecovery(
                     containsTracked(anchor.glyphs,play.glyphs))))
         }
         if(!sceneValid || !ownValid || !countsValid || source==null || !tableConsistent) {
-            countVotes=0; firstCountSource=-1; lastCountSource=-1; return false
+            resetUnchangedCountVotes(); return false
         }
         fun ready()=countVotes>=3 && source-firstCountSource>=300L && frame.incompleteReason==null
         // A cached source never adds a vote. It may deliver an already proved
         // result when the local mask clears, provided the source is still fresh
         // and every current visible presentation passed the checks above.
-        if(source==lastCountSource) return ready()
+        if(!freshSource) return !unchangedCountSourceRejected && source==lastCountSource && ready()
         if(lastCountSource<0 || source-lastCountSource !in 1L..1500L) {
             countVotes=1; firstCountSource=source
         } else countVotes++
         lastCountSource=source
         return ready()
+    }
+    private fun resetUnchangedCountVotes() {
+        countVotes=0; firstCountSource=-1; lastCountSource=-1
     }
     private fun resetOpeningProof(timeMs: Long) {
         openingSourceCutoff=maxOf(openingSourceCutoff,timeMs)

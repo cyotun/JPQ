@@ -113,6 +113,59 @@ class TerminalSeatPlayProofTest {
         assertEquals(fourSevens.map { it.colorKey() }.sorted(), recovered?.play?.cards?.map { it.colorKey() }?.sorted())
     }
 
+    @Test fun rejectedTerminalProposalKeepsItsHoldAndCanBeCorrectedBeforeCommit() {
+        val proof=TerminalSeatPlayProof()
+        assertNull(proof.observe(table(1000,cue=950),base))
+        assertNull(proof.observe(result(1200),base))
+        val rejected=assertNotNull(proof.observe(result(1400),base))
+        assertTrue(proof.holdResult(1450,base))
+        val retry=assertNotNull(proof.observe(result(1500),base))
+        assertEquals(rejected,retry)
+        proof.commitAccepted(rejected.play) // stale delivery is not the current proposal
+        assertTrue(proof.holdResult(1550,base))
+        val corrected=fourSevens.mapIndexed { i,c -> if(i==0) c.copy(suit=Suit.HEART) else c }
+        assertNull(proof.observe(result(1600,cards=corrected),base))
+        proof.commitAccepted(retry.play) // corrected geometry/identity revoked the old token
+        val accepted=assertNotNull(proof.observe(result(1700,cards=corrected),base))
+        assertEquals(corrected,accepted.play.cards)
+        proof.commitAccepted(accepted.play)
+        assertFalse(proof.holdResult(1750,base))
+        assertNull(proof.observe(result(1800,cards=corrected),base))
+    }
+
+    @Test fun retriesNeverExtendTheOriginalTerminalHoldDeadline() {
+        val proof=TerminalSeatPlayProof()
+        proof.observe(table(1000,cue=950),base)
+        assertNull(proof.observe(result(1200),base))
+        assertNotNull(proof.observe(result(1400),base))
+        assertNotNull(proof.observe(result(1500),base))
+        assertTrue(proof.holdResult(2500,base))
+        assertFalse(proof.holdResult(2701,base)) // original RESULT began at 1200
+    }
+
+    @Test fun clearingTerminalEvidenceRevokesItsProposalToken() {
+        val proof=TerminalSeatPlayProof()
+        proof.observe(table(1000,cue=950),base)
+        proof.observe(result(1200),base)
+        val old=assertNotNull(proof.observe(result(1400),base))
+        proof.clear()
+        proof.commitAccepted(old.play)
+        proof.observe(table(1500,cue=1450),base)
+        assertNull(proof.observe(result(1600),base))
+        assertNotNull(proof.observe(result(1700),base))
+    }
+
+    @Test fun aResultFrameWithoutTargetPixelsRevokesThePreviousProposalToken() {
+        val proof=TerminalSeatPlayProof()
+        proof.observe(table(1000,cue=950),base)
+        proof.observe(result(1200),base)
+        val old=assertNotNull(proof.observe(result(1400),base))
+        assertNull(proof.observe(result(1450).copy(plays=emptyMap()),base))
+        proof.commitAccepted(old.play)
+        assertTrue(proof.holdResult(1450,base))
+        assertNotNull(proof.observe(result(1500),base))
+    }
+
     @Test fun establishedResultHoldUsesItsOwnDeadlineAfterPartialAuthorityAgesOut() {
         val proof = TerminalSeatPlayProof()
         assertNull(proof.observe(table(1000, cue = 950), base))

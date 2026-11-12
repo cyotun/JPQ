@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "tag": "v0.2.27",
+  "releaseDate": "2026-11-12",
+  "status": "published-official-user-waived-new-device-and-live-tests",
+  "packageName": "com.cyotun.jpq",
+  "versionName": "0.2.27",
+  "versionCode": 29,
+  "minSdk": 28,
+  "apk": {
+    "bytes": 73361414,
+    "sha256": "8d140e2ec1f7a46a37b293e8bcb3874714c7f9e0931f4c9e9448bbd8c7d455c4",
+    "signerCertificateSha256": "ebe83c802f083bdb1adafc6163744dfa2cbd30f5677c04ab5ff29356c5cff71f"
+  },
+  "validation": {
+    "coreTests": 936,
+    "formalHostTests": 31,
+    "betaHostTests": 31,
+    "serviceTests": 8,
+    "failures": 0,
+    "lintErrors": 0,
+    "normalReplayRounds": 19,
+    "normalReplayFrames": 28442,
+    "normalReplayEvents": 681,
+    "semanticEventsAndFinalPoolsMatched": true,
+    "interruptedSourceFrames": 3521,
+    "interruptedUnverifiedRounds": 1,
+    "newDeviceTestExecuted": false,
+    "newLiveTestExecuted": false,
+    "actualDeviceUpdateInstallationExecuted": false,
+    "userWaiverDate": "2026-11-12",
+    "fullAccuracyGuaranteeClaimed": false
+  },
+  "distribution": {
+    "production": "https://jpq.240438457.workers.dev",
+    "worker": "jpq-release-store",
+    "workerVersion": "0aee6e9b-fc4b-4703-b34d-1aa2cb556bb6",
+    "previousWorkerVersion": "98aece11-1003-40fe-ada2-374278b87a77",
+    "trafficPercent": 100,
+    "manifestSignatureVerified": true,
+    "completeDownloadHashVerified": true,
+    "headAndCrossPartRangeVerified": true,
+    "oldOfficialUpdateKeyCompatible": true,
+    "privateDiagnosticUploads": false
+  },
+  "archiveTag": "archive/beta-through-0.2.27",
+  "previousOfficialTag": "v0.2.26",
+  "nextMinimumVersionCode": 30
+}

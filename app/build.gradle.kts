@@ -14,8 +14,10 @@ android {
         applicationId = "com.cyotun.jpq"
         minSdk = 28
         targetSdk = 36
-        versionCode = 28
-        versionName = "0.2.26-regression"
+        versionCode = 29
+        versionName = "0.2.27"
+        // Capability is independent of BETA identity and the official updater.
+        buildConfigField("boolean", "SINGLE_APP_CAPTURE_ENABLED", "true")
         testApplicationId = if (jpqCandidate) "com.cyotun.jpq.candidate.tests" else "com.cyotun.jpq.tests"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }

@@ -32,6 +32,7 @@ class QuantityAnchoredPlayProofTest {
         assertNull(proof.observe(empty(1551,1000),s,Seat.NEXT,900))
         val result=assertNotNull(proof.observe(empty(1733,1383),s,Seat.NEXT,900))
         assertEquals(cards,result.cards)
+        proof.commitAccepted(result)
         assertNull(proof.observe(empty(1800,1600),s,Seat.NEXT,900))
     }
 

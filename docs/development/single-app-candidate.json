@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "date": "2026-10-27",
-  "status": "beta_c410_computer_regression_passed_current_normal_source_verified_device_resume_pending",
-  "branch": "codex/single-app-capture-power",
+  "date": "2026-11-12",
+  "status": "archived-beta-development-promoted-to-official-0.2.27-with-user-waiver",
+  "branch": "main",
   "stable": {
     "tag": "v0.2.26",
     "commit": "ea5568147ecd24b59120a03360fcb4cd4248d01d",
@@ -2043,5 +2043,15 @@
       "scope": "Only verified duplicate C4.10 build-output APKs (identical retained artifact copies) and five obsolete intermediate build logs; all unresolved C4.9 raw images/logs retained"
     },
     "privateAuditDetails": "Full diagnostic identifiers, original hashes and evidence paths are retained locally and excluded from the public summary."
+  },
+  "currentRelease": {
+    "tag": "v0.2.27",
+    "archiveTag": "archive/beta-through-0.2.27",
+    "package": "com.cyotun.jpq",
+    "versionCode": 29,
+    "versionName": "0.2.27",
+    "manifest": "docs/releases/0.2.27.json",
+    "newDeviceAndLiveValidation": "user-waived-not-passed",
+    "historicalFieldsBelow": "Retained historical BETA evidence, not the current installed or release status"
   }
 }
