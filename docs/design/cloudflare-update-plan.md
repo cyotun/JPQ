@@ -1,5 +1,7 @@
 # Cloudflare 自动更新方案 · jpq 独立部署
 
+> **文档状态：历史快照，非当前待办。** 本文保留当时设计、实现或验证事实；其中「当前／最新／待开发／待验收」仅指当时。新会话以[当前规格](current-spec.md)、[逻辑手册](../development/program-logic.md)和[需求追踪](../requirements-traceability.md)为准，不能据本文恢复已取消交互或声称旧素材仍存在。
+
 日期：2026-10-11。用户要求使用自己的 Cloudflare 免费资源，更新服务与其他项目分开。后续用户已指定项目 `jpq`，并明确授权直接修正部署；现已读取配置、实现服务并成功部署。Android App 的交互与开发仍遵守原设计确认要求。实际状态见 [部署记录](../deployment/cloudflare-status.md)。
 
 ## 1. 方案与隔离边界

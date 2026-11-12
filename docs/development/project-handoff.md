@@ -28,6 +28,8 @@
 
 新会话可直接复制根目录 [后续开发提示词](../../后续开发提示词.md)，在末尾填入本次需求；提示词随版本维护。
 
+首次接手先读 [需求与决策追踪](../requirements-traceability.md) 和 [程序逻辑手册](program-logic.md)，分别建立用户最终口径和程序实际状态/事务模型；再按下表找细节。[全部文档审计目录](../documentation-audit.md)区分历史记录、研究和当前规范，旧页面不再当当前待办。
+
 1. [AGENTS.md](../../AGENTS.md)：正式/BETA、测试、隐私、清理及发布约束。
 2. [当前规格](../design/current-spec.md)：页面、黑金悬浮条、级牌/逢人配、同花顺、位置和隐藏交互。
 3. [架构](architecture.md) 和 [恢复不变量](recognition-recovery-invariants.md)：采集、证明、账本、显示缓存与恢复的职责边界。

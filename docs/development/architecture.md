@@ -2,6 +2,8 @@
 
 本文描述已发布正式版 v0.2.27（versionCode 29）的架构及证据边界，覆盖早期技术提案“识别尚未接通”等历史状态。工程为 `:app`、`:core` 及专用探针模块；[当前 UI 规格](../design/current-spec.md)。采集能力独立于正式/BETA 的应用身份和更新通道。
 
+本文为源码导航，状态转换、对象/来源区别、proof家族、队友投影、默认配置及线程/存储的完整维护说明见 [程序逻辑手册](program-logic.md)。需求与实现范围逐项见 [需求追踪](../requirements-traceability.md)。
+
 ```mermaid
 flowchart LR
   A[授权屏幕共享] --> B[CaptureService / CaptureWorker]
@@ -85,6 +87,8 @@ MediaProjection/ImageReader 在独立采集线程生成有界、可释放的 `Ca
 `StraightFlushEvidence` 汇总实际消耗的颜色/花色并保留不确定分配。`StraightFlush` 遍历四花色十个五张窗口 A2345…10JQKA，在剩余物理牌、红桃级牌补位及每家容量限制下搜索。确认队友余牌后缩小目标池。
 
 只有所有与证据一致的分配均无可行窗口，才能判 IMPOSSIBLE。可能窗口不证明集中在同一家；候选点数是窗口并集，允许缺位由逢人配补齐。未知级牌只算天然，确认规则后计变牌；原始分析、证据范围和显示状态分别记录。
+
+“未知级牌只算天然”指未确认时不主动用假定变牌建立POSSIBLE构造；未知替代仍能保留候选上界并产生UNKNOWN，UNKNOWN不是没有可能。NATURAL_ONLY下的排除也不证明未知规则的含变牌范围已全部排除。显示保持可能沿用上份确认结果，不能把显示色直接当成本帧原始分析。
 
 ## 扩展约束
 

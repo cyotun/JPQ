@@ -1,5 +1,7 @@
 # 记牌器 · 产品方案
 
+> **文档状态：历史快照，非当前待办。** 本文保留当时设计、实现或验证事实；其中「当前／最新／待开发／待验收」仅指当时。新会话以[当前规格](design/current-spec.md)、[逻辑手册](development/program-logic.md)和[需求追踪](requirements-traceability.md)为准，不能据本文恢复已取消交互或声称旧素材仍存在。
+
 2026-10-11，修订 v4。应用名称「记牌器」，JPQ 为工程/仓库代号。用户已确认现稿并要求开始开发；基础开发 APK 已构建，自动牌面识别尚未接通，稳定记牌版本尚未交付。
 
 完整规格以 [PRD v4](design/PRD.md) 与 [六张设计图](design/review/README.md) 为准。本次将右侧基础宽度设为 320dp，超长才自动扩展；保留重置按钮开关、双击隐藏、取消手动纠错、Cloudflare 应用自动更新和 [1 号黑金牌面图标](design/icons/README.md)。

@@ -70,6 +70,8 @@ python tools/android/run-retained-regression.py --output artifacts/regression-mi
 
 正式更新由应用内流程检查、下载并交给 Android 系统安装确认。API 37+ 的正式包单应用采集与旧系统显示器采集都保留用户系统授权。私人输入、APK、参考资产、密钥不入 Git。Cloudflare 仅用于应用更新，不做诊断上传；自动关联 main 的服务构建不等于已发布新安装包。
 
-未来发布需：原证书签名的新包、增加 versionCode、完成本轮验证（或如实记录用户明确豁免）、冻结哈希、更新 `docs/releases/<version>.md/.json`，再走 `tools/release/package.mjs` 和 [清单契约](../design/update-contract.md) / [服务说明](../../services/updates/README.md)。只有实际上传并验证接口及 APP 内更新后才标记服务器已发布。本轮 v0.2.27 仍待线上验证。
+未来发布需：原证书签名的新包、增加versionCode、完成本轮验证（或如实记录用户明确豁免）、冻结哈希、更新`docs/releases/<version>.md/.json`，再走`tools/release/package.mjs`和 [清单契约](../design/update-contract.md) / [服务说明](../../services/updates/README.md)。须实际上传并验证生产清单、整包及安装身份；真实手机安装与网络分发分别记录。本轮v0.2.27已完成生产签名和下载验证并上线，新增手机/安装验证按用户授权豁免，不能再写成待发布或实际安装通过。
+
+修改前按 [需求追踪](../requirements-traceability.md) 确认最终决定，按 [逻辑手册](program-logic.md) 定位责任模块；完成后更新这两份及相关规格，避免需求只保留在旧聊天或修复报告。全部文档的性质与审计入口见 [文档审计目录](../documentation-audit.md)。
 
 源码回退可从 `v0.2.26` 新建修复分支比较，避免直接覆盖工作区。Android 通常拒绝安装较低 versionCode；不能以卸载清数据作为默认回退。若新版已装，使用旧稳定代码构建一个更高 versionCode、同证书的修复包，并重新验证、发布新的签名清单。服务器“latest”只换文案或指向低版本不会自动绕过客户端版本/哈希/证书校验。准备发布前验证正式旧 APK、哈希、签名信息、源码标签及回滚清单可用；正式包的身份和数据不得因应用显示名称或采集能力更新而改变。

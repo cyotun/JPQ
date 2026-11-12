@@ -1,5 +1,7 @@
 # 正式更新服务恢复与客户端修复
 
+> **文档状态：历史快照，非当前待办。** 本文保留当时设计、实现或验证事实；其中「当前／最新／待开发／待验收」仅指当时。新会话以[当前规格](../design/current-spec.md)、[逻辑手册](program-logic.md)和[需求追踪](../requirements-traceability.md)为准，不能据本文恢复已取消交互或声称旧素材仍存在。
+
 日期：2026-10-24，Asia/Shanghai。规则和发布步骤见 [BETA 与正式版流程](beta-release-workflow.md)。
 
 ## 实际故障与处理
