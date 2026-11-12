@@ -25,10 +25,12 @@
 
 新预测生成 `model-replay.tape` 后可运行既有测试适配器：
 
-若开局完整帧已轮转，但问题附近的原始识别帧完整，可选用 `:core:replayLoggedFrames` 的 `-PloggedCheckpoint=<绝对路径>` 加载明确导出的账本前缀，定位检查点后的状态转换。文本首行为 `INITIAL;roundId;RANK,SUIT|...`，后续为 `EVENT;eventId;sequence;seat;RANK,SUIT|...`；仍经过正常账本的容量、顺序及本人持牌校验。输出标记 `checkpointSeeded=true`；这是已确认账本前缀加真实后续帧的转移回归，不能叫作完整开局回放，也不能把没有 glyph 的帧补成完整识别证据。具体对照见 [C4.4 审计](beta-c4.4-live-fixes-20261024.md)。
+若开局完整帧已轮转，但问题附近的原始识别帧完整，可选用 `:core:replayLoggedFrames` 的 `-PloggedCheckpoint=../captures/<run>/checkpoint.txt` 加载明确导出的账本前缀，定位检查点后的状态转换。文本首行为 `INITIAL;roundId;RANK,SUIT|...`，后续为 `EVENT;eventId;sequence;seat;RANK,SUIT|...`；仍经过正常账本的容量、顺序及本人持牌校验。输出标记 `checkpointSeeded=true`；这是已确认账本前缀加真实后续帧的转移回归，不能叫作完整开局回放，也不能把没有 glyph 的帧补成完整识别证据。具体对照见 [C4.4 审计](beta-c4.4-live-fixes-20261024.md)。
+
+以下命令从 `JPQ/` 根目录运行；JavaExec 在 `core/` 下执行，所以传给回放任务的相对输入/输出路径使用 `../captures/`，不依赖固定盘符。示例目录须替换为本次实际保留的输入，旧素材路径不代表仍可用。
 
 ```powershell
-./tools/android/build.ps1 -Tasks ':core:replayPhoneVideo','-PreplayTape=D:/JPQ/captures/<run>/video-NEW/model-replay.tape','-PreplayOutput=D:/JPQ/captures/<run>/video-NEW/core.json'
+./tools/android/build.ps1 -Tasks ':core:replayPhoneVideo','-PreplayTape=../captures/<run>/video-NEW/model-replay.tape','-PreplayOutput=../captures/<run>/video-NEW/core.json'
 ```
 
 ```text
@@ -40,7 +42,7 @@
 `tools/desktop/run-suite.ps1` 可批量完成上述模型、核心、人工比对步骤。Inputs 为本机 JSON 数组，每项包含唯一 id、manifest 路径和视频所需的 expected 路径。每批冻结源码/模型指纹并保存清单、标注副本；某一项失败后继续跑其他项，最终保留全部问题，修复后重新跑整批。结果中 `phoneAcceptancePassed` 始终 false。
 
 ```powershell
-./tools/desktop/run-suite.ps1 -Python '<Python3.12绝对路径>' -Inputs captures/<run>/suite.json -OutputDirectory captures/<run>/suite-NEW
+./tools/desktop/run-suite.ps1 -Python '<Python3.12程序路径>' -Inputs captures/<run>/suite.json -OutputDirectory captures/<run>/suite-NEW
 ```
 
 ## 当前覆盖范围和手机门槛
