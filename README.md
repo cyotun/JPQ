@@ -16,7 +16,6 @@ Android 本地记牌工具，当前适配腾讯独立 App「大掼蛋」四人�
 - [旧正式回滚基线](docs/releases/0.2.26.md) / [版本 JSON](docs/releases/0.2.26.json)
 - [项目交接和本机保留项](docs/development/project-handoff.md)
 - [可复制的后续开发提示词](后续开发提示词.md)
-- [项目交接和本机保留项](docs/development/project-handoff.md)
 - [文档导航与优先级](docs/README.md)
 - [当前产品和 UI 规格](docs/design/current-spec.md)
 - [架构、算法与代码入口](docs/development/architecture.md)

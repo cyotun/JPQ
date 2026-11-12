@@ -6,7 +6,6 @@
 | --- | --- |
 | 开新会话继续维护 APP | [根目录后续开发提示词](../后续开发提示词.md) |
 | 了解当前项目及本机保留项 | [交接记录](development/project-handoff.md) |
-| 了解当前项目及本机保留项 | [交接记录](development/project-handoff.md) |
 | 确认 BETA 开发、正式发布和回滚规则 | [项目规则](../AGENTS.md)、[发布流程](development/beta-release-workflow.md) |
 | 查看本轮发布状态、验证结果及豁免范围 | [v0.2.27 发布记录](releases/0.2.27.md)、[版本 JSON](releases/0.2.27.json) |
 | 查看旧正式回滚基线 | [v0.2.26 发布记录](releases/0.2.26.md)、[版本 JSON](releases/0.2.26.json) |
